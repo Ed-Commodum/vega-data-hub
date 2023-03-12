@@ -1,1 +1,0 @@
-This test runs a query service, trade service, position service, timescaledb instance, and a kafka cluster.
