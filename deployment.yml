@@ -1,0 +1,434 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: timescaledb-service
+  name: timescaledb-service
+spec:
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    app: timescaledb
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: timescaledb
+  name: timescaledb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: timescaledb
+  template:
+    metadata:
+      labels:
+        app: timescaledb
+    spec:
+      containers:
+      - name: timescaledb
+        # image: timescale/timescaledb:latest-pg14
+        image: timescale/timescaledb-ha:pg14-latest
+        imagePullPolicy: Always 
+        ports:
+        - containerPort: 5432
+        resources:
+          limits:
+            cpu: 1500m
+            memory: 2.5Gi
+          requests:
+            cpu: 1500m
+            memory: 2.5Gi
+        env:
+        - name: POSTGRES_PASSWORD
+          value: ilovetimescaledb          
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper-service
+  labels:
+    app: zookeeper
+spec:
+  ports:
+  - port: 2181
+  selector:
+    app: zookeeper
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zookeeper-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+    spec:
+      containers:
+      - name: zookeeper
+        image: ubuntu/zookeeper:edge
+        ports:
+        - containerPort: 2181
+          name: zookeeper
+          protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-service
+  labels:
+    app: kafka-pod
+spec:
+  ports:
+  - port: 9092
+    targetPort: 9093
+  selector:
+    app: kafka-pod
+---
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: kafka-deployment
+# spec:
+#   replicas: 1
+#   selector:
+#     matchLabels:
+#       app: kafka
+#   template:
+#     metadata:
+#       labels:
+#         app: kafka
+#     spec:
+#       containers:
+#       - name: kafka
+#         image: ubuntu/kafka:latest
+#         env:
+#           - name: ZOOKEEPER_HOST
+#             value: zookeeper-service
+#         args: ["/etc/kafka/server.properties", "--override", "advertised.listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://kafka-service:9092", "--override", "listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://0.0.0.0:9093", "--override", "listener.security.protocol.map=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT", "--override","inter.broker.listener.name=INTERNAL"]
+#         ports:
+#         - containerPort: 9092
+#           name: kafka
+#           protocol: TCP
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kafka-pod
+  labels:
+    app: kafka-pod
+spec:
+  volumes:
+  - name: kafka-pv-storage
+    persistentVolumeClaim:
+      claimName: kafka-pv-claim
+  restartPolicy: Never
+  containers:
+  - name: kafka
+    image: ubuntu/kafka:latest
+    resources:
+      limits:
+        cpu: 500m
+        memory: 2500Mi
+      requests:
+        cpu: 500m
+        memory: 2500Mi
+    env:
+    - name: ZOOKEEPER_HOST
+      value: zookeeper-service
+    args: ["/etc/kafka/server.properties", "--override", "advertised.listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://kafka-service:9092", "--override", "listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://0.0.0.0:9093", "--override", "listener.security.protocol.map=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT", "--override","inter.broker.listener.name=INTERNAL"]
+    ports:
+    - containerPort: 9092
+      name: kafka
+      protocol: TCP
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: kafka-pv-volume
+spec:
+  capacity:
+    storage: 8Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/kafka-data"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kafka-pv-claim
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: positions-pod
+  labels:
+    app: positions-pod
+spec:
+  restartPolicy: Never
+  containers:
+  - name: positions
+    image: kubernetes-test/positions
+    imagePullPolicy: Never
+    env:
+    - name: KAFKA_BROKERS
+      value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+    - name: TIMESCALEDB_HOST
+      value: timescaledb-service
+    - name: TIMESCALEDB_PORT
+      value: "5432"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: query-test
+  name: query-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: query-test
+  template:
+    metadata:
+      labels:
+        app: query-test
+    spec:
+      containers:
+      - name: query
+        image: kubernetes-test/query
+        imagePullPolicy: Never
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1500Mi
+          requests:
+            cpu: 500m
+            memory: 1500Mi
+        env:
+        - name: KAFKA_BROKERS
+          value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: trades-test
+  name: trades-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trades-test
+  template:
+    metadata:
+      labels:
+        app: trades-test
+    spec:
+      containers:
+      - name: trades
+        image: kubernetes-test/trades
+        imagePullPolicy: Never
+        env:
+        - name: KAFKA_SERVICE
+          value: kafka-service
+        - name: KAFKA_BROKERS
+          value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+        - name: TIMESCALEDB_HOST
+          value: timescaledb-service
+        - name: TIMESCALEDB_PORT
+          value: "5432"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: api-service
+  name: api-service
+spec:
+  ports:
+    - port: 8080
+      targetPort: 8080
+  selector:
+    app: api
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: api
+  name: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+      - name: api
+        image: kubernetes-test/api
+        imagePullPolicy: Never 
+        ports:
+        - containerPort: 8080
+        env:
+        - name: TIMESCALEDB_HOST
+          value: timescaledb-service
+        - name: TIMESCALEDB_PORT
+          value: "5432"
+---
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   labels:
+#     app: positions-test
+#   name: positions-test
+# spec:
+#   replicas: 1
+#   selector:
+#     matchLabels:
+#       app: positions-test
+#   template:
+#     metadata:
+#       labels:
+#         app: positions-test
+#     spec:
+#       containers:
+#       - name: positions
+#         image: kubernetes-test:positions
+#         imagePullPolicy: Never
+# ---
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   labels:
+#     app: compute-test
+#   name: compute-test
+# spec:
+#   replicas: 1
+#   selector:
+#     mathLabels:
+#       app: compute-test
+#   template:
+#     metadata:
+#       labels:
+#         app: compute-test
+#     spec:
+#       containers:
+#       - name: compute
+#         image: kubernetes-test:compute
+#         imagePullPolicy: Never
+# ---
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   labels:
+#     app: zookeeper-service
+#   name: zookeeper-service
+# spec:
+#   type: NodePort
+#   ports:
+#     - name: zookeeper-port
+#       port: 2181
+#       nodePort: 30181
+#       targetPort: 2181
+#   selector:
+#     app: zookeeper-test
+# ---
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   labels:
+#     app: zookeeper-test
+#   name: zookeeper-test
+# spec:
+#   replicas: 1
+#   selector:
+#     matchLabels:
+#       app: zookeeper-test
+#   template:
+#     metadata:
+#       labels:
+#         app: zookeeper-test
+#     spec:
+#       containers:
+#       - name: zookeeper
+#         image: bitnami/zookeeper
+#         imagePullPolicy: Always
+#         ports:
+#         - containerPort: 2181
+#         env:
+#         - name: ALLOW_ANONYMOUS_LOGIN
+#           value: "yes"
+# ---
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   labels:
+#     app: kafka
+#   name: kafka-service
+# spec:
+#   ports:
+#     - port: 9092
+#       targetPort: 9093
+#   selector:
+#     app: kafka
+# ---
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   labels:
+#     app: kafka
+#   name: kafka
+# spec:
+#   replicas: 1
+#   selector:
+#     matchLabels:
+#       app: kafka
+#   template:
+#     metadata:
+#       labels:
+#         app: kafka
+#     spec:
+#       containers:
+#       - name: kafka
+#         image: bitnami/kafka
+#         imagePullPolicy: Always 
+#         ports:
+#         - containerPort: 9092
+#         env:
+#         - name: KAFKA_CFG_BROKER_ID
+#           value: "0"
+#         - name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP
+#           value: CLIENT:PLAINTEXT,EXTERNAL:PLAINTEXT
+#         - name: KAFKA_CFG_INTER_BROKER_LISTENER_NAME
+#           value: CLIENT
+#         - name: KAFKA_CFG_LISTENERS
+#           value: CLIENT://:9092,EXTERNAL://:9093
+#         - name: KAFKA_CFG_ADVERTISED_LISTENERS
+#           value: CLIENT://127.0.0.1:9092,EXTERNAL://kafka-service:9092
+#         - name: KAFKA_CFG_ZOOKEEPER_CONNECT
+#           value: zookeeper-service:2181
+#         - name: KAFKA_CFG_AUTO_CREATE_TOPICS
+#           value: 'true'
+#         - name: ALLOW_PLAINTEXT_LISTENER
+#           value: 'yes'
+#         - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+#           value: "1"

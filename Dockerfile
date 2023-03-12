@@ -1,0 +1,3 @@
+FROM postgres:14.2
+
+ENV POSTGRES_PASSWORD=vega

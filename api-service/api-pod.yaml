@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: api-pod
+  labels:
+    app: api-pod
+spec:
+  restartPolicy: Never
+  containers:
+  - name: api
+    image: kubernetes-test/api
+    imagePullPolicy: Never
+    ports:
+    - containerPort: 8080
+    env:
+    - name: TIMESCALEDB_HOST
+      value: timescaledb-service
+    - name: TIMESCALEDB_PORT
+      value: "5432"

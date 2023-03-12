@@ -1,0 +1,52 @@
+{
+  "name": "nanomsg",
+  "version": "4.2.1",
+  "description": "Node bindings for nanomsg",
+  "main": "lib/index.js",
+  "dependencies": {
+    "bindings": "^1.5.0",
+    "nan": "^2.15.0"
+  },
+  "devDependencies": {
+    "buffer-alloc": "1.2.0",
+    "buffer-equals-polyfill": "1.0.0",
+    "buffer-from": "1.1.2",
+    "esformatter": "0.11.3",
+    "tap-difflet": "0.7.2",
+    "tap-nyan": "0.0.2",
+    "tape": "5.4.0"
+  },
+  "scripts": {
+    "test": "find test/*.js test/standalone/*.js | xargs -n 1 node | node_modules/tap-nyan/bin/cmd.js",
+    "beaut": "find . -path ./node_modules -prune -or -name '*.js' -exec sh -c 'cp -a {} {}.tmp; esformatter {} >{}.tmp && mv {}.tmp {}' \\;",
+    "symbols": "cd test && ruby mksymbols.rb > symbols.js"
+  },
+  "keywords": [
+    "nanomsg",
+    "native",
+    "binding",
+    "addon",
+    "nn",
+    "nanømsg"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nickdesaulniers/node-nanomsg.git"
+  },
+  "author": "Nick Desaulniers <ndesaulniers@mozilla.com> (http://nickdesaulniers.github.io)",
+  "contributors": [
+    "a0000778 (https://github.com/a0000778)",
+    "Adam Biro (https://github.com/sirudog)",
+    "Ant Skelton (https://github.com/blowback)",
+    "Benjamin Byholm (https://github.com/kkoopa)",
+    "Bent Cardan (https://github.com/reqshark)",
+    "Deepak Prabhakara (https://github.com/deepakprabhakara)",
+    "Flynn Joffray (https://github.com/nucleardreamer)",
+    "m-ohuchi (https://github.com/m-ohuchi)",
+    "Michele Comignano (https://github.com/comick)",
+    "Nick Desaulniers (https://github.com/nickdesaulniers)",
+    "Tim Cameron Ryan (https://github.com/tcr)",
+    "Trygve Lie (https://github.com/trygve-lie)"
+  ],
+  "license": "MIT"
+}

@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: api-service
+  name: api-service
+spec:
+  ports:
+    - port: 8080
+      targetPort: 8080
+  selector:
+    app: api
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: api
+  name: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+      - name: api
+        image: kubernetes-test/api
+        imagePullPolicy: Never 
+        ports:
+        - containerPort: 8080
+        env:
+        - name: TIMESCALEDB_HOST
+          value: timescaledb-service
+        - name: TIMESCALEDB_PORT
+          value: "5432"

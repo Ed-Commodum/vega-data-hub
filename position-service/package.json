@@ -1,0 +1,15 @@
+{
+  "dependencies": {
+    "kafka-node": "^5.0.0",
+    "pg": "^8.9.0"
+  },
+  "name": "position-service",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": ""
+}

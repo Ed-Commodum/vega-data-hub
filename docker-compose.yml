@@ -1,0 +1,64 @@
+version: "3.7"
+
+services: 
+  zookeeper: 
+    container_name: zookeeper
+    image: bitnami/zookeeper:latest
+    ports:
+      - 2181:2181
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+  
+  kafka:
+    container_name: kafka
+    image: bitnami/kafka:latest
+    ports:
+      - 9092:9092
+    volumes:
+      - ./kafka-data:/bitnami/kafka
+    environment:
+    - KAFKA_CFG_BROKER_ID=0
+    - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092
+    - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+    - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+    - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+    - ALLOW_PLAINTEXT_LISTENER=yes
+    depends_on:
+      - zookeeper
+
+  query_service:
+    container_name: query_service
+    build: ./query-process
+    ports:
+      - 8080:8080
+    environment:
+      - PORT=8080
+      - KAFKA_BROKERS=kafka:9092
+    depends_on:
+      - kafka
+  
+  timescaledb:
+    container_name: timescaledb
+    build: ./timescaledb
+    ports:
+      - <PORT>:<PORT>
+    environment:
+      - PORT=<PORT>
+    depends_on:
+      - kafka
+  
+  trade_service:
+    container_name: trade_service
+    build: ./trade-service
+    environment:
+      - KAFKA_BROKERS=kafka:9092
+    depends_on:
+      - kafka
+  
+  position_service:
+    container_name: position_service
+    build: ./position-service
+    environment:
+      - KAFKA_BROKERS=kafka:9092
+    depends_on:
+      - kafka
