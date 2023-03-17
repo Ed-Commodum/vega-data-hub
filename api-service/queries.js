@@ -240,7 +240,7 @@ const partyQueries = {
         CROSS JOIN LATERAL ( VALUES (x.market_id, x.buyer, x.buyer_fee)
                                 , (x.market_id, x.seller, x.seller_fee)) as y(market_id, party, fee)
         WHERE party = '${partyId}'
-        GROUP BY market_id, party;
+        GROUP BY y.market_id, party;
         `;
     },
     totalFeesPaid(partyId) {
