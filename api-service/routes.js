@@ -359,13 +359,21 @@ const routes = (app, pgPool) => {
         const results = await Promise.all(running);
         console.log(results);
     
-        result['numTrades'] = results[0][1][0].numTrades;
-        result['volume'] = results[1][1][0].volume;
-        result['feesTotal'] = results[2][1][0].total_fees;
-        result['feesInfrastructure'] = results[2][1][0].infrastructure_fees;
-        result['openInterest'] = results[3][1][0].first_open_interest;
-        result['timestamp'] = results[3][1][0].bucket;
-    
+        if (results[0][1].length != 0) {
+            result['numTrades'] = results[0][1][0].numTrades;
+        };
+        if (results[1][1].length != 0) {
+            result['volume'] = results[1][1][0].volume;
+        };
+        if (results[2][1].length != 0) {
+            result['feesTotal'] = results[2][1][0].total_fees;
+            result['feesInfrastructure'] = results[2][1][0].infrastructure_fees;
+        };
+            if (results[3][1].length != 0) {
+            result['openInterest'] = results[3][1][0].first_open_interest;
+            result['timestamp'] = results[3][1][0].bucket;  
+        };
+        
         res.send(result);
     });
     
