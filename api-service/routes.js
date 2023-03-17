@@ -196,16 +196,21 @@ const routes = (app, pgPool) => {
     app.get('/party-risk', async (req, res) => {
     
         const partyId = req.query.partyId;
-        const noArgumentRes = "Please provide a partyId.\n"
-    
-        if (!partyId) {
-            return res.sendStatus(404);
-        };
+
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
     
         const result = {
             partyId: partyId,
             positions: []
         }
+
+        if (!partyId) {
+            res.send(result);
+            // res.sendStatus(404);
+            return;
+        };
     
         // Get positions
         const data = await asyncQuery('positions', partyQueries.openPositions(partyId), pgPool);
@@ -307,6 +312,10 @@ const routes = (app, pgPool) => {
         // Volume, numTrades, fees paid, open interest.
     
         const marketId = req.query.marketId;
+
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
 
         const result = {
             marketId: marketId,
@@ -420,6 +429,10 @@ const routes = (app, pgPool) => {
         let limit = 10;
         const interval = "5m"; 
     
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+
         const result = {
           marketId: marketId,
           interval: interval,
