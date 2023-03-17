@@ -4,6 +4,18 @@ const protoLoader = require("@grpc/proto-loader");
 const { EventEmitter } = require("node:events");
 
 const grpc_urls = ["api.n06.testnet.vega.xyz:3007","api.n07.testnet.vega.xyz:3007","api.n08.testnet.vega.xyz:3007","api.n09.testnet.vega.xyz:3007", "api.n10.testnet.vega.xyz:3007"];        
+const testnet2GrpcUrls = [
+  "grpc.venom.tm.p2p.org:443",
+  "api-n00.validators-testnet.vega.rocks:3007",
+  "api-n02.validators-testnet.vega.rocks:3007",
+  "api-n03.validators-testnet.vega.rocks:3007",
+  "api-n04.validators-testnet.vega.rocks:3007",
+  "api-n05.validators-testnet.vega.rocks:3007",
+  "vega-testnet.anyvalid.com:3007",
+  "testnet.grpc.vega.xprv.io:443",
+  "vega-testnet.nodes.guru:3007",
+  "testnet.vega.greenfield.xyz:3007"
+];
 console.log(__dirname);
 const protoPath = __dirname + "/sources/data-node/api/v2/trading_data.proto";
 console.log(protoPath);
@@ -47,7 +59,11 @@ class TDSClients {
 
 const tradingDataServiceClients = new TDSClients(grpc, datanode);
 
-for (let url of grpc_urls) {
+// for (let url of grpc_urls) {
+//     tradingDataServiceClients.add(url);
+// };
+
+for (let url of testnet2GrpcUrls) {
     tradingDataServiceClients.add(url);
 };
 
