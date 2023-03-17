@@ -392,7 +392,7 @@ const continuousAggregates = {
                 sum(buyer_fee_infrastructure) as buyer_fee_infrastructure,
                 sum(buyer_fee_maker) as buyer_fee_maker,
                 sum(buyer_fee_liquidity) as buyer_fee_liquidity,
-                sum(seller_fee_infrastructure + seller_fee_maker + seller_fee_liquidity) AS seller_fee
+                sum(seller_fee_infrastructure + seller_fee_maker + seller_fee_liquidity) AS seller_fee,
                 sum(seller_fee_infrastructure) as seller_fee_infrastructure,
                 sum(seller_fee_maker) as seller_fee_maker,
                 sum(seller_fee_liquidity) as seller_fee_liquidity
