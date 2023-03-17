@@ -83,6 +83,10 @@ const routes = (app, pgPool) => {
         }
         */
 
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+
         if (!partyId) {
             res.send(result);
             // res.sendStatus(404);
