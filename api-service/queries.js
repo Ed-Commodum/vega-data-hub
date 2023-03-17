@@ -237,8 +237,8 @@ const partyQueries = {
         return `
         SELECT y.market_id, y.party, SUM(y.fee) AS total_fees
         FROM fees_paid_5m x
-        CROSS JOIN LATERAL ( VALUES (x.market_id, x.buyer, x.buyer_fee)
-                                , (x.market_id, x.seller, x.seller_fee)) as y(market_id, party, fee)
+        CROSS JOIN LATERAL ( VALUES (x.market_id, x.buyer, x.buyer_fee, x.buyer_fee_infrastructure, x.buyer_fee_maker x.buyer_fee_liquidity)
+                                , (x.market_id, x.seller, x.seller_fee, x.seller_fee_infrastructure, x.seller_fee_maker x.seller_fee_liquidity)) as y(market_id, party, fee, fee_infrastructure, fee_maker, fee_liquidity)
         WHERE party = '${partyId}'
         GROUP BY y.market_id, party;
         `;

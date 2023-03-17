@@ -115,7 +115,30 @@ const routes = (app, pgPool) => {
         const results = await Promise.all(running);
         console.dir(results, { depth: null });
     
+        for (let i=0; i<results[0][1].length; i++) {
+            const market = {
+                marketId: "",
+                numTrades: { regular: "", self: "", combined: "" },
+                volume: { regular: "", self: "", combined: "" },
+                feesPaid: { liquidity: "", maker: "", infrastructure: "", combined: "" }
+            };
 
+            market.marketId = results[0][1][i].market_id;
+            
+            market["numTrades"].regular = results[0][1][i].num_trades;
+            market["numTrades"].self = results[0][1][i].num_self_trades;
+            market["numTrades"].combined = Number(market.numTrades.regular) + Number(market.numTrades.self);
+
+            market["volume"].regular = results[1][1][i].volume;
+            market["volume"].self = results[1][1][i].self_volume;
+            market["volume"].combined = (BigInt(market.volume.regular) + BigInt(market.volume.self)).toString();
+
+            market["feesPaid"].liquidity
+            market["feesPaid"].maker
+            market["feesPaid"].infrastructure
+            market["feesPaid"].combined
+
+        }
 
         result['numTrades'].regular = results[0][1][0].num_trades;
         result['numTrades'].self = results[0][1][0].num_self_trades;

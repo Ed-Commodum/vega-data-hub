@@ -389,7 +389,13 @@ const continuousAggregates = {
                 sum(CASE WHEN buyer != seller THEN size ELSE 0 END) AS volume,
                 sum(CASE WHEN buyer = seller THEN size ELSE 0 END) AS self_volume,
                 sum(buyer_fee_infrastructure + buyer_fee_maker + buyer_fee_liquidity) AS buyer_fee,
+                sum(buyer_fee_infrastructure) as buyer_fee_infrastructure,
+                sum(buyer_fee_maker) as buyer_fee_maker,
+                sum(buyer_fee_liquidity) as buyer_fee_liquidity,
                 sum(seller_fee_infrastructure + seller_fee_maker + seller_fee_liquidity) AS seller_fee
+                sum(seller_fee_infrastructure) as seller_fee_infrastructure,
+                sum(seller_fee_maker) as seller_fee_maker,
+                sum(seller_fee_liquidity) as seller_fee_liquidity
             FROM trades
             GROUP BY market_id, buyer, seller, time_bucket(300000000000, synth_timestamp);
             `,
