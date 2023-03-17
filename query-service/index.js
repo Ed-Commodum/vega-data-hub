@@ -30,7 +30,7 @@ const packageDefinition = protoLoader.loadSync(protoPath, {
     includeDirs: [ __dirname + "/sources" ]
 });
 const datanode = grpc.loadPackageDefinition(packageDefinition).datanode.api.v2;
-const tradingDataService = new datanode.TradingDataService(grpc_urls[1], grpc.credentials.createInsecure());
+const tradingDataService = new datanode.TradingDataService(testnet2GrpcUrls[1], grpc.credentials.createInsecure());
 
 class TDSClients {
     constructor(grpc, datanode) {
