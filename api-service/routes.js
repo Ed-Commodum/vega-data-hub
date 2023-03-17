@@ -63,7 +63,7 @@ const routes = (app, pgPool) => {
         const partyId = req.query.partyId;
         const result = {
             partyId: partyId,
-            totals: { numTrades: 0, volume: 0n, feesPaid: "0" },
+            totals: { numTrades: 0, volume: "0", feesPaid: "0" },
             markets: []
         };
 
@@ -142,7 +142,7 @@ const routes = (app, pgPool) => {
 
         for (let market of result.markets) {
             result.totals.numTrades += Number(market.numTrades.combined);
-            result.totals.volume += BigInt(market.volume.combined);
+            result.totals.volume = (BigInt(result.totals.volume) + BigInt(market.volume.combined)).toString();
             result.totals.feesPaid = (BigInt(result.totals.feesPaid) + BigInt(market.feesPaid.combined)).toString();
         }
     
