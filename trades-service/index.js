@@ -893,4 +893,4 @@ const flushSubQueue = () => {
     persistTrades(trades);
 };
 
-setTimeout(start, 21000);
+setTimeout(start, 30000);

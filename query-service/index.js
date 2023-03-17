@@ -294,7 +294,7 @@ const start = async () => {
     queries();
 };
 
-setTimeout(start, 26000);
+setTimeout(start, 33000);
 
 // setInterval(() => {
 //     let usage = process.memoryUsage();

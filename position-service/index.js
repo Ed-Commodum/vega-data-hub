@@ -517,4 +517,4 @@ const upsertPositions = (obj, ts) => {
 
 };
 
-setTimeout(start, 27000);
+setTimeout(start, 30000);
