@@ -61,28 +61,9 @@ const routes = (app, pgPool) => {
         // Volume, numTrades, fees paid, open positions.
     
         const partyId = req.query.partyId;
-        const noArgumentRes = "Please provide a partyId.\n"
-    
-        if (!partyId) {
-            res.sendStatus(404);
-            return;
-        };
-    
-
-        // Test to see if party is in the necessary tables: party_data, positions
-        
-        const checkRes = await asyncQuery('checkPartyId', partyQueries.count(partyId, 'party_data_5m'), pgPool);
-        const count = checkRes[1][0].count;
-
-        if (!count || count == 0) {
-            res.sendStatus(404);
-            return;
-        }
-
-        const running = [];
         const result = {
             partyId: partyId,
-            totals: { numTrades: 0, volume: 0, feesPaid: "0" },
+            totals: { numTrades: 0, volume: 0n, feesPaid: "0" },
             markets: []
         };
 
@@ -102,12 +83,30 @@ const routes = (app, pgPool) => {
         }
         */
 
+        if (!partyId) {
+            res.send(result);
+            // res.sendStatus(404);
+            return;
+        };
     
+
+        // Test to see if party is in the necessary tables: party_data, positions
+        
+        const checkRes = await asyncQuery('checkPartyId', partyQueries.count(partyId, 'party_data_5m'), pgPool);
+        const count = checkRes[1][0].count;
+
+        if (!count || count == 0) {
+            res.send(result);
+            // res.sendStatus(404);
+            return;
+        }
+
+        const running = [];
+
         for (let [type, query] of [
             [ 'numTrades', partyQueries.numTrades(partyId) ],
             [ 'volume', partyQueries.volume(partyId) ],
-            [ 'feesPaid', partyQueries.feesPaid(partyId) ],
-            [ 'positions', partyQueries.openPositions(partyId) ] ]) {
+            [ 'feesPaid', partyQueries.feesPaid(partyId) ] ]) {
             
             running.push(asyncQuery(type, query, pgPool));
         };
@@ -133,24 +132,19 @@ const routes = (app, pgPool) => {
             market["volume"].self = results[1][1][i].self_volume;
             market["volume"].combined = (BigInt(market.volume.regular) + BigInt(market.volume.self)).toString();
 
-            market["feesPaid"].liquidity
-            market["feesPaid"].maker
-            market["feesPaid"].infrastructure
-            market["feesPaid"].combined
+            market["feesPaid"].liquidity = result[2][1][i].fee_liquidity;
+            market["feesPaid"].maker = result[2][1][i].fee_maker;
+            market["feesPaid"].infrastructure = result[2][1][i].fee_infrastructure;
+            market["feesPaid"].combined = result[2][1][i].fee_combined;
 
+            result.markets.push(market);
         }
 
-        result['numTrades'].regular = results[0][1][0].num_trades;
-        result['numTrades'].self = results[0][1][0].num_self_trades;
-        result['numTrades'].total = (BigInt(result['numTrades'].regular) + BigInt(result['numTrades'].self)).toString();
-    
-        result['volume'].regular = results[1][1][0].volume;
-        result['volume'].self = results[1][1][0].self_volume;
-        result['volume'].total = (BigInt(result['volume'].regular) + BigInt(result['volume'].self)).toString();
-    
-        result['feesPaid'] = results[2][1][0].total_fees;
-    
-        // result['positions'] = results[3][1]
+        for (let market of result.markets) {
+            result.totals.numTrades += Number(market.numTrades.combined);
+            result.totals.volume += BigInt(market.volume.combined);
+            result.totals.feesPaid = (BigInt(result.totals.feesPaid) + BigInt(market.feesPaid.combined)).toString();
+        }
     
         res.send(result);
     
@@ -309,28 +303,17 @@ const routes = (app, pgPool) => {
         // Volume, numTrades, fees paid, open interest.
     
         const marketId = req.query.marketId;
-        const noArgumentRes = "Please provide a marketId.\n"
-    
-        if (!marketId) {
-            res.sendStatus(404);
-            // res.send(noArgumentRes);
-            return;
-        };
-    
-        const running = [];
+
         const result = {
             marketId: marketId,
             numTrades: 0,
             volume: 0,
-            fees: {
-                total: 0,
-                infrastructure: 0
-            },
-            openInterest: {
-                timestamp: "",
-                value: 0
-            }
-        };
+            feesTotal: 0,
+            feesInfrastructure: 0,
+            openInterest: 0,
+            timestamp: ""
+        }
+
         /*
         Change to this:
         {
@@ -342,6 +325,14 @@ const routes = (app, pgPool) => {
           "timestamp": "string"
         }
         */
+
+        if (!marketId) {
+            res.send(result);
+            // res.sendStatus(404);
+            return;
+        };
+    
+        const running = [];
     
         for (let [type, query] of [
             [ 'numTrades', marketQueries.totalNumTrades(marketId) ],
@@ -357,10 +348,10 @@ const routes = (app, pgPool) => {
     
         result['numTrades'] = results[0][1][0].numTrades;
         result['volume'] = results[1][1][0].volume;
-        result['fees'].total = results[2][1][0].total_fees;
-        result['fees'].infrastructure = results[2][1][0].infrastructure_fees;
-        result['openInterest'].timestamp = results[3][1][0].bucket;
-        result['openInterest'].value = results[3][1][0].first_open_interest;
+        result['feesTotal'] = results[2][1][0].total_fees;
+        result['feesInfrastructure'] = results[2][1][0].infrastructure_fees;
+        result['openInterest'] = results[3][1][0].first_open_interest;
+        result['timestamp'] = results[3][1][0].bucket;
     
         res.send(result);
     });
@@ -422,50 +413,27 @@ const routes = (app, pgPool) => {
     app.get('/market-moving-averages', async (req, res) => {
     
         const marketId = req.query.marketId;
-        let limit = req.query.limit;
-        const interval = req.query.interval;
+        let limit = 10;
+        const interval = "5m"; 
     
-        console.log(marketId, limit, interval);
-    
-        const noArgumentRes = "Please provide a marketId, a limit, and one of the following intervals ['5m'].\n"
-    
-        if (!marketId || !interval) {
-            res.send(404);
-            return;
-        };
-    
-        if (!limit) {
-            limit = 50
-        }
-
-        if (interval != '5m') {
-            return res.sendStatus(404);
-        }
-
         const result = {
-            marketId: marketId,
-            interval: interval,
-            sma50: [],
-            sma100: [],
-            sma200: []
+          marketId: marketId,
+          interval: interval,
+          sma50: [],
+          sma100: [],
+          sma200: []
         }
-    
-        let bucketSize;
-        let safeWindow;
-    
-        if (interval == "5m") {
-            bucketSize = "300000000000"
-            safeWindow = "172800000000000"
-        } else {
-            res.send("Invalid interval");
+
+        if (!marketId) {
+            res.send(result);
             return;
         };
     
+        let bucketSize = "300000000000";
     
-        console.log(marketId, interval, limit, bucketSize, safeWindow);
-        console.log(marketQueries.simpleMovingAverages(marketId, interval, limit, bucketSize, safeWindow));
+        console.log(marketQueries.simpleMovingAverages(marketId, interval, limit, bucketSize));
     
-        const data = await asyncQuery('simpleMovingAverages', marketQueries.simpleMovingAverages(marketId, interval, limit, bucketSize, safeWindow), pgPool);
+        const data = await asyncQuery('simpleMovingAverages', marketQueries.simpleMovingAverages(marketId, interval, limit, bucketSize), pgPool);
     
         for (let item of data[1]) {
             result.sma50.push(Number(item.sma_50));

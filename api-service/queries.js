@@ -134,7 +134,7 @@ const marketQueries = {
         LIMIT 1;
         `;
     },
-    simpleMovingAverages(marketId, interval, limit, bucketSize, safeWindow) {
+    simpleMovingAverages(marketId, interval, limit, bucketSize) {
         return `
         WITH q1 AS (
         SELECT time_bucket_gapfill('${bucketSize}'::bigint, bucket) AS bucket_gf,
@@ -235,10 +235,16 @@ const partyQueries = {
     ,
     feesPaid(partyId) {
         return `
-        SELECT y.market_id, y.party, SUM(y.fee) AS total_fees
-        FROM fees_paid_5m x
-        CROSS JOIN LATERAL ( VALUES (x.market_id, x.buyer, x.buyer_fee, x.buyer_fee_infrastructure, x.buyer_fee_maker x.buyer_fee_liquidity)
-                                , (x.market_id, x.seller, x.seller_fee, x.seller_fee_infrastructure, x.seller_fee_maker x.seller_fee_liquidity)) as y(market_id, party, fee, fee_infrastructure, fee_maker, fee_liquidity)
+        SELECT
+            y.market_id,
+            y.party,
+            sum(y.fee) AS fee_combined,
+            sum(fee_infrastructure) as fee_infrastructure,
+            sum(fee_maker) as fee_maker,
+            sum(fee_liquidity) as fee_liquidity
+        FROM party_data_5m x
+        CROSS JOIN LATERAL ( VALUES (x.market_id, x.buyer, x.buyer_fee, x.buyer_fee_infrastructure, x.buyer_fee_maker, x.buyer_fee_liquidity)
+                                , (x.market_id, x.seller, x.seller_fee, x.seller_fee_infrastructure, x.seller_fee_maker, x.seller_fee_liquidity)) as y(market_id, party, fee, fee_infrastructure, fee_maker, fee_liquidity)
         WHERE party = '${partyId}'
         GROUP BY y.market_id, party;
         `;
