@@ -82,10 +82,8 @@ const routes = (app, pgPool) => {
         const running = [];
         const result = {
             partyId: partyId,
-            numTrades: { regular: 0, self: 0, total: 0 },
-            volume: { regular: 0, self: 0, total: 0 },
-            feesPaid: "",
-            positions: []
+            totals: { numTrades: 0, volume: 0, feesPaid: "0" },
+            markets: []
         };
 
         /*
@@ -106,9 +104,9 @@ const routes = (app, pgPool) => {
 
     
         for (let [type, query] of [
-            [ 'numTrades', partyQueries.totalNumTrades(partyId) ],
-            [ 'volume', partyQueries.totalVolume(partyId) ],
-            [ 'feesPaid', partyQueries.totalFeesPaid(partyId) ],
+            [ 'numTrades', partyQueries.numTrades(partyId) ],
+            [ 'volume', partyQueries.volume(partyId) ],
+            [ 'feesPaid', partyQueries.feesPaid(partyId) ],
             [ 'positions', partyQueries.openPositions(partyId) ] ]) {
             
             running.push(asyncQuery(type, query, pgPool));
@@ -117,6 +115,8 @@ const routes = (app, pgPool) => {
         const results = await Promise.all(running);
         console.log(results);
     
+        
+
         result['numTrades'].regular = results[0][1][0].num_trades;
         result['numTrades'].self = results[0][1][0].num_self_trades;
         result['numTrades'].total = (BigInt(result['numTrades'].regular) + BigInt(result['numTrades'].self)).toString();

@@ -204,8 +204,14 @@ const partyData = {
 const partyQueries = {
     count(partyId, table) {
         return `
-        SELECT count(*) from '${table}'
+        SELECT count(*) from ${table}
         WHERE buyer = '${partyId}' OR seller = '${partyId}';
+        `;
+    },
+    numTrades(partyId) {
+        return `
+        SELECT market_id, sum(num_trades) AS num_trades, sum(num_self_trades) AS num_self_trades FROM party_data_5m
+        WHERE buyer = '${partyId}' OR seller = '${partyId}' GROUP BY market_id;
         `;
     },
     totalNumTrades(partyId) {
@@ -213,7 +219,12 @@ const partyQueries = {
         SELECT sum(num_trades) AS num_trades, sum(num_self_trades) AS num_self_trades FROM party_data_5m
         WHERE buyer = '${partyId}' OR seller = '${partyId}';
         `;
-
+    },
+    volume(partyId) {
+        return `
+        SELECT market_id, sum(volume) AS volume, sum(self_volume) AS self_volume FROM party_data_5m
+        WHERE buyer = '${partyId}' OR seller = '${partyId}' GROUP BY market_id;
+        `;
     },
     totalVolume(partyId) {
         return `
@@ -222,6 +233,16 @@ const partyQueries = {
         `;
     }
     ,
+    feesPaid(partyId) {
+        return `
+        SELECT y.market_id, y.party, SUM(y.fee) AS total_fees
+        FROM fees_paid_5m x
+        CROSS JOIN LATERAL ( VALUES (x.market_id, x.buyer, x.buyer_fee)
+                                , (x.market_id, x.seller, x.seller_fee)) as y(market_id, party, fee)
+        WHERE party = '${partyId}'
+        GROUP BY market_id, party;
+        `;
+    },
     totalFeesPaid(partyId) {
         return `
         SELECT y.party, SUM(y.fee) AS total_fees
