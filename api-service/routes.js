@@ -136,10 +136,10 @@ const routes = (app, pgPool) => {
             market["volume"].self = results[1][1][i].self_volume;
             market["volume"].combined = (BigInt(market.volume.regular) + BigInt(market.volume.self)).toString();
 
-            market["feesPaid"].liquidity = result[2][1][i].fee_liquidity;
-            market["feesPaid"].maker = result[2][1][i].fee_maker;
-            market["feesPaid"].infrastructure = result[2][1][i].fee_infrastructure;
-            market["feesPaid"].combined = result[2][1][i].fee_combined;
+            market["feesPaid"].liquidity = results[2][1][i].fee_liquidity;
+            market["feesPaid"].maker = results[2][1][i].fee_maker;
+            market["feesPaid"].infrastructure = results[2][1][i].fee_infrastructure;
+            market["feesPaid"].combined = results[2][1][i].fee_combined;
 
             result.markets.push(market);
         }
