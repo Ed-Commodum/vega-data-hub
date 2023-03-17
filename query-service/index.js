@@ -49,10 +49,12 @@ class TDSClients {
     query() {
         if (this.value == null) {
             this.value = 0;
+            console.log(this.clients[this.value].getChannel().getTarget());
             return this.clients[this.value];
         }
 
         this.value = (this.value + 1) % this.limit;
+        console.log(this.clients[this.value].getChannel().getTarget());
         return this.clients[this.value];
     };
 };
@@ -134,8 +136,8 @@ const queries = () => {
                 tradesQueried += res.trades.edges.length;
                 callback(err, res)
             } else {
-                console.log(err);
-                console.log(pagination);
+                // console.log(err);
+                // console.log(pagination);
                 callback(err, res);
             };
         });
