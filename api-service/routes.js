@@ -113,9 +113,9 @@ const routes = (app, pgPool) => {
         };
     
         const results = await Promise.all(running);
-        console.log(results);
+        console.dir(results, { depth: null });
     
-        
+
 
         result['numTrades'].regular = results[0][1][0].num_trades;
         result['numTrades'].self = results[0][1][0].num_self_trades;
