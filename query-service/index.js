@@ -205,7 +205,7 @@ const start = async () => {
     const observeTradesReq = {};
     const tradeStream = tradingDataService.ObserveTrades(observeTradesReq);
     tradeStream.on("data", (data) => {
-        console.log("New subscription trades(s):");
+        console.log(`${new Date(Date.now()).toISOString()}: New subscription trades(s):`);
         for (let trade of data.trades) {
             const message = { event: "NEW_SUB_TRADE", body: { data: trade } };
             kafkaProducer.send([{ topic: "trades", messages: JSON.stringify(message) }], (err, result) => {
@@ -238,7 +238,7 @@ const start = async () => {
     const positionStream = tradingDataService.ObservePositions({});
 
     positionStream.on("data", (data) => {
-        console.log("New positions data");
+        console.log(`${new Date(Date.now()).toISOString()}: New positions data`);
 
         if (data.snapshot) {
 

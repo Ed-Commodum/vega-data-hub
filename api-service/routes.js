@@ -87,6 +87,23 @@ const routes = (app, pgPool) => {
             feesPaid: "",
             positions: []
         };
+
+        /*
+        Change to this:
+        {
+          "partyId": "party-id-1",
+          "totals": { "numTrades": 1655, "volume": 165775, "feesPaid": "518435294" },
+          "markets": [
+            {
+              "marketId": "market-id-1",
+              "numTrades": { "regular": 324, "self": 11, "combined": 335 },
+              "volume": { "regular": 63452, "self": 343, "combined": 63795 },
+              "feesPaid": { "liquidity": "2985728", "maker": "34234", "infrastructure": "5234266", "combined": "8254228" }
+            }
+          ]
+        }
+        */
+
     
         for (let [type, query] of [
             [ 'numTrades', partyQueries.totalNumTrades(partyId) ],
@@ -110,12 +127,114 @@ const routes = (app, pgPool) => {
     
         result['feesPaid'] = results[2][1][0].total_fees;
     
-        result['positions'] = results[3][1]
+        // result['positions'] = results[3][1]
     
         res.send(result);
     
     });
     
+    /**
+     *  @openapi
+     *  /party-risk:
+     *    get:
+     *      tags:
+     *        - Party
+     *      description: Responds with current position risk metrics for a party
+     *      parameters:
+     *        - in: query
+     *          name: partyId
+     *          required: true
+     *          schema:
+     *            type: string
+     *          description: The partyId to query. eg; 54abda08fea350d474516914ef2ca98aae31aa8bb8f4407dc01954f6f5999040, 64c4acf58babbcf40bd5fc9393c368eb867cca50815226cc3df52d55011cd53e
+     *      responses:
+     *        '200':
+     *          description: A JSON object containing a party's positions and risk metrics
+     *          content:
+     *            application/json:
+     *              schema:
+     *                type: object
+     *                properties:
+     *                  partyId:
+     *                    type: string
+     *                  positions:
+     *                    type: array
+     *                    items:
+     *                      type: object
+     *                      properties:
+     *                        marketId:
+     *                          type: string
+     *                        openVolume:
+     *                          type: string
+     *                        varInterval:
+     *                          type: string
+     *                        var:
+     *                          type: string
+     * 
+     */
+    app.get('/party-risk', async (req, res) => {
+    
+        const partyId = req.query.partyId;
+        const noArgumentRes = "Please provide a partyId.\n"
+    
+        if (!partyId) {
+            return res.sendStatus(404);
+        };
+    
+        const result = {
+            partyId: partyId,
+            positions: []
+        }
+    
+        // Get positions
+        const data = await asyncQuery('positions', partyQueries.openPositions(partyId), pgPool);
+        const positions = data[1];
+        console.log(positions);
+    
+        // Get VaR for each market where there is a position
+        // Get most recent market price for each position
+        const varsRunning = [];
+        const pricesRunning = [];
+    
+        for (let position of positions) {
+            const marketId = position.market_id;
+            const interval = "1h";
+            const bucketSize = "3600000000000";
+            const confidenceInterval = 0.95;
+    
+            varsRunning.push(asyncQuery('var', marketQueries.valueAtRisk(marketId, interval, bucketSize, confidenceInterval), pgPool));
+            pricesRunning.push(asyncQuery('price', marketQueries.mostRecentPrice(marketId), pgPool));
+        };
+    
+        const vars = await Promise.all(varsRunning);
+        const prices = await Promise.all(pricesRunning);
+    
+        for (let i=0; i<positions.length; i++ ) {
+            const pos = {};
+    
+            pos['marketId'] = positions[i].market_id;
+            pos['openVolume'] = positions[i].open_volume;
+            pos['varInterval'] = "1h";
+    
+            console.log(vars);
+            console.log(vars[i][1][0]['p_cont']);
+            console.log(Number(vars[i][1][0]['p_cont']));
+    
+            pos['var'] = `${(Number(vars[i][1][0]['p_cont'])*100).toFixed(2)}%`;
+    
+            result.positions.push(pos);
+        }
+    
+        console.log(result);
+        res.send(result);
+    
+        // Calculate VaR in settlement asset units.
+    
+    
+    
+    
+    });
+
     /**
      *  @openapi
      *  /market-data:
@@ -189,6 +308,17 @@ const routes = (app, pgPool) => {
                 value: 0
             }
         };
+        /*
+        Change to this:
+        {
+          "marketId": "market-id-1",
+          "numTrades": 0,
+          "feesTotal": 0,
+          "feesInfrastructure": 0,
+          "openInterest": 0,
+          "timestamp": "string"
+        }
+        */
     
         for (let [type, query] of [
             [ 'numTrades', marketQueries.totalNumTrades(marketId) ],
@@ -322,108 +452,6 @@ const routes = (app, pgPool) => {
     
         console.log(result);
         res.send(result);
-    });
-    
-    /**
-     *  @openapi
-     *  /party-risk:
-     *    get:
-     *      tags:
-     *        - Party
-     *      description: Responds with current position risk metrics for a party
-     *      parameters:
-     *        - in: query
-     *          name: partyId
-     *          required: true
-     *          schema:
-     *            type: string
-     *          description: The partyId to query. eg; 54abda08fea350d474516914ef2ca98aae31aa8bb8f4407dc01954f6f5999040, 64c4acf58babbcf40bd5fc9393c368eb867cca50815226cc3df52d55011cd53e
-     *      responses:
-     *        '200':
-     *          description: A JSON object containing a party's positions and risk metrics
-     *          content:
-     *            application/json:
-     *              schema:
-     *                type: object
-     *                properties:
-     *                  partyId:
-     *                    type: string
-     *                  positions:
-     *                    type: array
-     *                    items:
-     *                      type: object
-     *                      properties:
-     *                        marketId:
-     *                          type: string
-     *                        openVolume:
-     *                          type: string
-     *                        varInterval:
-     *                          type: string
-     *                        var:
-     *                          type: string
-     * 
-     */
-    app.get('/party-risk', async (req, res) => {
-    
-        const partyId = req.query.partyId;
-        const noArgumentRes = "Please provide a partyId.\n"
-    
-        if (!partyId) {
-            return res.sendStatus(404);
-        };
-    
-        const result = {
-            partyId: partyId,
-            positions: []
-        }
-    
-        // Get positions
-        const data = await asyncQuery('positions', partyQueries.openPositions(partyId), pgPool);
-        const positions = data[1];
-        console.log(positions);
-    
-        // Get VaR for each market where there is a position
-        // Get most recent market price for each position
-        const varsRunning = [];
-        const pricesRunning = [];
-    
-        for (let position of positions) {
-            const marketId = position.market_id;
-            const interval = "1h";
-            const bucketSize = "3600000000000";
-            const confidenceInterval = 0.95;
-    
-            varsRunning.push(asyncQuery('var', marketQueries.valueAtRisk(marketId, interval, bucketSize, confidenceInterval), pgPool));
-            pricesRunning.push(asyncQuery('price', marketQueries.mostRecentPrice(marketId), pgPool));
-        };
-    
-        const vars = await Promise.all(varsRunning);
-        const prices = await Promise.all(pricesRunning);
-    
-        for (let i=0; i<positions.length; i++ ) {
-            const pos = {};
-    
-            pos['marketId'] = positions[i].market_id;
-            pos['openVolume'] = positions[i].open_volume;
-            pos['varInterval'] = "1h";
-    
-            console.log(vars);
-            console.log(vars[i][1][0]['p_cont']);
-            console.log(Number(vars[i][1][0]['p_cont']));
-    
-            pos['var'] = `${(Number(vars[i][1][0]['p_cont'])*100).toFixed(2)}%`;
-    
-            result.positions.push(pos);
-        }
-    
-        console.log(result);
-        res.send(result);
-    
-        // Calculate VaR in settlement asset units.
-    
-    
-    
-    
     });
     
 
