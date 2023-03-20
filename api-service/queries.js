@@ -26,30 +26,38 @@ const marketData = {
 
 const marketQueries = {
     totalNumTrades(marketId) {
-        return `
+        const query = `
         SELECT sum(num_trades) AS num_trades FROM market_data_5m
-        WHERE market_id = '${marketId}';
+        WHERE market_id = $1;
         `;
+
+        return [ query, [ marketId ] ];
     },
     totalVolume(marketId) {
-        return `
+        const query = `
         SELECT sum(volume) AS volume FROM market_data_5m
-        WHERE market_id = '${marketId}';
+        WHERE market_id = $1;
         `;
+
+        return [ query, [ marketId ] ];
     },
     totalFees(marketId) {
-        return `
+        const query = `
         SELECT sum(fees_paid) AS total_fees,
             sum(fees_paid_infrastructure) AS infrastructure_fees
         FROM market_data_5m
-        WHERE market_id = '${marketId}';
+        WHERE market_id = $1;
         `;
+
+        return [ query, [ marketId ] ];
     },
     openInterest(marketId) {
-        return `
+        const query = `
         SELECT bucket, first AS first_open_interest FROM open_interest_5m
-        WHERE market_id = '${marketId}' ORDER BY bucket DESC LIMIT 1;
+        WHERE market_id = $1 ORDER BY bucket DESC LIMIT 1;
         `;
+
+        return [ query, [ marketId ] ];
     },
     returns(marketId, interval) {
 
@@ -58,15 +66,31 @@ const marketQueries = {
 
     },
     valueAtRisk(marketId, interval, bucketSize, confidenceInterval) {
-        return `
+        
+        let table;
+        switch (interval) {
+            case '5m':
+                table = 'candles_5m';
+                break;
+            case '1h':
+                table = 'candles_1h';
+                break;
+            case '1d':
+                table = 'candles_1d';
+                break;
+            default:
+                table = 'candles_1h';
+        };
+
+        const query = `
         WITH gf AS (
-            SELECT time_bucket_gapfill('${bucketSize}'::bigint, bucket) AS bucket_gf,
+            SELECT time_bucket_gapfill($2::bigint, bucket) AS bucket_gf,
                 last(close, bucket) AS close,
                 locf(last(close, bucket)) AS close_gf
-            FROM candles_${interval}
-            WHERE bucket > first_trade_time('${marketId}') 
-                AND bucket < most_recent_trade_time('${marketId}')
-                AND market_id = '${marketId}'
+            FROM ${table}
+            WHERE bucket > first_trade_time($1) 
+                AND bucket < most_recent_trade_time($1)
+                AND market_id = $1
             GROUP BY bucket_gf
             ORDER BY bucket_gf DESC
         ), returns AS (
@@ -78,10 +102,12 @@ const marketQueries = {
             FROM gf
             ORDER BY bucket_gf DESC
         ) SELECT
-            percentile_cont(${1-confidenceInterval}) WITHIN GROUP (ORDER BY return) AS p_cont, 
-            percentile_disc(${1-confidenceInterval}) WITHIN GROUP (ORDER BY return) AS p_disc
+            percentile_cont($3) WITHIN GROUP (ORDER BY return) AS p_cont, 
+            percentile_disc($3) WITHIN GROUP (ORDER BY return) AS p_disc
         FROM returns;
         `;
+
+        return [ query, [ marketId, bucketSize, (1-confidenceInterval) ] ];
 
         `
         WITH gf AS (
@@ -121,29 +147,51 @@ const marketQueries = {
 
     },
     mostRecentPrice(marketId) {
-        return `
+        const query = `
         SELECT time_bucket_gapfill('3600000000000'::bigint, bucket) AS bucket_gf,
             last(close, bucket) AS close,
             locf(last(close, bucket)) AS close_gf
         FROM candles_1h
-        WHERE bucket >= most_recent_trade_time('${marketId}') - '2592000000000000'::bigint
-            AND bucket < most_recent_trade_time('${marketId}')
-            AND market_id = '${marketId}'
+        WHERE bucket >= most_recent_trade_time($1) - '2592000000000000'::bigint
+            AND bucket < most_recent_trade_time($1)
+            AND market_id = $1
         GROUP BY bucket_gf
         ORDER BY bucket_gf DESC
         LIMIT 1;
         `;
+
+        return [ query, [ marketId ] ];
     },
     simpleMovingAverages(marketId, interval, limit, bucketSize) {
-        return `
+        
+        let table;
+        switch (interval) {
+            case '5m':
+                table = 'candles_5m';
+                bucketSize = "300000000000";
+                break;
+            case '1h':
+                table = 'candles_1h';
+                bucketSize = "3600000000000";
+                break;
+            case '1d':
+                table = 'candles_1d';
+                bucketSize = "86400000000000";
+                break;
+            default:
+                table = 'candles_1h';
+                bucketSize = "3600000000000";
+        };
+        
+        const query = `
         WITH q1 AS (
-        SELECT time_bucket_gapfill('${bucketSize}'::bigint, bucket) AS bucket_gf,
+        SELECT time_bucket_gapfill($3::bigint, bucket) AS bucket_gf,
             last(close, bucket) AS close,
             locf(last(close, bucket)) AS close_gf
-        FROM candles_${interval}
-        WHERE bucket > first_trade_time('${marketId}') 
-            AND bucket < most_recent_trade_time('${marketId}')
-            AND market_id = '${marketId}'
+        FROM ${table}
+        WHERE bucket > first_trade_time($1) 
+            AND bucket < most_recent_trade_time($1)
+            AND market_id = $1
         GROUP BY bucket_gf
         ORDER BY bucket_gf DESC
         )
@@ -159,8 +207,10 @@ const marketQueries = {
             ) AS sma_200
         FROM q1
         ORDER BY bucket_gf DESC
-        LIMIT ${limit};
+        LIMIT $2;
         `;
+
+        return [ query, [ marketId, limit, bucketSize ] ];
 
         `
         WITH q1 AS (
@@ -210,39 +260,42 @@ const partyQueries = {
         `;
 
         return [ query, [ partyId ] ] ;
-
-        `
-        SELECT count(*) from ${table}
-        WHERE buyer = '${partyId}' OR seller = '${partyId}';
-        `;
     },
     numTrades(partyId) {
-        return `
+        const query = `
         SELECT market_id, sum(num_trades) AS num_trades, sum(num_self_trades) AS num_self_trades FROM party_data_5m
-        WHERE buyer = '${partyId}' OR seller = '${partyId}' GROUP BY market_id;
+        WHERE buyer = $1 OR seller = $1 GROUP BY market_id;
         `;
+
+        return [ query, [ partyId ] ];
     },
     totalNumTrades(partyId) {
-        return `
+        const query = `
         SELECT sum(num_trades) AS num_trades, sum(num_self_trades) AS num_self_trades FROM party_data_5m
-        WHERE buyer = '${partyId}' OR seller = '${partyId}';
+        WHERE buyer = $1 OR seller = $1;
         `;
+
+        return [ query, [ partyId ] ];
     },
     volume(partyId) {
-        return `
+        const query = `
         SELECT market_id, sum(volume) AS volume, sum(self_volume) AS self_volume FROM party_data_5m
-        WHERE buyer = '${partyId}' OR seller = '${partyId}' GROUP BY market_id;
+        WHERE buyer = $1 OR seller = $1 GROUP BY market_id;
         `;
+
+        return [ query, [ partyId ] ];
     },
     totalVolume(partyId) {
-        return `
+        const query = `
         SELECT sum(volume) AS volume, sum(self_volume) AS self_volume FROM party_data_5m
-        WHERE buyer = '${partyId}' OR seller = '${partyId}';
+        WHERE buyer = $1 OR seller = $1;
         `;
+
+        return [ query, [ partyId ] ];
     }
     ,
     feesPaid(partyId) {
-        return `
+        const query = `
         SELECT
             y.market_id,
             y.party,
@@ -253,24 +306,30 @@ const partyQueries = {
         FROM party_data_5m x
         CROSS JOIN LATERAL ( VALUES (x.market_id, x.buyer, x.buyer_fee, x.buyer_fee_infrastructure, x.buyer_fee_maker, x.buyer_fee_liquidity)
                                 , (x.market_id, x.seller, x.seller_fee, x.seller_fee_infrastructure, x.seller_fee_maker, x.seller_fee_liquidity)) as y(market_id, party, fee, fee_infrastructure, fee_maker, fee_liquidity)
-        WHERE party = '${partyId}'
+        WHERE party = $1
         GROUP BY y.market_id, party;
         `;
+
+        return [ query, [ partyId ] ];
     },
     totalFeesPaid(partyId) {
-        return `
+        const query = `
         SELECT y.party, SUM(y.fee) AS total_fees
         FROM fees_paid_5m x
         CROSS JOIN LATERAL ( VALUES (x.buyer, x.buyer_fee)
                                 , (x.seller, x.seller_fee)) as y(party, fee)
-        WHERE party = '${partyId}'
+        WHERE party = $1
         GROUP BY party;
         `;
+
+        return [ query, [ partyId ] ];
     },
     openPositions(partyId) {
-        return `
-        SELECT * FROM positions AS positions WHERE open_volume > 0 AND party_id = '${partyId}';
+        const query = `
+        SELECT * FROM positions AS positions WHERE open_volume > 0 AND party_id = $1;
         `;
+
+        return [ query, [ partyId ] ];
     },
     historicalPnls: ``
 }

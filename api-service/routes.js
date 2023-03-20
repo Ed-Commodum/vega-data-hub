@@ -212,7 +212,7 @@ const routes = (app, pgPool) => {
         };
     
         // Get positions
-        const data = await asyncQuery('positions', partyQueries.openPositions(partyId), pgPool);
+        const data = await asyncQuery('positions', ...partyQueries.openPositions(partyId), pgPool);
         const positions = data[1];
         console.log(positions);
     
@@ -227,8 +227,8 @@ const routes = (app, pgPool) => {
             const bucketSize = "3600000000000";
             const confidenceInterval = 0.95;
     
-            varsRunning.push(asyncQuery('var', marketQueries.valueAtRisk(marketId, interval, bucketSize, confidenceInterval), pgPool));
-            pricesRunning.push(asyncQuery('price', marketQueries.mostRecentPrice(marketId), pgPool));
+            varsRunning.push(asyncQuery('var', ...marketQueries.valueAtRisk(marketId, interval, bucketSize, confidenceInterval), pgPool));
+            pricesRunning.push(asyncQuery('price', ...marketQueries.mostRecentPrice(marketId), pgPool));
         };
     
         const vars = await Promise.all(varsRunning);
@@ -347,10 +347,10 @@ const routes = (app, pgPool) => {
         const running = [];
     
         for (let [type, query] of [
-            [ 'numTrades', marketQueries.totalNumTrades(marketId) ],
-            [ 'volume', marketQueries.totalVolume(marketId) ],
-            [ 'fees', marketQueries.totalFees(marketId) ],
-            [ 'openInterest', marketQueries.openInterest(marketId) ] ]) {
+            [ 'numTrades', ...marketQueries.totalNumTrades(marketId) ],
+            [ 'volume', ...marketQueries.totalVolume(marketId) ],
+            [ 'fees', ...marketQueries.totalFees(marketId) ],
+            [ 'openInterest', ...marketQueries.openInterest(marketId) ] ]) {
             
             running.push(asyncQuery(type, query, pgPool));
         };
@@ -455,9 +455,9 @@ const routes = (app, pgPool) => {
     
         let bucketSize = "300000000000";
     
-        console.log(marketQueries.simpleMovingAverages(marketId, interval, limit, bucketSize));
+        console.log(...marketQueries.simpleMovingAverages(marketId, interval, limit, bucketSize));
     
-        const data = await asyncQuery('simpleMovingAverages', marketQueries.simpleMovingAverages(marketId, interval, limit, bucketSize), pgPool);
+        const data = await asyncQuery('simpleMovingAverages', ...marketQueries.simpleMovingAverages(marketId, interval, limit, bucketSize), pgPool);
     
         for (let item of data[1]) {
             result.sma50.push(Number(item.sma_50));
@@ -471,34 +471,34 @@ const routes = (app, pgPool) => {
     
 
     
-    app.get('/party-fees-total', (req, res) => {
+    // app.get('/party-fees-total', (req, res) => {
     
-        const partyId = req.query.partyId;
-        const noArgumentRes = "Please provide a partyId.\n"
+    //     const partyId = req.query.partyId;
+    //     const noArgumentRes = "Please provide a partyId.\n"
     
-        if (!partyId) {
-            res.send(noArgumentRes);
-        };
+    //     if (!partyId) {
+    //         res.send(noArgumentRes);
+    //     };
     
-        const query = `
-        SELECT y.party, SUM(y.fee)
-        FROM fees_paid_1d x
-        CROSS JOIN LATERAL ( VALUES (x.buyer, x.buyer_fee)
-                                  , (x.seller, x.seller_fee)) as y(party, fee)
-        WHERE party = '${partyId}'
-        GROUP BY party;
-        `
+    //     const query = `
+    //     SELECT y.party, SUM(y.fee)
+    //     FROM fees_paid_1d x
+    //     CROSS JOIN LATERAL ( VALUES (x.buyer, x.buyer_fee)
+    //                               , (x.seller, x.seller_fee)) as y(party, fee)
+    //     WHERE party = '${partyId}'
+    //     GROUP BY party;
+    //     `
     
-        pgPool.query(query, (err, result) => {
-            if (!err) {
-                console.log(result);
-                res.send(result);
+    //     pgPool.query(query, (err, result) => {
+    //         if (!err) {
+    //             console.log(result);
+    //             res.send(result);
     
-            } else {
-                console.log(err);
-            }
-        });
-    });
+    //         } else {
+    //             console.log(err);
+    //         }
+    //     });
+    // });
 
 };
 
