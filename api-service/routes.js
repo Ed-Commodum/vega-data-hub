@@ -346,13 +346,13 @@ const routes = (app, pgPool) => {
     
         const running = [];
     
-        for (let [type, query] of [
+        for (let [type, query, values] of [
             [ 'numTrades', ...marketQueries.totalNumTrades(marketId) ],
             [ 'volume', ...marketQueries.totalVolume(marketId) ],
             [ 'fees', ...marketQueries.totalFees(marketId) ],
             [ 'openInterest', ...marketQueries.openInterest(marketId) ] ]) {
             
-            running.push(asyncQuery(type, query, pgPool));
+            running.push(asyncQuery(type, query, values, pgPool));
         };
     
         const results = await Promise.all(running);
