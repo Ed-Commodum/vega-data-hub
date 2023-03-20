@@ -95,7 +95,7 @@ const routes = (app, pgPool) => {
     
 
         // Test to see if party is in the necessary tables: party_data
-        const checkRes = await asyncQuery('checkPartyId', ...partyQueries.count(partyId, 'party_data_5m'), pgPool);
+        const checkRes = await asyncQuery('checkPartyId', ...partyQueries.countPartyData(partyId), pgPool);
         const count = checkRes[1][0].count;
 
         if (!count || count == 0) {

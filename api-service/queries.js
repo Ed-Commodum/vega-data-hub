@@ -202,14 +202,14 @@ const partyData = {
 }
 
 const partyQueries = {
-    count(partyId, table) {
+    countPartyData(partyId) {
         
         const query = `
-        SELECT count(*) from $2
+        SELECT count(*) from party_data_5m
         WHERE buyer = $1 OR seller = $1;
         `;
 
-        return [ query, [ partyId, table ] ] ;
+        return [ query, [ partyId ] ] ;
 
         `
         SELECT count(*) from ${table}
