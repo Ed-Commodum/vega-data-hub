@@ -5,8 +5,8 @@ COPY sources /app/sources/
 RUN npm install
 RUN npm install -g nodemon
 COPY index.js /app/
-ENV GRPC_TRACE all
-ENV GRPC_VERBOSITY DEBUG
+# ENV GRPC_TRACE all
+# ENV GRPC_VERBOSITY DEBUG
 CMD ["nodemon", "index.js"]
 
 # "--inspect", "--max-old-space-size=40", "--trace-gc",
