@@ -14,7 +14,7 @@ const testnet2GrpcUrls = [
   "vega-testnet.anyvalid.com:3007",
   "testnet.grpc.vega.xprv.io:443",
   "vega-testnet.nodes.guru:3007",
-  "testnet.vega.greenfield.xyz:3007"
+//   "testnet.vega.greenfield.xyz:3007"
 ];
 console.log(__dirname);
 const protoPath = __dirname + "/sources/data-node/api/v2/trading_data.proto";
