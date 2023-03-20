@@ -203,7 +203,15 @@ const partyData = {
 
 const partyQueries = {
     count(partyId, table) {
-        return `
+        
+        const query = `
+        SELECT count(*) from $2
+        WHERE buyer = $1 OR seller = $1;
+        `;
+
+        return [ query, [ partyId, table ] ] ;
+
+        `
         SELECT count(*) from ${table}
         WHERE buyer = '${partyId}' OR seller = '${partyId}';
         `;
@@ -267,20 +275,31 @@ const partyQueries = {
     historicalPnls: ``
 }
 
-const asyncQuery = (type, query, pgPool) => {
+const asyncQuery = (type, query, values, pgPool) => {
     return new Promise((resolve, reject) => {
         
         console.log(query);
 
-        pgPool.query(query, (err, result) => {
-            if (!err) {
-                console.log(type);
-                console.log(result.rows);
-                resolve([type, result.rows]);
-            } else {
-                console.log(err);
-            };
-        });      
+        // pgPool.query(query, (err, result) => {
+        //     if (!err) {
+        //         console.log(type);
+        //         console.log(result.rows);
+        //         resolve([type, result.rows]);
+        //     } else {
+        //         console.log(err);
+        //     };
+        // });
+        
+        pgPool.query(query, values, (err, result) => {
+          if (!err) {
+              console.log(type);
+              console.log(result.rows);
+              resolve([type, result.rows]);
+          } else {
+              console.log(err);
+          };
+      }); 
+
     });
 };
 

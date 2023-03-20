@@ -94,9 +94,8 @@ const routes = (app, pgPool) => {
         };
     
 
-        // Test to see if party is in the necessary tables: party_data, positions
-        
-        const checkRes = await asyncQuery('checkPartyId', partyQueries.count(partyId, 'party_data_5m'), pgPool);
+        // Test to see if party is in the necessary tables: party_data
+        const checkRes = await asyncQuery('checkPartyId', ...partyQueries.count(partyId, 'party_data_5m'), pgPool);
         const count = checkRes[1][0].count;
 
         if (!count || count == 0) {
@@ -107,12 +106,12 @@ const routes = (app, pgPool) => {
 
         const running = [];
 
-        for (let [type, query] of [
-            [ 'numTrades', partyQueries.numTrades(partyId) ],
-            [ 'volume', partyQueries.volume(partyId) ],
-            [ 'feesPaid', partyQueries.feesPaid(partyId) ] ]) {
+        for (let [type, query, values ] of [
+            [ 'numTrades', ...partyQueries.numTrades(partyId) ],
+            [ 'volume', ...partyQueries.volume(partyId) ],
+            [ 'feesPaid', ...partyQueries.feesPaid(partyId) ] ]) {
             
-            running.push(asyncQuery(type, query, pgPool));
+            running.push(asyncQuery(type, query, values, pgPool));
         };
     
         const results = await Promise.all(running);
