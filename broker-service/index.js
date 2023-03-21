@@ -35,7 +35,7 @@ async function main() {
     const root = new protobuf.Root();
     root.resolvePath = (origin, target) => {
         console.log(`origin: ${origin}, target: ${target}`);
-        return 'vega/' + target;
+        return origin + target;
     };
     root.loadSync(relativeEventsProtoPath);
     // const root = protobuf.loadSync({ root: rootPath, file: relativeEventsProtoPath });
