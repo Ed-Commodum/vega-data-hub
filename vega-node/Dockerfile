@@ -36,8 +36,8 @@ RUN apt-get update && apt-get install -y curl pwgen lsb-release curl wget git jq
 
 # Get vega binary from releases page
 RUN wget -q -P /root/vega-downloads/binaries/0.68.4/ https://github.com/vegaprotocol/vega/releases/download/v0.68.4/vega-linux-amd64.zip && \
-    unzip /root/vega-downloads/binaries/0.68.4/vega-linux-amd64.zip && \
-    cp /root/vega-downloads/binaries/0.68.4/vega /bin/vega
+    unzip /root/vega-downloads/binaries/0.68.4/vega-linux-amd64.zip -d /bin/ && \
+    vega version
 
 # Environemnt variables
 ARG DEBIAN_FRONTEND=noninteractive
