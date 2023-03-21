@@ -58,6 +58,7 @@ RUN jq -r '.chain_id' fairground-node-config/genesis.json > chain_id.txt
 # RUN curl -s 'https://n00.testnet.vega.xyz/config/tendermint-config.toml' > fairground-node-config/tendermint-config.toml
 RUN curl -s 'https://n00.validators-testnet.vega.xyz/config/tendermint-config.toml' > fairground-node-config/tendermint-config.toml
 RUN grep -Po '(?<=^persistent_peers = ")[^"]*' fairground-node-config/tendermint-config.toml > peers.txt
+RUN grep -Po '(?<=^seeds = ")[^"]*' fairground-node-config/tendermint-config.toml > seeds.txt
 
 # ENV PEERS='503a32dbd88dfddaaedb26c08bf94e3b88271527@n01.testnet.vega.xyz:26656,d11e5c33795d1759db8bc50061e6a0c445aef47e@n02.testnet.vega.xyz:26656'
 # ENV ETH_RPC='https://sepolia.infura.io/v3/869041539dd64f1e911a18813bdf8712'
