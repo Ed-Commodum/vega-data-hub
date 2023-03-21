@@ -33,7 +33,7 @@ async function main() {
 
     const root1 = await protobuf.load('/app/events.proto');
     console.log(root1);
-    const BusEvent = root1.lookupType(vega.events.v1.BusEvent);
+    const BusEvent = root1.lookupType('vega.events.v1.BusEvent');
 
 
     // Load events proto and BusEvent type
@@ -42,7 +42,7 @@ async function main() {
         console.log(`origin: ${origin}, target: ${target}`);
         return rootPath + target;
     };
-    root.load(relativeEventsProtoPath).then((root) => { console.log(root); return root; }).then((root) => { console.log(root.lookupType(vega.events.v1.BusEvent)) });
+    root.load(relativeEventsProtoPath).then((root) => { console.log(root); return root; }).then((root) => { console.log(root.lookupType('vega.events.v1.BusEvent')) });
     // const root = protobuf.loadSync({ root: rootPath, file: relativeEventsProtoPath });
     console.log(root);
     // const BusEvent = root.lookupType(vega.events.v1.BusEvent);
