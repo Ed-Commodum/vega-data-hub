@@ -36,10 +36,10 @@ async function main() {
         console.log(`origin: ${origin}, target: ${target}`);
         return rootPath + target;
     };
-    root.loadSync(relativeEventsProtoPath);
+    root.load(relativeEventsProtoPath).then((root) => { console.log(root) }).then((root) => { console.log(root.lookupType(vega.events.v1.BusEvent)) });
     // const root = protobuf.loadSync({ root: rootPath, file: relativeEventsProtoPath });
     console.log(root);
-    const BusEvent = root.lookupType(events.v1.BusEvent);
+    const BusEvent = root.lookupType(vega.events.v1.BusEvent);
 
     // Start broker server
     startBrokerServer(nano, BusEvent);
