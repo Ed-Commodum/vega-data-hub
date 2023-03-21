@@ -35,7 +35,7 @@ FROM ubuntu:20.04
 RUN apt-get update && apt-get install -y curl pwgen lsb-release curl wget git jq unzip
 
 # Get vega binary from releases page
-RUN wget -P /root/vega-downloads/binaries/0.68.4/ https://github.com/vegaprotocol/vega/releases/download/v0.68.4/vega-linux-amd64.zip && \
+RUN wget -q -P /root/vega-downloads/binaries/0.68.4/ https://github.com/vegaprotocol/vega/releases/download/v0.68.4/vega-linux-amd64.zip && \
     unzip vega-linux-amd64.zip && \
     cp vega /bin/vega
 
