@@ -72,6 +72,7 @@ RUN touch pass.txt && \
     vega init --output json full && \
     vega tm init full && \
     sed -i '/Broker\.Socket/,+9{/Broker\.Socket/,+8{b};s/.*/    Enabled = true/}' .config/vega/node/config.toml && \
+    sed -i '/Broker\.Socket/,+7{/Broker\.Socket/,+6{b};s/.*/    Address = "broker_address"/}' .config/vega/node/config.toml && \
     cp fairground-node-config/genesis.json .tendermint/config/genesis.json && \
     # sed -i "/RPCEndpoint =/c\  RPCEndpoint = '$ETH_RPC'" .config/vega/node/config.toml && \
     sed -i "/persistent_peers =/c\persistent_peers = '$PEERS'" .tendermint/config/config.toml && \
