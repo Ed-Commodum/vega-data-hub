@@ -1,4 +1,5 @@
-FROM node:16.14.2-alpine
+FROM node:18.14.1-alpine
+RUN apt install pkg-config
 WORKDIR /app
 COPY package.json /app/
 RUN npm install
