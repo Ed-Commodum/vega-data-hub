@@ -38,8 +38,8 @@ async function main() {
         console.log(`origin: ${origin}, target: ${target}`);
         return rootPath + target;
     };
-    root.loadSync({ root: rootPath, file: relativeEventsProtoPath });
-    // console.log(root);
+    root.loadSync(relativeEventsProtoPath);
+    console.log(root);
     const BusEvent = root.lookupType('vega.events.v1.BusEvent');
 
     // Start broker server
