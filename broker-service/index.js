@@ -13,8 +13,8 @@ pair.on('data', (msg) => {
     msgCount += 1;
     console.log(`${msgCount} messages recieved...`);
 
-    if (msgCount % 10 == 0) {
-        console.log(msg);
+    if (msgCount % 100 == 0) {
+        console.log(msg.toString());
     };
 
 });
