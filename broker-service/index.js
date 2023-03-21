@@ -3,28 +3,30 @@ const protobuf = require('protobufjs');
 const rootPath = __dirname + '/sources/';
 const relativeEventsProtoPath = 'vega/events/v1/events.proto';
 
-function startBrokerServer(nano, BusEvent) {
+function newBrokerServer(nano, BusEvent) {
 
     let msgCount = 0;
 
     const pair = nano.socket('pair');
     const addr = 'tcp://0.0.0.0:3005';
 
-    pair.bind(addr);
+    // pair.bind(addr);
 
-    pair.on('data', (msg) => {
+    // pair.on('data', (msg) => {
 
-        msgCount += 1;
-        console.log(`${msgCount} messages recieved...`);
+    //     msgCount += 1;
+    //     console.log(`${msgCount} messages recieved...`);
 
-        const obj = BusEvent.decode(msg);
-        console.log(obj);
+    //     const obj = BusEvent.decode(msg);
+    //     console.log(obj);
 
-        // if (msgCount % 100 == 0) {
-        //     console.log(msg);
-        // };
+    //     // if (msgCount % 100 == 0) {
+    //     //     console.log(msg);
+    //     // };
 
-    });
+    // });
+
+    return pair;
 
 };
 
@@ -41,8 +43,25 @@ async function main() {
     const BusEvent = root.lookupType(vega.events.v1.BusEvent);
 
     // Start broker server
-    startBrokerServer(nano, BusEvent);
+    const pair = newBrokerServer(nano, BusEvent);
 
+    return [ pair, BusEvent ];
 }
 
-main();
+const [ pair, BusEvent ] = main();
+
+pair.bind(addr);
+
+pair.on('data', (msg) => {
+
+    msgCount += 1;
+    console.log(`${msgCount} messages recieved...`);
+
+    const obj = BusEvent.decode(msg);
+    console.log(obj);
+
+    // if (msgCount % 100 == 0) {
+    //     console.log(msg);
+    // };
+
+});
