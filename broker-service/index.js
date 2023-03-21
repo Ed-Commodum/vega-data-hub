@@ -3,7 +3,7 @@ const nano = require('nanomsg');
 
 let msgCount = 0;
 
-const pair = nano.socket('pair').setEncoding('utf8');
+const pair = nano.socket('pair');
 const addr = 'tcp://0.0.0.0:3005';
 
 pair.bind(addr);

@@ -67,6 +67,7 @@ RUN grep -Po '(?<=^seeds = ")[^"]*' fairground-node-config/tendermint-config.tom
 # Configure full node and datanode
 RUN touch pass.txt && \
     export PEERS=$(cat peers.txt) && \
+    export SEEDS=$(cat seeds.txt) && \
     # export ETH_RPC="https://sepolia.infura.io/v3/869041539dd64f1e911a18813bdf8712" && \
     echo "$(pwgen 16 1)" >> pass.txt && \
     vega datanode init $(cat chain_id.txt) --home /home/ian/datanode-home && \
@@ -77,6 +78,7 @@ RUN touch pass.txt && \
     cp fairground-node-config/genesis.json .tendermint/config/genesis.json && \
     # sed -i "/RPCEndpoint =/c\  RPCEndpoint = '$ETH_RPC'" .config/vega/node/config.toml && \
     sed -i "/persistent_peers =/c\persistent_peers = '$PEERS'" .tendermint/config/config.toml && \
+    sed -i "/seeds =/c\seeds = '$SEEDS'" .tendermint/config/config.toml && \
     sed -i "/max_packet_msg_payload_size =/c\max_packet_msg_payload_size = 16384" .tendermint/config/config.toml && \
     vega nodewallet import --output json --chain tendermint --tendermint-home /home/ian/.tendermint --passphrase-file /home/ian/pass.txt --wallet-passphrase-file /home/ian/pass.txt && \
     vega nodewallet generate --output json --chain vega --passphrase-file /home/ian/pass.txt --wallet-passphrase-file /home/ian/pass.txt
