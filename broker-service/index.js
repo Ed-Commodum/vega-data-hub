@@ -38,8 +38,8 @@ async function main() {
     };
     root.loadSync(relativeEventsProtoPath);
     // const root = protobuf.loadSync({ root: rootPath, file: relativeEventsProtoPath });
-    console.dir(root, {depth:null});
-    const BusEvent = root.lookupType(vega.events.v1.BusEvent);
+    console.log(root);
+    const BusEvent = root.lookupType(events.v1.BusEvent);
 
     // Start broker server
     startBrokerServer(nano, BusEvent);
