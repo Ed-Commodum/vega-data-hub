@@ -1,7 +1,7 @@
 const nano = require('nanomsg');
 const protobuf = require('protobufjs');
-const rootPath = __dirname + "/sources/vega";
-const eventsProtoPath = __dirname + "/sources/vega/events/v1/events.proto";
+const rootPath = __dirname + '/sources/vega';
+const relativeEventsProtoPath = '/events/v1/events.proto';
 
 function startBrokerServer(nano, BusEvent) {
 
@@ -31,7 +31,7 @@ function startBrokerServer(nano, BusEvent) {
 async function main() {
 
     // Load events proto and BusEvent type
-    const root = await protobuf.load(eventsProtoPath, rootPath);
+    const root = await protobuf.load({ root: rootPath, file: relativeEventsProtoPath });
     const BusEvent = root.lookupType(vega.events.v1.BusEvent);
 
     // Start broker server
