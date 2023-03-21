@@ -58,7 +58,7 @@ RUN touch pass.txt && \
     export PEERS=$(cat peers.txt) && \
     export ETH_RPC="https://sepolia.infura.io/v3/869041539dd64f1e911a18813bdf8712" && \
     echo "$(pwgen 16 1)" >> pass.txt && \
-    vega datanode init $(cat chain_id.txt) --home /home/ian && \
+    vega datanode init $(cat chain_id.txt) --home /home/ian/datanode-home && \
     vega init --output json full && \
     vega tm init full && \
     sed -i '/Broker\.Socket/,+9{/Broker\.Socket/,+8{b};s/.*/    Enabled = true/}' .config/vega/node/config.toml && \

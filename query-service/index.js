@@ -74,7 +74,7 @@ const kafkaClient = new kafka.KafkaClient({ kafkaHost: kafkaBrokers[0] });
 const kafkaProducer = new kafka.Producer(kafkaClient);
 const kafkaAdmin = new kafka.Admin(kafkaClient);
 
-const marketId = "10c7d40afd910eeac0c2cad186d79cb194090d5d5f13bd31e14c49fd1bded7e2";
+// const marketId = "10c7d40afd910eeac0c2cad186d79cb194090d5d5f13bd31e14c49fd1bded7e2";
 
 let lastKnownTradeCursor;
 
@@ -228,7 +228,7 @@ const start = async () => {
             const message = { event: "NEW_SUB_TRADE", body: { data: trade } };
             kafkaProducer.send([{ topic: "trades", messages: JSON.stringify(message) }], (err, result) => {
                 if (!err) {
-                    // Fucking blessing
+                    
                 } else {
                     console.log(err);
                 };
