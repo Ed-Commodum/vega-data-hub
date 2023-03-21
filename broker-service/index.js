@@ -1,7 +1,7 @@
 const nano = require('nanomsg');
 const protobuf = require('protobufjs');
-const rootPath = __dirname + '/sources/vega';
-const relativeEventsProtoPath = '/events/v1/events.proto';
+const rootPath = __dirname + '/sources/';
+const relativeEventsProtoPath = 'vega/events/v1/events.proto';
 
 function startBrokerServer(nano, BusEvent) {
 
