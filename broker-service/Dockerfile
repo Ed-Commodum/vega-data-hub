@@ -1,5 +1,5 @@
 FROM node:18.14.1-alpine
-RUN apk add pkgconfig
+RUN apk add pkgconfig python
 WORKDIR /app
 COPY package.json /app/
 RUN npm install
