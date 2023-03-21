@@ -1,35 +1,43 @@
-FROM ubuntu:20.04 as builder
+# FROM ubuntu:20.04 as builder
 
-# Dependencies
-RUN apt-get update && apt-get install -y git wget curl build-essential postgresql-client 
+# # Dependencies
+# RUN apt-get update && apt-get install -y git wget curl build-essential postgresql-client 
 
-# Install Go version 1.19
-RUN wget https://go.dev/dl/go1.19.4.linux-amd64.tar.gz && \
-    rm -rf /usr/local/go && \
-    tar -C /usr/local -xzf go1.19.4.linux-amd64.tar.gz && \
-    ./usr/local/go/bin/go version
+# # Install Go version 1.19
+# RUN wget https://go.dev/dl/go1.19.4.linux-amd64.tar.gz && \
+#     rm -rf /usr/local/go && \
+#     tar -C /usr/local -xzf go1.19.4.linux-amd64.tar.gz && \
+#     ./usr/local/go/bin/go version
 
-ENV PATH=$PATH:/usr/local/go/bin
+# ENV PATH=$PATH:/usr/local/go/bin
 
-# Build the Vega binary
-RUN git clone --branch v0.68.4 https://github.com/vegaprotocol/vega.git vega && \
-    export GOOS=linux && \
-    export GOARCH=amd64 && \
-    export CGO_ENABLED=0 && \
-    cd vega && \
-    make build && \
-    ./cmd/vega/vega version && \
-    cp ./cmd/vega/vega /bin/vega
+# # Build the Vega binary
+# RUN git clone --branch v0.68.4 https://github.com/vegaprotocol/vega.git vega && \
+#     export GOOS=linux && \
+#     export GOARCH=amd64 && \
+#     export CGO_ENABLED=0 && \
+#     cd vega && \
+#     make build && \
+#     ./cmd/vega/vega version && \
+#     cp ./cmd/vega/vega /bin/vega
 
 
 # Create main image
 FROM ubuntu:20.04
 
-# Copy vega binary to main image
-COPY --from=builder /bin/vega /bin/vega
+# # Copy vega binary to main image
+# COPY --from=builder /bin/vega /bin/vega
+
+# # Dependencies
+# RUN apt-get update && apt-get install -y curl pwgen gnupg lsb-release curl wget git make gcc libkrb5-dev jq
 
 # Dependencies
-RUN apt-get update && apt-get install -y curl pwgen gnupg lsb-release curl wget git make gcc libkrb5-dev jq
+RUN apt-get update && apt-get install -y curl pwgen lsb-release curl wget git jq
+
+# Get vega binary from releases page
+RUN wget -P /root/vega-downloads/binaries/0.68.4/ https://github.com/vegaprotocol/vega/releases/download/v0.68.4/vega-linux-amd64.zip && \
+    unzip vega-linux-amd64.zip && \
+    cp vega /bin/vega
 
 # Environemnt variables
 ARG DEBIAN_FRONTEND=noninteractive
