@@ -31,7 +31,10 @@ function startBrokerServer(nano, BusEvent) {
 async function main() {
 
     // Load events proto and BusEvent type
-    const root = protobuf.loadSync({ root: rootPath, file: relativeEventsProtoPath });
+    console.log(rootPath);
+    const root = protobuf.roots[rootPath];
+    root.load(relativeEventsProtoPath);
+    // const root = protobuf.loadSync({ root: rootPath, file: relativeEventsProtoPath });
     console.dir(root, {depth:null});
     const BusEvent = root.lookupType(vega.events.v1.BusEvent);
 
