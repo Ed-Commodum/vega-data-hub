@@ -32,7 +32,7 @@ FROM ubuntu:20.04
 # RUN apt-get update && apt-get install -y curl pwgen gnupg lsb-release curl wget git make gcc libkrb5-dev jq
 
 # Dependencies
-RUN apt-get update && apt-get install -y curl pwgen lsb-release curl wget git jq
+RUN apt-get update && apt-get install -y curl pwgen lsb-release curl wget git jq unzip
 
 # Get vega binary from releases page
 RUN wget -P /root/vega-downloads/binaries/0.68.4/ https://github.com/vegaprotocol/vega/releases/download/v0.68.4/vega-linux-amd64.zip && \
