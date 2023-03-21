@@ -1,5 +1,5 @@
 FROM node:18.14.1-alpine
-RUN apk add --no-cache pkgconfig python3 py3-pip make
+RUN apk add --no-cache pkgconfig python3 py3-pip make gcc
 WORKDIR /app
 COPY package.json /app/
 RUN npm install
