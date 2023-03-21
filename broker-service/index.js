@@ -32,8 +32,12 @@ async function main() {
 
     // Load events proto and BusEvent type
     console.log(rootPath);
-    const root = protobuf.roots[rootPath];
-    root.load(relativeEventsProtoPath);
+    const root = new protobuf.Root();
+    root.resolvePath = (origin, target) => {
+        console.log(`origin: ${origin}, target: ${target}`);
+        return 'vega/' + target;
+    };
+    root.loadSync(relativeEventsProtoPath);
     // const root = protobuf.loadSync({ root: rootPath, file: relativeEventsProtoPath });
     console.dir(root, {depth:null});
     const BusEvent = root.lookupType(vega.events.v1.BusEvent);
