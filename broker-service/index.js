@@ -34,6 +34,9 @@ async function main() {
     const root1 = await protobuf.load('/app/events.proto');
     console.log(root1);
     const BusEvent = root1.lookupType('vega.events.v1.BusEvent');
+    console.log(BusEvent);
+
+    process.exit(0);
 
 
     // Load events proto and BusEvent type
