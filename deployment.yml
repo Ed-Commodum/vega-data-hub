@@ -309,6 +309,7 @@ spec:
   initContainers:
   - name: init-vega-node
     image: data-hub/vega-node
+    imagePullPolicy: Never
     command: ["/bin/sh", "-c", "cp -R /home/ian/* /mnt/vega-data/"]
     volumeMounts:
     - name: vega-node-pv-storage
