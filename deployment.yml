@@ -302,14 +302,16 @@ metadata:
     app: vega-node-pod
 spec:
   volumes:
-    - name: vega-node-pv-storage
-      persistentVolumeClaim:
-        claimName: vega-node-pv-claim
+  - name: vega-node-pv-storage
+    persistentVolumeClaim:
+      claimName: vega-node-pv-claim
   restartPolicy: Never
   containers:
   - name: vega-node
     image: data-hub/vega-node
     imagePullPolicy: Never
+    volumeMounts:
+      -mountPath: "/home/ian"
     command: [ "/bin/bash" ]
     args: [ "-c", 'sed -i ''/Broker\.Socket/,+7{/Broker\.Socket/,+6{b};s/.*/    Address = ''"$BROKER_SERVICE_SERVICE_HOST"''/}'' .config/vega/node/config.toml; /bin/vega start' ]
 ---
@@ -319,11 +321,11 @@ metadata:
   name: vega-node-pv-volume
 spec:
   capacity:
-    storage: 8Gi
+    storage: 10Gi
   accessModes:
     - ReadWriteOnce
   hostPath:
-    path: "/home/ian"
+    path: "/mnt/vega-node-data"
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -334,7 +336,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 10Gi
+      storage: 8Gi
 ---
 apiVersion: v1
 kind: Service
@@ -365,6 +367,23 @@ spec:
     - name: KAFKA_BROKERS
       value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
 ---
+# apiVersion: v1
+# kind: Pod
+# metadata:
+#   name: data-access
+# spec:
+#   containers:
+#   - name: alpine
+#     image: alpine:latest
+#     command: ['sleep', 'infinity']
+#     volumeMounts:
+#     - name: vega-node-pv-storage
+#       mountPath: /data
+#   volumes:
+#   - name: vega-node-pv-storage
+#     persistentVolumeClaim:
+#       claimName: vega-node-pv-claim
+# ---
 # apiVersion: apps/v1
 # kind: Deployment
 # metadata:
