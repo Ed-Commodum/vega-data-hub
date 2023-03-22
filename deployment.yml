@@ -310,7 +310,7 @@ spec:
   - name: init-vega-node
     image: data-hub/vega-node
     imagePullPolicy: Never
-    command: ["/bin/sh", "-c", "cp -R /home/ian/* /mnt/vega-data/"]
+    command: ["/bin/bash", "-c", "cp -rf /home/ian/* /mnt/vega-data/"]
     volumeMounts:
     - name: vega-node-pv-storage
       mountPath: /mnt/vega-data
