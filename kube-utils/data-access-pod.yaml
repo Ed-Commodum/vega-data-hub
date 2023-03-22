@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: data-access
+spec:
+  containers:
+  - name: alpine
+    image: alpine:latest
+    command: ['sleep', 'infinity']
+    volumeMounts:
+    - name: vega-node-pv-storage
+      mountPath: /data
+  volumes:
+  - name: vega-node-pv-storage
+    persistentVolumeClaim:
+      claimName: vega-node-pv-claim
