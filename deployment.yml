@@ -311,7 +311,8 @@ spec:
     image: data-hub/vega-node
     imagePullPolicy: Never
     volumeMounts:
-      -mountPath: "/home/ian"
+      - mountPath: "/home/ian"
+        name: vega-node-pv-storage
     command: [ "/bin/bash" ]
     args: [ "-c", 'sed -i ''/Broker\.Socket/,+7{/Broker\.Socket/,+6{b};s/.*/    Address = ''"$BROKER_SERVICE_SERVICE_HOST"''/}'' .config/vega/node/config.toml; /bin/vega start' ]
 ---
