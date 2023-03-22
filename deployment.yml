@@ -306,7 +306,7 @@ spec:
     persistentVolumeClaim:
       claimName: vega-node-pv-claim
   restartPolicy: Never
-  initContainer:
+  initContainers:
   - name: init-vega-node
     image: data-hub/vega-node
     command: ["/bin/sh", "-c", "cp -R /home/ian/* /mnt/vega-data/"]
