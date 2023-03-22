@@ -306,12 +306,19 @@ spec:
     persistentVolumeClaim:
       claimName: vega-node-pv-claim
   restartPolicy: Never
+  initContainer:
+  - name: init-vega-node
+    image: data-hub/vega-node
+    command: ["/bin/sh", "-c", "cp -R /home/ian/* /mnt/vega-data/"]
+    volumeMounts:
+    - name: vega-node-pv-storage
+      mountPath: /mnt/vega-data
   containers:
   - name: vega-node
     image: data-hub/vega-node
     imagePullPolicy: Never
     volumeMounts:
-      - mountPath: "/home/ian"
+      - mountPath: /home/ian
         name: vega-node-pv-storage
     command: [ "/bin/bash" ]
     args: [ "-c", 'sed -i ''/Broker\.Socket/,+7{/Broker\.Socket/,+6{b};s/.*/    Address = ''"$BROKER_SERVICE_SERVICE_HOST"''/}'' .config/vega/node/config.toml; /bin/vega start' ]
