@@ -452,6 +452,16 @@ const routes = (app, pgPool) => {
             res.send(result);
             return;
         };
+
+        // Test to see if market is in the necessary tables: candles
+        const checkRes = await asyncQuery('checkMarketId', ...marketQueries.countMarketData(marketId), pgPool);
+        const count = checkRes[1][0].count;
+
+        if (!count || count == 0) {
+            res.send(result);
+            // res.sendStatus(404);
+            return;
+        }
     
         let bucketSize = "300000000000";
     

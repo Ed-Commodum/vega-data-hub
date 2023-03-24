@@ -25,6 +25,15 @@ const marketData = {
 };
 
 const marketQueries = {
+    countMarketData(marketId) {
+        
+        const query = `
+        SELECT count(*) from candles_5m
+        WHERE marketId = $1;
+        `;
+
+        return [ query, [ marketId ] ] ;
+    },
     totalNumTrades(marketId) {
         const query = `
         SELECT sum(num_trades) AS num_trades FROM market_data_5m
