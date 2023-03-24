@@ -455,6 +455,7 @@ const routes = (app, pgPool) => {
 
         // Test to see if market is in the necessary tables: candles
         const checkRes = await asyncQuery('checkMarketId', ...marketQueries.countMarketData(marketId), pgPool);
+        console.dir(checkRes, {depth: null});
         const count = checkRes[1][0].count;
 
         if (!count || count == 0) {
