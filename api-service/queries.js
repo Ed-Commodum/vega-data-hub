@@ -29,7 +29,7 @@ const marketQueries = {
         
         const query = `
         SELECT count(*) from candles_5m
-        WHERE marketId = $1;
+        WHERE market_id = $1;
         `;
 
         return [ query, [ marketId ] ] ;
