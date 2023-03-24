@@ -182,7 +182,7 @@ spec:
   restartPolicy: Never
   containers:
   - name: positions
-    image: kubernetes-test/positions
+    image: data-hub/positions
     imagePullPolicy: Never
     env:
     - name: KAFKA_BROKERS
@@ -210,7 +210,7 @@ spec:
     spec:
       containers:
       - name: query
-        image: kubernetes-test/query
+        image: data-hub/query
         imagePullPolicy: Never
         resources:
           limits:
@@ -241,7 +241,7 @@ spec:
     spec:
       containers:
       - name: trades
-        image: kubernetes-test/trades
+        image: data-hub/trades
         imagePullPolicy: Never
         env:
         - name: KAFKA_SERVICE
@@ -284,7 +284,7 @@ spec:
     spec:
       containers:
       - name: api
-        image: kubernetes-test/api
+        image: data-hub/api
         imagePullPolicy: Never 
         ports:
         - containerPort: 8080
@@ -312,7 +312,7 @@ spec:
 #     spec:
 #       containers:
 #       - name: positions
-#         image: kubernetes-test:positions
+#         image: data-hub:positions
 #         imagePullPolicy: Never
 # ---
 # apiVersion: apps/v1
@@ -333,7 +333,7 @@ spec:
 #     spec:
 #       containers:
 #       - name: compute
-#         image: kubernetes-test:compute
+#         image: data-hub:compute
 #         imagePullPolicy: Never
 # ---
 # apiVersion: v1
