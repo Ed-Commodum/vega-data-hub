@@ -1,50 +1,5 @@
-const nano = require('nanomsg');
-const protobuf = require('protobufjs');
-const rootPath = __dirname + '/sources/';
-const relativeEventsProtoPath = 'vega/events/v1/events.proto';
+const { Broker } = require('./broker.js');
 
-function startBrokerServer(nano, BusEvent) {
+const broker = new Broker();
 
-    let msgCount = 0;
-
-    const pair = nano.socket('pair');
-    const addr = 'tcp://0.0.0.0:3005';
-
-    pair.bind(addr);
-
-    pair.on('data', (msg) => {
-
-        msgCount += 1;
-        console.log(`${msgCount} messages recieved...`);
-
-        const obj = BusEvent.decode(msg);
-        console.log(obj);
-
-        // if (msgCount % 100 == 0) {
-        //     console.log(msg);
-        // };
-
-    });
-
-    return pair;
-
-};
-
-async function main() {
-
-    // Load events proto and BusEvent type
-    const root = new protobuf.Root();
-    root.resolvePath = (origin, target) => {
-        console.log(`origin: ${origin}, target: ${target}`);
-        return rootPath + target;
-    };
-    root.loadSync(relativeEventsProtoPath);
-    console.log(root);
-    const BusEvent = root.lookupType('vega.events.v1.BusEvent');
-
-    // Start broker server
-    startBrokerServer(nano, BusEvent);
-
-}
-
-main();
+setTimeout(broker.start, 32000);

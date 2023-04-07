@@ -1,11 +1,3 @@
-// Process for the trades service:
-//  - Connect to kafka broker.
-//  - Connect to db.
-//  - Create tables for positions data.
-//  - Read trades from the "trades" topic for position computation.
-//  - Subscribe to positions endpoint.
-//  - Insert positions data into db.
-
 const { Client, Pool } = require('pg');
 
 const pgClient = new Client({
@@ -26,6 +18,8 @@ const pgPool = new Pool({
 
 
 const kafka = require("kafka-node");
+const { busEventTypes } = require('./busEventTypes.js');
+const { RecentBlocks } = require('./ringBuffers.js');
 
 // const kafkaBrokers = process.env.KAFKA_BROKERS.split(",");
 const kafkaBrokers = process.env.KAFKA_BROKERS;
@@ -37,55 +31,89 @@ const kafkaClient = new kafka.KafkaClient({ kafkaHost: kafkaBrokers });
 // const kafkaAdmin = new kafka.Admin(kafkaClient);
 let kafkaConsumer;
 
-let readyForUpdates = false;
-const posSubQueue = [];
 const positionsObj = {};
-const positions = [];
+const recentBlocks = new RecentBlocks(500);
+const posUpdateQueue = [];
+let intervalId;
+
+const flushPosUpdateQueue = () => {
+    
+    clearInterval(intervalId);
+
+    while (posUpdateQueue.length) {
+        // assigning.push(posUpdateQueue.shift());
+
+        const event = posUpdateQueue.shift();
+        const height = event.id.split('-')[0];
+        const eventIndex = event.id.split('-')[1];
+        const block = recentBlocks.get(height);
+
+        if (!block) {
+            posUpdateQueue.unshift(event);
+            break;
+        }
+        
+        event.positionStateEvent["synthTimestamp"] = BigInt(block.timestamp) + BigInt(eventIndex);
+
+        persistPositionStateUpdate(event.positionStateEvent);
+        persistPositionState(event.positionStateEvent);
+
+    }
+
+    intervalId = setInterval(flushPosUpdateQueue, 50);
+
+};
+
+intervalId = setInterval(flushPosUpdateQueue, 50);
 
 const createTablesQuery = `
-CREATE TABLE IF NOT EXISTS positions (
+CREATE TABLE IF NOT EXISTS position_state_updates (
     market_id TEXT NOT NULL,
     party_id TEXT NOT NULL,
-    open_volume BIGINT,
-    realised_pnl NUMERIC,
-    unrealised_pnl NUMERIC,
-    average_entry_price BIGINT,
-    updated_at BIGINT,
-    PRIMARY KEY (market_id, party_id)
+    size NUMERIC,
+    potential_buys NUMERIC,
+    potential_sells NUMERIC,
+    vw_buy_price NUMERIC,
+    vw_sell_price NUMERIC,
+    synth_timestamp BIGINT,
+    PRIMARY KEY (market_id, party_id, synth_timestamp)
 );
 
-CREATE TABLE IF NOT EXISTS position_updates (
+SELECT create_hypertable('position_state_updates', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_esists => TRUE);
+
+CREATE TABLE IF NOT EXISTS position_states (
     market_id TEXT NOT NULL,
     party_id TEXT NOT NULL,
-    open_volume BIGINT,
-    realised_pnl NUMERIC,
-    unrealised_pnl NUMERIC,
-    average_entry_price BIGINT,
-    updated_at BIGINT,
-    PRIMARY KEY (market_id, party_id, updated_at)
+    size NUMERIC,
+    potential_buys NUMERIC,
+    potential_sells NUMERIC,
+    vw_buy_price NUMERIC,
+    vw_sell_price NUMERIC,
+    synth_timestamp BIGINT,
+    PRIMARY KEY (market_id, party_id, synth_timestamp)
 );
 
-SELECT create_hypertable('position_updates', 'updated_at', chunk_time_interval => '604800000000000'::BIGINT);
-
-CREATE TABLE IF NOT EXISTS open_interest_updates (
+CREATE TABLE IF NOT EXISTS position_settlements (
     market_id TEXT NOT NULL,
-    open_interest BIGINT,
-    timestamp BIGINT,
-    PRIMARY KEY (market_id, timestamp)
+    party_id TEXT NOT NULL,
+    price NUMERIC,
+    synth_timestamp BIGINT,
+    PRIMARY KEY (market_id, party_id, synth_timestamp)
 );
 
-SELECT create_hypertable('open_interest_updates', 'timestamp', chunk_time_interval => '604800000000000'::BIGINT)
+SELECT create_hypertable('position_settlements', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_esists => TRUE);
 `;
 
-const upsertPosition = `
-INSERT INTO positions (
+const insertPositionStateUpdate = `
+INSERT INTO position_state_updates (
     market_id,
     party_id,
-    open_volume,
-    realised_pnl,
-    unrealised_pnl,
-    average_entry_price,
-    updated_at
+    size,
+    potential_buys,
+    potential_sells,
+    vw_buy_price,
+    vw_sell_price,
+    synth_timestamp
 ) values (
     $1,
     $2,
@@ -93,15 +121,40 @@ INSERT INTO positions (
     $4,
     $5,
     $6,
-    $7
+    $7,
+    $8
+) ON CONFLICT (market_id, party_id, synth_timestamp) DO NOTHING
+RETURNING *;
+`;
+
+const upsertPositionState = `
+INSERT INTO position_state_updates (
+    market_id,
+    party_id,
+    size,
+    potential_buys,
+    potential_sells,
+    vw_buy_price,
+    vw_sell_price,
+    synth_timestamp
+) values (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8
 ) ON CONFLICT (market_id, party_id) DO UPDATE SET (
     market_id,
     party_id,
-    open_volume,
-    realised_pnl,
-    unrealised_pnl,
-    average_entry_price,
-    updated_at
+    size,
+    potential_buys,
+    potential_sells,
+    vw_buy_price,
+    vw_sell_price,
+    synth_timestamp
 ) = (
     $1,
     $2,
@@ -109,113 +162,17 @@ INSERT INTO positions (
     $4,
     $5,
     $6,
-    $7
-) RETURNING *
-`
-
-const insertPositionUpdate = `
-INSERT INTO position_updates (
-    market_id,
-    party_id,
-    open_volume,
-    realised_pnl,
-    unrealised_pnl,
-    average_entry_price,
-    updated_at
-) values (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7
-) RETURNING *
+    $7,
+    $8
+) RETURNING *;
 `;
 
-const insertOI = `
-INSERT INTO open_interest_updates (
-    market_id,
-    open_interest,
-    timestamp
-) values (
-    $1,
-    $2,
-    $3
-) RETURNING *
-`
-
 const setIntegerNowFunc = `
-SELECT set_integer_now_func('position_updates', 'current_time_ns');
-SELECT set_integer_now_func('open_interest_updates', 'current_time_ns');
-`
+SELECT set_integer_now_func('position_state_updates', 'current_time_ns');
+SELECT set_integer_now_func('position_settlements', 'current_time_ns');
+`;
 
 const continuousAggregates = {
-    openInterest: {
-        interval_5m: {
-            createMatView: `CREATE MATERIALIZED VIEW open_interest_5m
-            WITH (timescaledb.continuous) AS
-            SELECT market_id,
-                time_bucket(300000000000, timestamp) AS bucket,
-                first(open_interest, timestamp) AS first,
-                first(timestamp, timestamp) AS first_ts,
-                last(open_interest, timestamp) AS last,
-                last(timestamp, timestamp) AS last_ts,
-                first(open_interest, timestamp) - last(open_interest, timestamp) AS diff,
-                avg(open_interest) AS avg,
-                count(timestamp) AS num_updates
-            FROM open_interest_updates
-            GROUP BY market_id, time_bucket(300000000000, timestamp);
-            `,
-            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('open_interest_5m',
-            start_offset => '2592000000000000'::bigint,
-            end_offset => '60000000000'::bigint,
-            schedule_interval => INTERVAL '1 minute');
-            `
-        },
-        interval_1h: {
-            createMatView: `CREATE MATERIALIZED VIEW open_interest_1h
-            WITH (timescaledb.continuous) AS
-            SELECT market_id,
-                time_bucket(3600000000000, bucket) AS bucket,
-                first(first, bucket) AS first,
-                first(first_ts, bucket) AS first_ts,
-                last(last, bucket) AS last,
-                last(last_ts, bucket) AS last_ts,
-                first(first, bucket) - last(last, bucket) AS diff,
-                sum(avg * num_updates) / sum(num_updates) AS avg,
-                sum(num_updates) AS num_updates
-            FROM open_interest_5m
-            GROUP BY market_id, time_bucket(3600000000000, bucket);
-            `,
-            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('open_interest_1h',
-            start_offset => '2592000000000000'::bigint,
-            end_offset => '60000000000'::bigint,
-            schedule_interval => INTERVAL '1 minute');
-            `
-        },
-        interval_1d: {
-            createMatView: `CREATE MATERIALIZED VIEW open_interest_1d
-            WITH (timescaledb.continuous) AS
-            SELECT market_id,
-                time_bucket(86400000000000, bucket) AS bucket,
-                first(first, bucket) AS first,
-                first(first_ts, bucket) AS first_ts,
-                last(last, bucket) AS last,
-                last(last_ts, bucket) AS last_ts,
-                first(first, bucket) - last(last, bucket) AS diff,
-                sum(avg * num_updates) / sum(num_updates) AS avg,
-                sum(num_updates) num_updates
-            FROM open_interest_1h
-            GROUP BY market_id, time_bucket(86400000000000, bucket);
-            `,
-            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('open_interest_1d',
-            start_offset => '2592000000000000'::bigint,
-            end_offset => '60000000000'::bigint,
-            schedule_interval => INTERVAL '1 minute');
-            `
-        }
-    },
     pnls: {
         interval_5m: {
             createMatView: `CREATE MATERIALIZED VIEW pnls_5m
@@ -241,17 +198,6 @@ const continuousAggregates = {
         // interval_1d: {}
     }
 };
-
-const windowFunctions = {
-    
-}
-
-const userDefinedFunctions = {
-    
-};
-
-
-
 
 const createContAggs = async (client, types) => {
 
@@ -317,7 +263,7 @@ const start = () => {
                     pgClient.query(setIntegerNowFunc, (err, res) => {
                         if(!err) {
                             console.log(res);
-                            createContAggs(pgPool, ["openInterest", "pnls"]);
+                            // createContAggs(pgPool, ["pnls"]);
                             
                         } else {
                             console.log(err);
@@ -352,169 +298,83 @@ const start = () => {
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "position_updates" }]);
-    kafkaConsumer.on("message", (data) => {
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "blocks" },{ topic: "position_updates" }]);
+    kafkaConsumer.on("message", (msg) => {
+
         const dateTime = new Date(Date.now()).toISOString();
-        console.log(`${dateTime}: New message on position_updates topic`);
-        const msg = JSON.parse(data.value);
+        // console.log(`${dateTime}: New message`);
 
-        if (msg.event == "POSITIONS_SNAPSHOT") {
-            handlePositions(msg.body.data);
+        if (msg.topic == "blocks") {
+            // Store blocks in recentBlocks so we can assign timestamps to position_state and
+            // settle_position events based on their id.
+            const evt = JSON.parse(msg.value);
+            // console.log(evt);
+            
+            if (evt.beginBlock) recentBlocks.push(evt.beginBlock);
 
-        };
+        }
 
-        if (msg.event == "POSITIONS_UPDATES" ) {
-            if (readyForUpdates) {
-                posSubQueue.push(msg.body.data);
-                flushPosSubQueue();
-            } else {
-                posSubQueue.push(msg.body.data);
-            }
+        if (msg.topic == "position_updates") {
+            // console.log(`${dateTime}: New message on position_updates topic`);
+            // console.log(msg);
+            const evt = JSON.parse(msg.value);
+            // console.log(evt);
 
-        };
+            if (evt.type == busEventTypes.BUS_EVENT_TYPE_POSITION_STATE) {
+                // console.log(evt);
+                posUpdateQueue.push(evt);
+            };
+
+            if (evt.type == busEventTypes.BUS_EVENT_TYPE_SETTLE_POSITION) {
+                const evt = JSON.parse(msg.value);
+                if (evt.tradeSettlements) console.dir(evt, {depth:null});    
+            };
+
+            // Maybe necessary to add position_resolution events too?
+            if (evt.type == busEventTypes.BUS_EVENT_TYPE_POSITION_RESOLUTION) {
+
+            };
+        }
 
     });
 };
 
-const handlePositions = (data) => {
-    // Applies the updates from the positionsList, sets ready when snapshots are finished,
-    // inserts new positions into the db, and updates old ones.
 
-    if (data.snapshot) {
+const persistPositionStateUpdate = (pos) => {
 
-        const ts = BigInt(data.snapshot.positions[0].updated_at);
+    console.log(pos);
 
-        for (let pos of data.snapshot.positions) {
-            if (!positionsObj[pos.market_id]) {
-                positionsObj[pos.market_id] = [];
-            };
+    const row = [
+        pos.marketId, pos.partyId, pos.size, pos.potentialBuys, pos.potentialSells,
+        pos.vwBuyPrice, pos.vwSellPrice, pos.synthTimestamp
+    ];
 
-            pos['updated_at'] = BigInt(pos.updated_at);
-            pos['open_volume'] = BigInt(pos.open_volume);
-            // pos['realised_pnl'] = BigInt(pos.realised_pnl);
-            // pos['unrealised_pnl'] = BigInt(pos.unrealised_pnl);
-
-            positionsObj[pos.market_id].push(pos);
-        };
-
-        if(data.snapshot.last_page) {
-            readyForUpdates = true;
-            computeOpenInterest(ts);
-            insertPositionUpdates(positionsObj, ts);
-            upsertPositions(positionsObj, ts);
-        };
-
-    } else if (data.updates) {
-
-        const ts = BigInt(data.updates.positions[0].updated_at);
-
-        for (let pos of data.updates.positions) {
-            if (!positionsObj[pos.market_id]) {
-                positionsObj[pos.market_id] = [];
-            };
-
-            pos['updated_at'] = BigInt(pos.updated_at);
-            pos['open_volume'] = BigInt(pos.open_volume);
-            // pos['realised_pnl'] = BigInt(pos.realised_pnl);
-            // pos['unrealised_pnl'] = BigInt(pos.unrealised_pnl);
-
-            const index = positionsObj[pos.market_id].findIndex(elem => elem.market_id == pos.market_id && elem.party_id == pos.party_id);
-
-            const oldPos = positionsObj[pos.market_id].splice(index, 1, pos);
-        };
-
-        computeOpenInterest(ts);
-        insertPositionUpdates(positionsObj, ts);
-        upsertPositions(positionsObj, ts);
-    };
+    pgPool.query(insertPositionStateUpdate, row, (err, res) => {
+        if (!err) {
+            // console.dir(res, { depth: null });
+        } else {
+            console.log("Error inserting position.");
+        }
+    });
 
 };
 
-const flushPosSubQueue = () => {
-    const positions = [];
-    while (posSubQueue.length) {
-        positions.push(posSubQueue.shift());
-    };
-    for (let data of positions) {
-        handlePositions(data);
-    };
-};
+const persistPositionState = (pos) => {
 
-const computeOpenInterest = (ts) => {
+    const row = [
+        pos.marketId, pos.partyId, pos.size, pos.potentialBuys, pos.potentialSells,
+        pos.vwBuyPrice, pos.vwSellPrice, pos.synthTimestamp
+    ];
 
-    const openInterestByMarket = {};
-
-    // console.log("Positions Object:");
-    // console.log(positionsObj);
-    // console.dir(positionsObj, { depth: null });
-
-    for (let marketId of Object.keys(positionsObj)) {
-        openInterestByMarket[marketId] = 0n;
-
-        for (let pos of positionsObj[marketId]) {
-            if (pos.open_volume > 0n) {
-                openInterestByMarket[marketId] += pos.open_volume;
-            };      
-        };
-    };
-
-    for (let [ marketId, value ] of Object.entries(openInterestByMarket)) {
-
-        const row = [ marketId, value, ts ];
-
-        // console.log(`${row[0]}, ${row[1]}, ${row[2]}`);
-
-        pgPool.query(insertOI, row, (err, res) => {
-            if (err) {
-                console.log("Error inserting open interest update");
-            };
-        });
-    };
-};
-
-const insertPositionUpdates = (obj, ts) => {
-
-    for (let positions of Object.values(obj)) {
-        for (let pos of positions) {
-            if (pos.updated_at < ts) { continue };
-
-            const row = [
-                pos.market_id, pos.party_id, pos.open_volume, pos.realised_pnl, pos.unrealised_pnl, pos.average_entry_price, pos.updated_at
-            ];
-
-            pgPool.query(insertPositionUpdate, row, (err, res) => {
-                if (!err) {
-
-                    // console.dir(res, { depth: null });
-                } else {
-                    console.log("Error inserting position.");
-                }
-            });
-        };
-    };
-};
-
-const upsertPositions = (obj, ts) => {
-
-    for (let positions of Object.values(obj)) {
-        for (let pos of positions) {
-            if (pos.updated_at < ts) { continue };
-
-            const row = [
-                pos.market_id, pos.party_id, pos.open_volume, pos.realised_pnl, pos.unrealised_pnl, pos.average_entry_price, pos.updated_at
-            ];
-
-            pgPool.query(upsertPosition, row, (err, res) => {
-                if (!err) {
-                    // console.log(res);
-                    
-                } else {
-                    console.log("Error inserting position.");
-                }
-            });
-        };
-    };
+    pgPool.query(upsertPositionState, row, (err, res) => {
+        if (!err) {
+            // console.dir(res, { depth: null });
+        } else {
+            console.log("Error inserting position.");
+        }
+    });
 
 };
+
 
 setTimeout(start, 33000);

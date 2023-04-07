@@ -3,5 +3,5 @@ WORKDIR /app
 COPY package.json /app/
 RUN npm install
 RUN npm install -g nodemon
-COPY index.js /app/
+COPY index.js type-mappings.js busEventTopicMappings.js busEventTypes.js /app/
 CMD ["nodemon", "index.js"]

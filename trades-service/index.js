@@ -29,6 +29,9 @@ const kafka = require("kafka-node");
 const { EventEmitter } = require("node:events");
 const { nextTick } = require('node:process');
 
+const { tradeAggressorMappings, tradeTypeMappings } = require('./type-mappings.js');
+const { topicBusEventMappings } = require('./busEventTopicMappings.js');
+
 // const kafkaBrokers = process.env.KAFKA_BROKERS.split(",");
 const kafkaBrokers = process.env.KAFKA_BROKERS;
 
@@ -36,11 +39,9 @@ console.log(kafkaBrokers);
 console.log(process.env);
 
 let kafkaConsumer;
+let kafkaConsumerBlocks;
 
-let finishedQueries = false;
 let subQueue = [];
-let lastKnownTradeSynthTimestamp = 1n;
-let tradeBlockIndex = 0n;
 const intervalMap = {
     interval_5m: 300000000000n,
     interval_1h: 3600000000000n,
@@ -77,7 +78,7 @@ CREATE TABLE IF NOT EXISTS trades (
     PRIMARY KEY (market_id, synth_timestamp)
 );
 
-SELECT create_hypertable('trades', 'synth_timestamp', chunk_time_interval => 604800000000000);
+SELECT create_hypertable('trades', 'synth_timestamp', chunk_time_interval => 604800000000000, if_not_esists => TRUE);
 
 CREATE TABLE IF NOT EXISTS sma_5m (
     market_id TEXT,
@@ -146,6 +147,8 @@ INSERT INTO trades (
     $18,
     $19
 ) RETURNING *`
+// ON CONFLICT DO NOTHING
+// RETURNING *`
 
 const setIntegerNowFunc = `
 CREATE FUNCTION most_recent_trade_time(in market_id TEXT) RETURNS BIGINT
@@ -749,13 +752,16 @@ const start = () => {
             } else {
 
                 // Create topic "trades".
-                const topic = [{
-                    topic: "trades",
-                    partitions: 1,
-                    replicationFactor: 1
-                }]
+                const topics = [];
+                for (let topicName of Object.keys(topicBusEventMappings)) {
+                    topics.push({
+                        topic: topicName,
+                        partitions: 1,
+                        replicationFactor: 1
+                    })
+                }
 
-                kafkaAdmin.createTopics(topic, (err, result) => {
+                kafkaAdmin.createTopics(topics, (err, result) => {
                     if (!err) {
 
                         console.log("Topics created successfully");
@@ -774,129 +780,82 @@ const start = () => {
     });
 };
 
+// let mostRecentBeginBlock;
+
 const setConsumer = (kafkaClient, kafkaConsumer) => {
+    // kafkaConsumerBlocks = new kafka.Consumer(kafkaClient, [{ topic: "blocks" }]);
+    // kafkaConsumerBlocks.on("message", (msg) => {
+    //     console.log("New Block Event");
+    //     const evt = JSON.parse(msg.value);
+    //     console.log(evt);
+    //     mostRecentBeginBlock = evt.beginBlock;
+    // });
     kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "trades" }]);
-    kafkaConsumer.on("message", (data) => {
+    kafkaConsumer.on("message", (msg) => {
         console.log("New message");
-        const msg = JSON.parse(data.value);
+        const evt = JSON.parse(msg.value);
+        // console.log(evt);
+        const trade = evt.trade;
+        // console.log(mostRecentBeginBlock);
+        console.log(trade);
 
-        if (msg.event == "NEW_QUERY_TRADES") {
-            console.log(`${msg.body.data.length} trades recieved.`);
-            // Persist these to db as they come in.
-            persistTrades(msg.body.data);
+        // Extract evt index in block from index
+        const id = evt.id;
+        const idParts = id.split('-');
+        // console.log(idParts);
+        // console.log("Event index: ", idParts[1]);
+        
+        // Create synthetic timestamp for each trade
+        const synthTimestamp = BigInt(trade.timestamp) + BigInt(idParts[1]);
+        // console.log("Timestamp: ", trade.timestamp);
+        // console.log("Synthetic Timestamp: ", synthTimestamp);
+        trade["synthTimestamp"] = synthTimestamp;
 
-        };
+        // convert enum fields to their respective text values
+        trade.type = tradeTypeMappings[trade.type];
+        trade.aggressor = tradeAggressorMappings[trade.aggressor];
 
-        if (msg.event == "NEW_SUB_TRADE" && finishedQueries) {
-            console.log("New Subscription Trade");
-            // Persist these to db as they come in.
-            subQueue.push(msg.body.data);
-            flushSubQueue();
+        persistTrade(formatTrade(trade));
 
-        } else if (msg.event == "NEW_SUB_TRADE") {
-            console.log("New Subscription Trade, queueing...");
-            // Queue these until queries are finished.
-            subQueue.push(msg.body.data);
-        };
+    });
+};
 
-        if (msg.event == "FINISHED_QUERIES") {
-            console.log("Finished Queries.");
-            finishedQueries = true;
+const persistTrade = (trade) => {
+    // Accepts a single formatted trade and persists it to the database.
+
+    pgPool.query(insertQuery, trade, (err, res) => {
+        if(err) {
+            console.log("Error performing insert of trade");
+            console.log(err);
+        } else {
+            console.log("Insert successful");
         };
     });
 };
 
-const persistTrades = (trades) => {
-    // Accepts a batch of trades and persists them to the db in the order in which they are recieved.
-    // Excludes trades with a timestamp lower than the lastKnownTradeTimestamp.
+const formatTrade = (trade) => {
 
-    const toInsert = [];
-
-    for (let trade of trades) {
-
-        // Convert unsafe integer to string to prevent precision loss
-        trade['timestamp'] = trade.timestamp.toString();
-
-        if ( BigInt(trade.timestamp) < ( lastKnownTradeSynthTimestamp-tradeBlockIndex ) ) {
-            continue;
-        }
-
-        if ( BigInt(trade.timestamp) == ( lastKnownTradeSynthTimestamp-tradeBlockIndex ) ) {
-            lastKnownTradeSynthTimestamp += 1n;
-            tradeBlockIndex += 1n;
-            // console.log("trade.timestamp: ", trade.timestamp);
-            // console.log("BigInt(trade.timestamp): ", BigInt(trade.timestamp));
-            // console.log("lastKnownTradeSynthTimestamp", lastKnownTradeSynthTimestamp);
-            toInsert.push(formatTrade(trade, tradeBlockIndex));
-        } else {
-            // New block
-            // console.log("trade.timestamp: ", trade.timestamp);
-            // console.log("BigInt(trade.timestamp): ", BigInt(trade.timestamp));
-            // console.log("lastKnownTradeSynthTimestamp: ", lastKnownTradeSynthTimestamp);
-            lastKnownTradeSynthTimestamp = BigInt(trade.timestamp);
-            tradeBlockIndex = 0n;
-            toInsert.push(formatTrade(trade, tradeBlockIndex));
-        }
-
-    };
-
-    let insertErr = false;
-    let errCount = 0;
-
-    for (let trade of toInsert) {
-        pgPool.query(insertQuery, trade, (err, res) => {
-            if(err) {
-                console.log(err);
-                insertErr = true;
-                errCount += 1;
-            } else {
-
-            };
-        });
-    };
-
-    if (!insertErr) {
-        console.log("Inserts successful");
-    } else {
-        console.log("Error performing inserts");
-        console.log(`Number of insert errors: ${errCount}`);
-    };
-};
-
-const formatTrade = (trade, tradeBlockIndex) => {
-    // Formats a trade to be inserted into the db.
-    // Part of the formatting process is to assign a synthetic time for indexing.
-    // This synthetic time is just the block time of the trade +1ns for it's index in the block.
-    //      eg; If block time is 500ns then the fifth trade has an sTime of 504ns (1st trade is 500ns).
-
-    const synthTimestamp = BigInt(trade.timestamp) + tradeBlockIndex;
+    // Logic to detect when a trade is the first for a particular time bucket, this could be used to pre-aggregate
+    // certain data that cannot be aggregated in continuous aggregates.
+    // Currently unused.
     let isFirstInBucket = 0;
-
     for (let interval of ["interval_5m", "interval_1h", "interval_1d"]) {
-        if (synthTimestamp/intervalMap[interval] > bucketIndices[interval]) {
-            bucketIndices[interval] = synthTimestamp/intervalMap[interval];
+        if (trade.synthTimestamp/intervalMap[interval] > bucketIndices[interval]) {
+            bucketIndices[interval] = trade.synthTimestamp/intervalMap[interval];
             isFirstInBucket += 1;
         }
     }
 
-    // console.dir(trade, { depth: null });
+    console.dir(trade, { depth: null });
 
     const formatted = [
-        trade.id, trade.market_id, parseInt(trade.price), parseInt(trade.size), trade.buyer,
-        trade.seller, trade.aggressor, trade.buy_order, trade.sell_order, trade.timestamp, synthTimestamp, trade.type, 
-        trade.buyer_fee.maker_fee, trade.buyer_fee.infrastructure_fee, trade.buyer_fee.liquidity_fee,
-        trade.seller_fee.maker_fee, trade.seller_fee.infrastructure_fee, trade.seller_fee.liquidity_fee, isFirstInBucket
+        trade.id, trade.marketId, parseInt(trade.price), parseInt(trade.size), trade.buyer,
+        trade.seller, trade.aggressor, trade.buyOrder, trade.sellOrder, trade.timestamp, trade.synthTimestamp, trade.type, 
+        trade.buyerFee.makerFee, trade.buyerFee.infrastructureFee, trade.buyerFee.liquidityFee,
+        trade.sellerFee.makerFee, trade.sellerFee.infrastructureFee, trade.sellerFee.liquidityFee, isFirstInBucket
     ];
 
     return formatted;
-};
-
-const flushSubQueue = () => {
-    const trades = [];
-    while (subQueue.length) {
-        trades.push(subQueue.shift());
-    };
-    persistTrades(trades);
 };
 
 setTimeout(start, 30000);

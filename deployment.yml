@@ -135,15 +135,15 @@ spec:
     image: ubuntu/kafka:latest
     resources:
       limits:
-        cpu: 500m
+        cpu: 1000m
         memory: 2500Mi
       requests:
-        cpu: 500m
+        cpu: 1000m
         memory: 2500Mi
     env:
     - name: ZOOKEEPER_HOST
       value: zookeeper-service
-    args: ["/etc/kafka/server.properties", "--override", "advertised.listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://kafka-service:9092", "--override", "listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://0.0.0.0:9093", "--override", "listener.security.protocol.map=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT", "--override","inter.broker.listener.name=INTERNAL"]
+    args: [ "/etc/kafka/server.properties", "--override", "advertised.listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://kafka-service:9092", "--override", "listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://0.0.0.0:9093", "--override", "listener.security.protocol.map=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT", "--override", "inter.broker.listener.name=INTERNAL", "--override", "message.max.bytes=2097152" ]
     ports:
     - containerPort: 9092
       name: kafka
@@ -192,37 +192,37 @@ spec:
     - name: TIMESCALEDB_PORT
       value: "5432"
 ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  labels:
-    app: query-test
-  name: query-test
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: query-test
-  template:
-    metadata:
-      labels:
-        app: query-test
-    spec:
-      containers:
-      - name: query
-        image: data-hub/query
-        imagePullPolicy: Never
-        resources:
-          limits:
-            cpu: 500m
-            memory: 1500Mi
-          requests:
-            cpu: 500m
-            memory: 1500Mi
-        env:
-        - name: KAFKA_BROKERS
-          value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
----
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   labels:
+#     app: query-test
+#   name: query-test
+# spec:
+#   replicas: 1
+#   selector:
+#     matchLabels:
+#       app: query-test
+#   template:
+#     metadata:
+#       labels:
+#         app: query-test
+#     spec:
+#       containers:
+#       - name: query
+#         image: data-hub/query
+#         imagePullPolicy: Never
+#         resources:
+#           limits:
+#             cpu: 500m
+#             memory: 1500Mi
+#           requests:
+#             cpu: 500m
+#             memory: 1500Mi
+#         env:
+#         - name: KAFKA_BROKERS
+#           value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+# ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -293,88 +293,93 @@ spec:
           value: timescaledb-service
         - name: TIMESCALEDB_PORT
           value: "5432"
-# ---
-# apiVersion: v1
-# kind: Pod
-# metadata:
-#   name: vega-node-pod
-#   labels:
-#     app: vega-node-pod
-# spec:
-#   volumes:
-#   - name: vega-node-pv-storage
-#     persistentVolumeClaim:
-#       claimName: vega-node-pv-claim
-#   restartPolicy: Never
-#   initContainers:
-#   - name: init-vega-node
-#     image: data-hub/vega-node
-#     imagePullPolicy: Never
-#     command: ["/bin/bash", "-c", "cp -r /home/ian/. /mnt/vega-data/"]
-#     volumeMounts:
-#     - name: vega-node-pv-storage
-#       mountPath: /mnt/vega-data
-#   containers:
-#   - name: vega-node
-#     image: data-hub/vega-node
-#     imagePullPolicy: Never
-#     volumeMounts:
-#       - mountPath: /home/ian
-#         name: vega-node-pv-storage
-#     command: [ "/bin/bash" ]
-#     args: [ "-c", 'sed -i ''/Broker\.Socket/,+7{/Broker\.Socket/,+6{b};s/.*/    Address = ''"\"$BROKER_SERVICE_SERVICE_HOST\""''/}'' .config/vega/node/config.toml; /bin/vega start' ]
-# ---
-# apiVersion: v1
-# kind: PersistentVolume
-# metadata:
-#   name: vega-node-pv-volume
-# spec:
-#   capacity:
-#     storage: 10Gi
-#   accessModes:
-#     - ReadWriteOnce
-#   hostPath:
-#     path: "/mnt/vega-node-data"
-# ---
-# apiVersion: v1
-# kind: PersistentVolumeClaim
-# metadata:
-#   name: vega-node-pv-claim
-# spec:
-#   accessModes:
-#     - ReadWriteOnce
-#   resources:
-#     requests:
-#       storage: 8Gi
-# ---
-# apiVersion: v1
-# kind: Service
-# metadata:
-#   labels:
-#     app: broker-service
-#   name: broker-service
-# spec:
-#   ports:
-#     - port: 3005
-#       targetPort: 3005
-#   selector:
-#     app: broker-pod
-# ---
-# apiVersion: v1
-# kind: Pod
-# metadata:
-#   name: broker-pod
-#   labels:
-#     app: broker-pod
-# spec:
-#   restartPolicy: Never
-#   containers:
-#   - name: broker
-#     image: data-hub/broker
-#     imagePullPolicy: Never
-#     env:
-#     - name: KAFKA_BROKERS
-#       value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vega-node-pod
+  labels:
+    app: vega-node-pod
+spec:
+  volumes:
+  - name: vega-node-pv-storage
+    persistentVolumeClaim:
+      claimName: vega-node-pv-claim
+  restartPolicy: Never
+  initContainers:
+  - name: init-vega-node
+    image: data-hub/vega-node
+    imagePullPolicy: Never
+    command: ["/bin/bash", "-c", "cp -r /home/ian/. /mnt/vega-data/"]
+    volumeMounts:
+    - name: vega-node-pv-storage
+      mountPath: /mnt/vega-data
+  containers:
+  - name: vega-node
+    image: data-hub/vega-node
+    imagePullPolicy: Never
+    resources:
+      limits:
+        cpu: 350m
+      requests:
+        cpu: 350m
+    volumeMounts:
+      - mountPath: /home/ian
+        name: vega-node-pv-storage
+    command: [ "/bin/bash" ]
+    args: [ "-c", 'sed -i ''/Broker\.Socket/,+7{/Broker\.Socket/,+6{b};s/.*/    Address = ''"\"$BROKER_SERVICE_SERVICE_HOST\""''/}'' .config/vega/node/config.toml; /bin/vega start' ]
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: vega-node-pv-volume
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/vega-node-data"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vega-node-pv-claim
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: broker-service
+  name: broker-service
+spec:
+  ports:
+    - port: 3005
+      targetPort: 3005
+  selector:
+    app: broker-pod
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: broker-pod
+  labels:
+    app: broker-pod
+spec:
+  restartPolicy: Never
+  containers:
+  - name: broker
+    image: data-hub/broker
+    imagePullPolicy: Never
+    env:
+    - name: KAFKA_BROKERS
+      value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
 # ---
 # apiVersion: v1
 # kind: Pod
