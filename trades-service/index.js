@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS trades (
     PRIMARY KEY (market_id, synth_timestamp)
 );
 
-SELECT create_hypertable('trades', 'synth_timestamp', chunk_time_interval => 604800000000000, if_not_esists => TRUE);
+SELECT create_hypertable('trades', 'synth_timestamp', chunk_time_interval => 604800000000000, if_not_exists => TRUE);
 
 CREATE TABLE IF NOT EXISTS sma_5m (
     market_id TEXT,
@@ -797,7 +797,7 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
         // console.log(evt);
         const trade = evt.trade;
         // console.log(mostRecentBeginBlock);
-        console.log(trade);
+        // console.log(trade);
 
         // Extract evt index in block from index
         const id = evt.id;
@@ -858,4 +858,4 @@ const formatTrade = (trade) => {
     return formatted;
 };
 
-setTimeout(start, 30000);
+setTimeout(start, 29000);

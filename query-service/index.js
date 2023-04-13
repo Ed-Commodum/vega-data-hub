@@ -16,10 +16,21 @@ const testnet2GrpcUrls = [
   "vega-testnet.nodes.guru:3007",
 //   "testnet.vega.greenfield.xyz:3007"
 ];
+const recentTestnet2GrpcUrls = [
+    "tls://grpc.venom.tm.p2p.org:443",
+    "vega-testnet.anyvalid.com:3007",
+    "tls://testnet.grpc.vega.xprv.io:443",
+    "vega-testnet.nodes.guru:3007",
+    "testnet.vega.greenfield.xyz:3007",
+    "tls://vega-testnet-data-grpc.commodum.io:443",
+    "tls://vega-grpc.testnet.lovali.xyz:433",
+    "vega-test-data.bharvest.io:3007"
+]
 console.log(__dirname);
 const protoPath = __dirname + "/sources/data-node/api/v2/trading_data.proto";
 console.log(protoPath);
-const kafkaBrokers = process.env.KAFKA_BROKERS.split(",");
+// const kafkaBrokers = process.env.KAFKA_BROKERS.split(",");
+const kafkaBrokers = process.env.KAFKA_BROKERS;
 
 const packageDefinition = protoLoader.loadSync(protoPath, {
     keepCase: true, 
@@ -30,7 +41,7 @@ const packageDefinition = protoLoader.loadSync(protoPath, {
     includeDirs: [ __dirname + "/sources" ]
 });
 const datanode = grpc.loadPackageDefinition(packageDefinition).datanode.api.v2;
-const tradingDataService = new datanode.TradingDataService(testnet2GrpcUrls[1], grpc.credentials.createInsecure());
+const tradingDataService = new datanode.TradingDataService(recentTestnet2GrpcUrls[3], grpc.credentials.createInsecure());
 
 class TDSClients {
     constructor(grpc, datanode) {
@@ -70,7 +81,7 @@ for (let url of testnet2GrpcUrls) {
 };
 
 
-const kafkaClient = new kafka.KafkaClient({ kafkaHost: kafkaBrokers[0] });
+const kafkaClient = new kafka.KafkaClient({ kafkaHost: kafkaBrokers });
 const kafkaProducer = new kafka.Producer(kafkaClient);
 const kafkaAdmin = new kafka.Admin(kafkaClient);
 
@@ -312,7 +323,60 @@ const start = async () => {
     queries();
 };
 
-setTimeout(start, 33000);
+// setTimeout(start, 33000);
+
+const startTestOrderSubscription = () => {
+
+    console.dir(packageDefinition);
+
+    const observeOrdersReq = {};
+    const orderStream = tradingDataService.ObserveOrders(observeOrdersReq);
+    orderStream.on("data", (data) => {
+        console.log(`${new Date(Date.now()).toISOString()}: New subscription order(s):`);
+
+        console.log(data);
+
+        if (data.updates) {
+            for (let order of data.updates.orders) {
+        
+                // console.log(order);
+
+                if (order.pegged_order) {
+                    console.log(order);
+                }
+    
+            }
+        }
+
+        if (data.snapshot) {
+            for (let order of data.snapshot.orders) {
+            
+                if (order.pegged_order) {
+                    console.log(order);
+                }
+    
+            };
+        }
+
+    });
+
+    orderStream.on('error', (err) => {
+        console.log(new Date(Date.now()).toISOString());
+        console.dir(err, { depth: null });;
+    });
+
+    orderStream.on('end', () => {
+        console.log(new Date(Date.now()).toISOString());
+        console.log("Order Stream closed");
+    });
+
+    orderStream.on('status', (status) => {
+        console.dir(status, { depth: null });
+    });
+
+};
+
+setTimeout(startTestOrderSubscription, 1000);
 
 // setInterval(() => {
 //     let usage = process.memoryUsage();

@@ -36,36 +36,6 @@ const recentBlocks = new RecentBlocks(500);
 const posUpdateQueue = [];
 let intervalId;
 
-const flushPosUpdateQueue = () => {
-    
-    clearInterval(intervalId);
-
-    while (posUpdateQueue.length) {
-        // assigning.push(posUpdateQueue.shift());
-
-        const event = posUpdateQueue.shift();
-        const height = event.id.split('-')[0];
-        const eventIndex = event.id.split('-')[1];
-        const block = recentBlocks.get(height);
-
-        if (!block) {
-            posUpdateQueue.unshift(event);
-            break;
-        }
-        
-        event.positionStateEvent["synthTimestamp"] = BigInt(block.timestamp) + BigInt(eventIndex);
-
-        persistPositionStateUpdate(event.positionStateEvent);
-        persistPositionState(event.positionStateEvent);
-
-    }
-
-    intervalId = setInterval(flushPosUpdateQueue, 50);
-
-};
-
-intervalId = setInterval(flushPosUpdateQueue, 50);
-
 const createTablesQuery = `
 CREATE TABLE IF NOT EXISTS position_state_updates (
     market_id TEXT NOT NULL,
@@ -79,9 +49,9 @@ CREATE TABLE IF NOT EXISTS position_state_updates (
     PRIMARY KEY (market_id, party_id, synth_timestamp)
 );
 
-SELECT create_hypertable('position_state_updates', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_esists => TRUE);
+SELECT create_hypertable('position_state_updates', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
 
-CREATE TABLE IF NOT EXISTS position_states (
+CREATE TABLE IF NOT EXISTS position_state (
     market_id TEXT NOT NULL,
     party_id TEXT NOT NULL,
     size NUMERIC,
@@ -90,7 +60,7 @@ CREATE TABLE IF NOT EXISTS position_states (
     vw_buy_price NUMERIC,
     vw_sell_price NUMERIC,
     synth_timestamp BIGINT,
-    PRIMARY KEY (market_id, party_id, synth_timestamp)
+    PRIMARY KEY (market_id, party_id)
 );
 
 CREATE TABLE IF NOT EXISTS position_settlements (
@@ -101,7 +71,7 @@ CREATE TABLE IF NOT EXISTS position_settlements (
     PRIMARY KEY (market_id, party_id, synth_timestamp)
 );
 
-SELECT create_hypertable('position_settlements', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_esists => TRUE);
+SELECT create_hypertable('position_settlements', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
 `;
 
 const insertPositionStateUpdate = `
@@ -128,7 +98,7 @@ RETURNING *;
 `;
 
 const upsertPositionState = `
-INSERT INTO position_state_updates (
+INSERT INTO position_state (
     market_id,
     party_id,
     size,
@@ -237,7 +207,34 @@ const createContAggs = async (client, types) => {
 
 };
 
+const flushPosUpdateQueue = () => {
+    
+    clearInterval(intervalId);
 
+    while (posUpdateQueue.length) {
+        
+        const event = posUpdateQueue.shift();
+        const height = event.id.split('-')[0];
+        const eventIndex = event.id.split('-')[1];
+        const block = recentBlocks.get(height);
+
+        if (!block) {
+            posUpdateQueue.unshift(event);
+            break;
+        }
+        
+        event.positionStateEvent["synthTimestamp"] = BigInt(block.timestamp) + BigInt(eventIndex);
+
+        persistPositionStateUpdate(event.positionStateEvent);
+        persistPositionState(event.positionStateEvent);
+
+    }
+
+    intervalId = setInterval(flushPosUpdateQueue, 50);
+
+};
+
+intervalId = setInterval(flushPosUpdateQueue, 50);
 
 const start = () => {
 
@@ -342,7 +339,7 @@ const setConsumer = (kafkaConsumer) => {
 
 const persistPositionStateUpdate = (pos) => {
 
-    console.log(pos);
+    // console.log(pos);
 
     const row = [
         pos.marketId, pos.partyId, pos.size, pos.potentialBuys, pos.potentialSells,
@@ -377,4 +374,4 @@ const persistPositionState = (pos) => {
 };
 
 
-setTimeout(start, 33000);
+setTimeout(start, 38000);

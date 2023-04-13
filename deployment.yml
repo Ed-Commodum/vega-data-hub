@@ -36,10 +36,10 @@ spec:
         - containerPort: 5432
         resources:
           limits:
-            cpu: 1500m
+            cpu: 1250m
             memory: 2.5Gi
           requests:
-            cpu: 1500m
+            cpu: 1250m
             memory: 2.5Gi
         env:
         - name: POSTGRES_PASSWORD
@@ -377,9 +377,54 @@ spec:
   - name: broker
     image: data-hub/broker
     imagePullPolicy: Never
+    resources:
+      limits:
+        cpu: 400m
+      requests:
+        cpu: 400m
     env:
     - name: KAFKA_BROKERS
       value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: market-data-pod
+  labels:
+    app: market-data-pod
+spec:
+  restartPolicy: Never
+  containers:
+  - name: market-data
+    image: data-hub/market-data
+    imagePullPolicy: Never
+    env:
+    - name: KAFKA_BROKERS
+      value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+    - name: TIMESCALEDB_HOST
+      value: timescaledb-service
+    - name: TIMESCALEDB_PORT
+      value: "5432"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: orders-pod
+  labels:
+    app: orders-pod
+spec:
+  restartPolicy: Never
+  containers:
+  - name: orders
+    image: data-hub/orders
+    imagePullPolicy: Never
+    env:
+    - name: KAFKA_BROKERS
+      value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+    - name: TIMESCALEDB_HOST
+      value: timescaledb-service
+    - name: TIMESCALEDB_PORT
+      value: "5432"
 # ---
 # apiVersion: v1
 # kind: Pod

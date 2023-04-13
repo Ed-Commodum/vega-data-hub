@@ -1,3 +1,4 @@
+const { marketState, marketTradingMode } = require('./market-enums.js');
 const { Client, Pool } = require('pg');
 
 const pgClient = new Client({
@@ -18,8 +19,6 @@ const pgPool = new Pool({
 
 
 const kafka = require("kafka-node");
-const { busEventTypes } = require('./busEventTypes.js');
-const { RecentBlocks } = require('./ringBuffers.js');
 
 // const kafkaBrokers = process.env.KAFKA_BROKERS.split(",");
 const kafkaBrokers = process.env.KAFKA_BROKERS;
@@ -30,10 +29,6 @@ const kafkaClient = new kafka.KafkaClient({ kafkaHost: kafkaBrokers });
 // const kafkaProducer = new kafka.Producer(kafkaClient);
 // const kafkaAdmin = new kafka.Admin(kafkaClient);
 let kafkaConsumer;
-
-const recentBlocks = new RecentBlocks(2000);
-const posUpdateQueue = [];
-
 
 const createTablesQuery = `
 CREATE TABLE IF NOT EXISTS market_data_updates (
@@ -50,7 +45,7 @@ CREATE TABLE IF NOT EXISTS market_data_updates (
     PRIMARY KEY (market_id, timestamp)
 );
 
-SELECT create_hypertable('market_data_updates', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_esists => TRUE);
+SELECT create_hypertable('market_data_updates', 'timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
 `
 
 // CREATE TABLE IF NOT EXISTS open_interest_updates (
@@ -277,17 +272,27 @@ const setConsumer = (kafkaConsumer) => {
         const dateTime = new Date(Date.now()).toISOString();
         console.log(`${dateTime}: New message`);
 
-        persistMarketData(formatMarketData(JSOn.parse(msg.value)));
+        const evt = JSON.parse(msg.value);
+        // console.log(evt);
+
+        // Ignore events from markets with state that is not active or suspended.
+        if (evt.marketData.marketState == marketState.STATE_ACTIVE || evt.marketData.marketState == marketState.STATE_SUSPENDED) {
+            persistMarketData(formatMarketData(evt.marketData));
+        }
         
     });
 };
 
 formatMarketData = (item) => {
 
+    console.log(item);
+
     const formatted = [
-        item.marketId, item.markPrice, item.bestBidPrice, item.bestBidVolume, item.bestOfferPrice,
+        item.market, item.markPrice, item.bestBidPrice, item.bestBidVolume, item.bestOfferPrice,
         item.bestOfferVolume, item.midPrice, BigInt(item.timestamp), item.openInterest, item.lastTradedPrice
     ];
+
+    console.log(formatted);
 
     return formatted;
 
@@ -308,4 +313,4 @@ persistMarketData = (item) => {
 
 
 
-setTimeout(start, 33000);
+setTimeout(start, 38000);
