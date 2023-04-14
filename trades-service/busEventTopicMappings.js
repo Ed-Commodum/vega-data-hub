@@ -28,15 +28,17 @@ const busEventTopicMappings = {
   [busEventTypes.BUS_EVENT_TYPE_TIME_UPDATE]: "time_updates",
   [busEventTypes.BUS_EVENT_TYPE_DISTRESSED_ORDERS_CLOSED]: "liquidations",
   [busEventTypes.BUS_EVENT_TYPE_SETTLE_DISTRESSED]: "liquidations",
-  [busEventTypes.BUS_EVENT_TYPE_WITHDRAWAL]: "bridge",
-  [busEventTypes.BUS_EVENT_TYPE_DEPOSIT]: "bridge"
+  [busEventTypes.BUS_EVENT_TYPE_WITHDRAWAL]: "deposits_withdrawals",
+  [busEventTypes.BUS_EVENT_TYPE_DEPOSIT]: "deposits_withdrawals",
+  [busEventTypes.BUS_EVENT_TYPE_ACCOUNT]: "accounts",
+  [busEventTypes.BUS_EVENT_TYPE_ASSET]: "assets"
 }
 
 const topicBusEventMappings = {
   "trades": [ busEventTypes.BUS_EVENT_TYPE_TRADE ],
   "position_updates": [ busEventTypes.BUS_EVENT_TYPE_POSITION_STATE, busEventTypes.BUS_EVENT_TYPE_SETTLE_POSITION ],
   "orders": [ busEventTypes.BUS_EVENT_TYPE_ORDER, busEventTypes.BUS_EVENT_TYPE_EXPIRED_ORDERS, busEventTypes.BUS_EVENT_TYPE_DISTRESSED_ORDERS_CLOSED, busEventTypes.BUS_EVENT_TYPE_LIQUIDITY_PROVISION ],
-  "markets": [ busEventTypes.BUS_EVENT_TYPE_MARKET, busEventTypes.BUS_EVENT_TYPE_MARKET_CREATED, busEventTypes.BUS_EVENT_TYPE_MARKET_UPDATED, busEventTypes.BUS_EVENT_TYPE_SETTLE_MARKET ],
+  "markets": [ busEventTypes.BUS_EVENT_TYPE_MARKET, busEventTypes.BUS_EVENT_TYPE_MARKET_CREATED, busEventTypes.BUS_EVENT_TYPE_MARKET_UPDATED, busEventTypes.BUS_EVENT_TYPE_SETTLE_MARKET],
   "market_data": [ busEventTypes.BUS_EVENT_TYPE_MARKET_DATA ],
   "governance": [ busEventTypes.BUS_EVENT_TYPE_PROPOSAL, busEventTypes.BUS_EVENT_TYPE_VOTE, busEventTypes.BUS_EVENT_TYPE_STATE_VAR, busEventTypes.BUS_EVENT_TYPE_NETWORK_LIMITS, busEventTypes.BUS_EVENT_TYPE_NETWORK_PARAMETER ],
   "validators": [ busEventTypes.BUS_EVENT_TYPE_VALIDATOR_RANKING, busEventTypes.BUS_EVENT_TYPE_VALIDATOR_SCORE, busEventTypes.BUS_EVENT_TYPE_VALIDATOR_UPDATE ],
@@ -44,7 +46,9 @@ const topicBusEventMappings = {
   "blocks": [ busEventTypes.BUS_EVENT_TYPE_BEGIN_BLOCK, busEventTypes.BUS_EVENT_TYPE_END_BLOCK ],
   "time_updates": [ busEventTypes.BUS_EVENT_TYPE_TIME_UPDATE ],
   "liquidations": [ busEventTypes.BUS_EVENT_TYPE_DISTRESSED_ORDERS_CLOSED, busEventTypes.BUS_EVENT_TYPE_SETTLE_DISTRESSED ],
-  "deposits_withdrawals": [ busEventTypes.BUS_EVENT_TYPE_WITHDRAWAL, busEventTypes.BUS_EVENT_TYPE_DEPOSIT ]
+  "deposits_withdrawals": [ busEventTypes.BUS_EVENT_TYPE_WITHDRAWAL, busEventTypes.BUS_EVENT_TYPE_DEPOSIT ],
+  "accounts": [ busEventTypes.BUS_EVENT_TYPE_ACCOUNT ],
+  "assets": [ busEventTypes.BUS_EVENT_TYPE_ASSET ]
 }
 
 module.exports = {

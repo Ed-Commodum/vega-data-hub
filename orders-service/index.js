@@ -228,7 +228,7 @@ const createContAggs = async (client, types) => {
 //     flushOrderQueueInterval = setInterval(flushOrderQueue, 50);
 // };
 
-let tradesFormatted = 0;
+let ordersFormatted = 0;
 let rowsForInsertion = 0;
 const toInsert = [];
 
@@ -255,11 +255,9 @@ const flushOrderQueue = () => {
         event.order['synthTimestamp'] = BigInt(block.timestamp) + BigInt(eventIndex);
 
         toInsert.push(formatOrder(event.order));
-        tradesFormatted += 1;
+        ordersFormatted += 1;
 
     }
-
-    console.log(`Total orders formatted: ${tradesFormatted}`)
 
     if (toInsert.length > 0) {
         persistOrders(toInsert);
@@ -330,7 +328,7 @@ const start = () => {
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [ { topic: "orders" }, { topic: "blocks" } ]);
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [ { topic: "orders" }, { topic: "blocks" } ], { groupId: "orders-group" });
     kafkaConsumer.on("message", (msg) => {
 
         const dateTime = new Date(Date.now()).toISOString();
@@ -408,6 +406,7 @@ const persistOrders = (items) => {
 
     rowsForInsertion += items.length;
     console.log(`Total rows sent for insetion: ${rowsForInsertion}`);
+    console.log(`Total orders formatted: ${ordersFormatted}`);
 
 }
 

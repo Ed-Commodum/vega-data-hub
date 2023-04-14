@@ -135,10 +135,10 @@ spec:
     image: ubuntu/kafka:latest
     resources:
       limits:
-        cpu: 1000m
+        cpu: 800m
         memory: 2500Mi
       requests:
-        cpu: 1000m
+        cpu: 800m
         memory: 2500Mi
     env:
     - name: ZOOKEEPER_HOST
@@ -320,9 +320,9 @@ spec:
     imagePullPolicy: Never
     resources:
       limits:
-        cpu: 350m
+        cpu: 450m
       requests:
-        cpu: 350m
+        cpu: 450m
     volumeMounts:
       - mountPath: /home/ian
         name: vega-node-pv-storage
@@ -379,9 +379,9 @@ spec:
     imagePullPolicy: Never
     resources:
       limits:
-        cpu: 400m
+        cpu: 600m
       requests:
-        cpu: 400m
+        cpu: 600m
     env:
     - name: KAFKA_BROKERS
       value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
@@ -417,6 +417,86 @@ spec:
   containers:
   - name: orders
     image: data-hub/orders
+    imagePullPolicy: Never
+    env:
+    - name: KAFKA_BROKERS
+      value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+    - name: TIMESCALEDB_HOST
+      value: timescaledb-service
+    - name: TIMESCALEDB_PORT
+      value: "5432"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: deposits-withdrawals-pod
+  labels:
+    app: deposits-withdrawals-pod
+spec:
+  restartPolicy: Never
+  containers:
+  - name: deposits-withdrawals
+    image: data-hub/deposits-withdrawals
+    imagePullPolicy: Never
+    env:
+    - name: KAFKA_BROKERS
+      value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+    - name: TIMESCALEDB_HOST
+      value: timescaledb-service
+    - name: TIMESCALEDB_PORT
+      value: "5432"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: markets-pod
+  labels:
+    app: markets-pod
+spec:
+  restartPolicy: Never
+  containers:
+  - name: markets
+    image: data-hub/markets
+    imagePullPolicy: Never
+    env:
+    - name: KAFKA_BROKERS
+      value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+    - name: TIMESCALEDB_HOST
+      value: timescaledb-service
+    - name: TIMESCALEDB_PORT
+      value: "5432"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: assets-pod
+  labels:
+    app: assets-pod
+spec:
+  restartPolicy: Never
+  containers:
+  - name: assets
+    image: data-hub/assets
+    imagePullPolicy: Never
+    env:
+    - name: KAFKA_BROKERS
+      value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+    - name: TIMESCALEDB_HOST
+      value: timescaledb-service
+    - name: TIMESCALEDB_PORT
+      value: "5432"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: accounts-pod
+  labels:
+    app: accounts-pod
+spec:
+  restartPolicy: Never
+  containers:
+  - name: accounts
+    image: data-hub/accounts
     imagePullPolicy: Never
     env:
     - name: KAFKA_BROKERS

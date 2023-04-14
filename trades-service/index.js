@@ -751,7 +751,7 @@ const start = () => {
 
             } else {
 
-                // Create topic "trades".
+                // Create topics.
                 const topics = [];
                 for (let topicName of Object.keys(topicBusEventMappings)) {
                     topics.push({
@@ -790,7 +790,7 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
     //     console.log(evt);
     //     mostRecentBeginBlock = evt.beginBlock;
     // });
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "trades" }]);
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "trades" }], { groupId: "trades-group" });
     kafkaConsumer.on("message", (msg) => {
         console.log("New message");
         const evt = JSON.parse(msg.value);

@@ -29,7 +29,9 @@ const busEventTopicMappings = {
   [busEventTypes.BUS_EVENT_TYPE_DISTRESSED_ORDERS_CLOSED]: "liquidations",
   [busEventTypes.BUS_EVENT_TYPE_SETTLE_DISTRESSED]: "liquidations",
   [busEventTypes.BUS_EVENT_TYPE_WITHDRAWAL]: "deposits_withdrawals",
-  [busEventTypes.BUS_EVENT_TYPE_DEPOSIT]: "deposits_withdrawals"
+  [busEventTypes.BUS_EVENT_TYPE_DEPOSIT]: "deposits_withdrawals",
+  [busEventTypes.BUS_EVENT_TYPE_ACCOUNT]: "accounts",
+  [busEventTypes.BUS_EVENT_TYPE_ASSET]: "assets"
 }
 
 const topicBusEventMappings = {
@@ -44,7 +46,9 @@ const topicBusEventMappings = {
   "blocks": [ busEventTypes.BUS_EVENT_TYPE_BEGIN_BLOCK, busEventTypes.BUS_EVENT_TYPE_END_BLOCK ],
   "time_updates": [ busEventTypes.BUS_EVENT_TYPE_TIME_UPDATE ],
   "liquidations": [ busEventTypes.BUS_EVENT_TYPE_DISTRESSED_ORDERS_CLOSED, busEventTypes.BUS_EVENT_TYPE_SETTLE_DISTRESSED ],
-  "deposits_withdrawals": [ busEventTypes.BUS_EVENT_TYPE_WITHDRAWAL, busEventTypes.BUS_EVENT_TYPE_DEPOSIT ]
+  "deposits_withdrawals": [ busEventTypes.BUS_EVENT_TYPE_WITHDRAWAL, busEventTypes.BUS_EVENT_TYPE_DEPOSIT ],
+  "accounts": [ busEventTypes.BUS_EVENT_TYPE_ACCOUNT ],
+  "assets": [ busEventTypes.BUS_EVENT_TYPE_ASSET ]
 }
 
 module.exports = {
