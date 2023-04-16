@@ -107,11 +107,17 @@ const start = () => {
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "accounts" }], { groupId: "accounts-group" });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [ { topic: "blocks" }, { topic: "accounts" } ], { groupId: "accounts-group" });
     kafkaConsumer.on("message", (msg) => {
 
         const dateTime = new Date(Date.now()).toISOString();
         // console.log(`${dateTime}: New message`);
+
+        if (msg.topic == "blocks") {
+            // Save recent blocks in memory to use for calculating synthetic timestamps
+            
+
+        }
 
 
         if (msg.topic == "accounts") {

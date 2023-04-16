@@ -18,6 +18,7 @@ const pgPool = new Pool({
 
 
 const kafka = require("kafka-node");
+const { marketEnumMappings } = require('./marketEnums.js');
 
 // const kafkaBrokers = process.env.KAFKA_BROKERS.split(",");
 const kafkaBrokers = process.env.KAFKA_BROKERS;
@@ -31,7 +32,20 @@ let kafkaConsumer;
 
 const createTablesQuery = `
 CREATE TABLE IF NOT EXISTS markets (
-    
+    id TEXT NOT NULL,
+    instrument_code TEXT NOT NULL,
+    instrument_name TEXT NOT NULL,
+    instrument_metadata_tags TEXT NOT NULL,
+    future_settlement_asset TEXT NOT NULL,
+    future_quote_name TEXT NOT NULL,
+    margin_search_level TEXT NOT NULL,
+    margin_initial_margin TEXT NOT NULL,
+    margin_collateral_release TEXT NOT NULL,
+    decimal_places INTEGER,
+    trading_mode TEXT NOT NULL,
+    state TEXT NOT NULL,
+    position_decimal_places INTEGER,
+    PRIMARY KEY (id)
 );
 `;
 
@@ -39,23 +53,63 @@ CREATE TABLE IF NOT EXISTS markets (
 // SELECT create_hypertable('deposits_withdrawals', 'created_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
 // `;
 
-const insertMarket = `
-INSERT INTO markets (
-    
-) values (
-
-);
-`;
-
 const upsertMarket = `
 INSERT INTO markets (
-    
+    id,
+    instrument_code,
+    instrument_name,
+    instrument_metadata_tags,
+    future_settlement_asset,
+    future_quote_name,
+    margin_search_level,
+    margin_initial_margin,
+    margin_collateral_release,
+    decimal_places,
+    trading_mode,
+    state,
+    position_decimal_places
 ) values (
-    
-) ON CONFLICT () DO UPDATE SET (
-
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $11,
+    $12,
+    $13
+) ON CONFLICT (id) DO UPDATE SET (
+    id,
+    instrument_code,
+    instrument_name,
+    instrument_metadata_tags,
+    future_settlement_asset,
+    future_quote_name,
+    margin_search_level,
+    margin_initial_margin,
+    margin_collateral_release,
+    decimal_places,
+    trading_mode,
+    state,
+    position_decimal_places
 ) = (
-    
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $11,
+    $12,
+    $13
 ) RETURNING *;
 `;
 
@@ -120,7 +174,16 @@ const setConsumer = (kafkaConsumer) => {
             
             const evt = JSON.parse(msg.value);
             
-            console.log(evt);
+            // console.log(evt);
+            console.dir(evt, { depth: null });
+
+            if (evt.marketCreated) {
+                persistMarket(formatMarket(evt));
+            }
+
+            if (evt.marketUpdated) {
+                persistMarket(formatMarket(evt));
+            }
 
 
         }
@@ -129,19 +192,39 @@ const setConsumer = (kafkaConsumer) => {
 };
 
 
-const persistMarket = (evt) => {
+const formatMarket = (evt) => {
 
-
+    evt.tradingMode = marketEnumMappings.tradingMode[evt.tradingMode];
+    evt.state = marketEnumMappings.state[evt.state];
 
     const row = [
-
+        evt.id,
+        evt.tradableInstrument.instrument.code,
+        evt.tradableInstrument.instrument.name,
+        JSON.stringify(evt.tradableInstrument.instrument.metadata.tags),
+        evt.tradableInstrument.instrument.future.settlementAsset,
+        evt.tradableInstrument.instrument.future.quoteName,
+        evt.tradableInstrument.instrument.marginCalculator.scalingfactors.searchLevel,
+        evt.tradableInstrument.instrument.marginCalculator.scalingfactors.initialMargin,
+        evt.tradableInstrument.instrument.marginCalculator.scalingfactors.collateralRelease,
+        parseInt(evt.decimalPlaces),
+        evt.tradingMode,
+        evt.state,
+        parseInt(evt.positionDecimalPlaces)
     ];
 
-    pgPool.query(insertMarket, row, (err, res) => {
+    return row
+
+}
+
+const persistMarket = (row) => {
+
+    pgPool.query(upsertMarket, row, (err, res) => {
         if (!err) {
             // console.dir(res, { depth: null });
         } else {
             console.log("Error inserting Market.");
+            console.log(err);
         }
     });
 

@@ -18,6 +18,7 @@ const pgPool = new Pool({
 
 
 const kafka = require("kafka-node");
+const { assetEnumMappings } = reuqire('./assetEnum.js');
 
 // const kafkaBrokers = process.env.KAFKA_BROKERS.split(",");
 const kafkaBrokers = process.env.KAFKA_BROKERS;
@@ -31,7 +32,16 @@ let kafkaConsumer;
 
 const createTablesQuery = `
 CREATE TABLE IF NOT EXISTS assets (
-    
+    id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    name TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    decimals INTEGER,
+    quantum NUMERIC,
+    erc20_contract_addr TEXT,
+    erc20_lifetime_limit TEXT,
+    erc20_withdraw_threshold TEXT
+    PRIMARY KEY (id)
 );
 `;
 
@@ -39,23 +49,47 @@ CREATE TABLE IF NOT EXISTS assets (
 // SELECT create_hypertable('deposits_withdrawals', 'created_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
 // `;
 
-const insertAsset = `
-INSERT INTO assets (
-    
-) values (
-
-);
-`;
-
 const upsertAsset = `
 INSERT INTO assets (
-    
+    id,
+    status,
+    name,
+    symbol,
+    decimals,
+    quantum,
+    erc20_contract_addr,
+    erc20_lifetime_limit,
+    erc20_withdraw_threshold
 ) values (
-    
-) ON CONFLICT () DO UPDATE SET (
-
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9
+) ON CONFLICT (id) DO UPDATE SET (
+    id,
+    status,
+    name,
+    symbol,
+    decimals,
+    quantum,
+    erc20_contract_addr,
+    erc20_lifetime_limit,
+    erc20_withdraw_threshold
 ) = (
-    
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9
 ) RETURNING *;
 `;
 
@@ -120,7 +154,14 @@ const setConsumer = (kafkaConsumer) => {
             
             const evt = JSON.parse(msg.value);
 
-            console.log(evt);
+            console.dir(evt, {depth: null});
+
+            if (evt.asset.details.erc20) {
+                
+                persistAsset(formatAsset(evt.asset));
+
+            }
+
 
         }
 
@@ -128,17 +169,26 @@ const setConsumer = (kafkaConsumer) => {
 };
 
 
-const persistAsset = (evt) => {
+const formatAsset = (evt) => {
 
     const row = [
-
+        evt.id, evt.status, evt.details.name, evt.details.symbol, parseInt(evt.details.decimals),
+        evt.details.quantum, evt.details.erc20.contractAddress, evt.details.erc20.lifetimeLimit,
+        evt.details.erc20.withdrawThreshold
     ];
 
-    pgPool.query(insertAsset, row, (err, res) => {
+    return row
+
+}
+
+const persistAsset = (row) => {
+
+    pgPool.query(upsertAsset, row, (err, res) => {
         if (!err) {
             // console.dir(res, { depth: null });
         } else {
-            console.log("Error inserting asset.");
+            console.log("Error upserting asset.");
+            console.log(err);
         }
     });
 
