@@ -4,7 +4,6 @@ const kafka = require('kafka-node');
 const { EventEmitter } = require('node:events');
 const { busEventTopicMappings, topicBusEventMappings } = require('./busEventTopicMappings.js');
 const { busEventTypes } = require('./busEventTypes.js');
-const { CodeGeneratorResponse_File } = require('@bufbuild/protobuf');
 
 class Broker {
   constructor() {
@@ -224,6 +223,7 @@ class Broker {
 
     // Start socket server
     const pair = this.nano.socket('pair');
+    pair.rcvbuf(314572800);
     const addr = 'tcp://0.0.0.0:3005';
     pair.bind(addr);
     pair.on('data', this.recieve);

@@ -18,7 +18,7 @@ const pgPool = new Pool({
 
 
 const kafka = require("kafka-node");
-const { assetEnumMappings } = reuqire('./assetEnum.js');
+const { assetEnumMappings } = require('./assetEnums.js');
 
 // const kafkaBrokers = process.env.KAFKA_BROKERS.split(",");
 const kafkaBrokers = process.env.KAFKA_BROKERS;
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS assets (
     quantum NUMERIC,
     erc20_contract_addr TEXT,
     erc20_lifetime_limit TEXT,
-    erc20_withdraw_threshold TEXT
+    erc20_withdraw_threshold TEXT,
     PRIMARY KEY (id)
 );
 `;

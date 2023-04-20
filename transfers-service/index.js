@@ -1,4 +1,5 @@
 const { Client, Pool } = require('pg');
+const format = require('pg-format');
 
 const pgClient = new Client({
     host: process.env.TIMESCALEDB_HOST,
@@ -18,7 +19,6 @@ const pgPool = new Pool({
 
 
 const kafka = require("kafka-node");
-// const { RecentBlocks } = require('./ringBuffers.js');
 
 // const kafkaBrokers = process.env.KAFKA_BROKERS.split(",");
 const kafkaBrokers = process.env.KAFKA_BROKERS;
@@ -30,15 +30,103 @@ const kafkaClient = new kafka.KafkaClient({ kafkaHost: kafkaBrokers });
 // const kafkaAdmin = new kafka.Admin(kafkaClient);
 let kafkaConsumer;
 
-// const recentBlocks = new RecentBlocks(500);
+const { transferEnumMappings } = require('./transferEnums.js');
+const { RecentBlocks } = require('./ringBuffers.js');
+const recentBlocks = new RecentBlocks(500);
+const ledgerMovementsQueue = [];
+const ledgerMovementsToInsert = [];
+const transfersQueue = [];
+const transfersToInsert = [];
+let ledgerMovementsIntervalId;
+let transfersIntervalId;
+let intervalId;
 
 const createTablesQuery = `
 CREATE TABLE IF NOT EXISTS transfers (
-    synth_timestamp BIGINT
+    timestamp BIGINT
 );
 
-SELECT create_hypertable('transfers', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
+CREATE TABLE IF NOT EXISTS ledger_movements (
+    from_account_asset TEXT NOT NULL,
+    from_account_owner TEXT NOT NULL,
+    from_account_type TEXT NOT NULL,
+    from_account_market TEXT NOT NULL,
+    to_account_asset TEXT NOT NULL,
+    to_account_owner TEXT NOT NULL,
+    to_account_type TEXT NOT NULL,
+    to_account_market TEXT NOT NULL,
+    amount NUMERIC,
+    type TEXT NOT NULL,
+    timestamp BIGINT,
+    from_balance NUMERIC,
+    to_balance NUMERIC,
+    PRIMARY KEY (
+        timestamp,
+        from_account_asset,
+        from_account_owner,
+        from_account_type,
+        from_account_market,
+        to_account_asset,
+        to_account_owner,
+        to_account_type,
+        to_account_market,
+        from_balance,
+        to_balance
+    )
+);
+
+SELECT create_hypertable('transfers', 'timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
+SELECT create_hypertable('ledger_movements', 'timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
 `;
+
+const insertLedgerMovements = `
+INSERT INTO ledger_movements (
+    from_account_asset,
+    from_account_owner,
+    from_account_type,
+    from_account_market,
+    to_account_asset,
+    to_account_owner,
+    to_account_type,
+    to_account_market,
+    amount,
+    type,
+    timestamp,
+    from_balance,
+    to_balance
+) values (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $11,
+    $12,
+    $13
+) ON CONFLICT DO NOTHING;
+`;
+
+const fInsertLedgerMovements = `
+INSERT INTO ledger_movements (
+    from_account_asset,
+    from_account_owner,
+    from_account_type,
+    from_account_market,
+    to_account_asset,
+    to_account_owner,
+    to_account_type,
+    to_account_market,
+    amount,
+    type,
+    timestamp,
+    from_balance,
+    to_balance
+) values %L RETURNING *;`
 
 const insertTransfers = `
 INSERT INTO transfers (
@@ -49,8 +137,22 @@ INSERT INTO transfers (
 RETURNING *;
 `;
 
+const upsertTransfers = `
+INSERT INTO transfers (
+    
+) values (
+    
+) ON CONFLICT () DO UPDATE SET (
+
+) = (
+
+)
+RETURNING *;
+`;
+
 const setIntegerNowFunc = `
 SELECT set_integer_now_func('transfers', 'current_time_ns');
+SELECT set_integer_now_func('ledger_movements', 'current_time_ns');
 `;
 
 const continuousAggregates = {
@@ -118,7 +220,38 @@ const createContAggs = async (client, types) => {
 
 };
 
-const flushPosUpdateQueue = () => {
+const flushLedgerMovementsQueue = () => {
+
+    clearInterval(ledgerMovementsIntervalId);
+
+    while (ledgerMovementsQueue.length) {
+
+        if (ledgerMovementsToInsert.length >= 100) {
+            persistLedgerMovements(ledgerMovementsToInsert);
+            while (ledgerMovementsToInsert.length) ledgerMovementsToInsert.shift();
+        }
+
+        const evt = ledgerMovementsQueue.shift();
+
+        // Only format ledgerMovements fields that are not empty
+        if (evt.ledgerMovements.ledgerMovements) {
+            ledgerMovementsToInsert.push(...formatLedgerMovements(evt.ledgerMovements.ledgerMovements));
+        }
+
+    }
+
+    if (ledgerMovementsToInsert.length > 0) {
+        persistLedgerMovements(ledgerMovementsToInsert);
+        while (ledgerMovementsToInsert.length) ledgerMovementsToInsert.shift();
+    }
+
+    ledgerMovementsIntervalId = setInterval(flushLedgerMovementsQueue, 50);
+
+}
+
+ledgerMovementsIntervalId = setInterval(flushLedgerMovementsQueue, 50);
+
+const flushTransferUpdateQueue = () => {
     
     clearInterval(intervalId);
 
@@ -223,13 +356,16 @@ const setConsumer = (kafkaConsumer) => {
         if (msg.topic == "transfers") {
             
             const evt = JSON.parse(msg.value);
-            console.log(evt);
+            // console.log(evt);
+            // console.dir(evt, { depth: null });
 
             if (evt.transfer) {
 
             }
 
             if (evt.ledgerMovements) {
+
+                ledgerMovementsQueue.push(evt)
 
             }
 
@@ -238,6 +374,62 @@ const setConsumer = (kafkaConsumer) => {
     });
 };
 
+const formatLedgerMovements = (movements) => {
+
+    const rows = [];
+
+    for (let movement of movements) {
+        for (let entry of movement.entries) {
+
+            // Convert enums to field names
+            entry.type = transferEnumMappings.type[entry.type];
+            entry.fromAccount.type = transferEnumMappings.accountType[entry.fromAccount.type];
+            entry.toAccount.type = transferEnumMappings.accountType[entry.toAccount.type];
+
+            // Replace undefined fields to prevent nulls in the PRIMARY KEY of the table
+            if (entry.fromAccount.owner == undefined) entry.fromAccount.owner = "network";
+            if (entry.toAccount.owner == undefined) entry.toAccount.owner = "network";
+            
+            if (entry.fromAccount.marketId == undefined) entry.fromAccount.marketId = "N/A";
+            if (entry.toAccount.marketId == undefined) entry.toAccount.marketId = "N/A";
+
+            const row = [
+                entry.fromAccount.assetId,
+                entry.fromAccount.owner,
+                entry.fromAccount.type,
+                entry.fromAccount.marketId,
+                entry.toAccount.assetId,
+                entry.toAccount.owner,
+                entry.toAccount.type,
+                entry.toAccount.marketId,
+                entry.amount,
+                entry.type,
+                entry.timestamp,
+                entry.fromAccountBalance,
+                entry.toAccountBalance
+            ];
+
+            rows.push(row);
+
+        }
+    }
+
+    return rows;
+
+}
+
+const persistLedgerMovements = (rows) => {
+
+    pgClient.query(format(fInsertLedgerMovements, rows), [], (err, res) => {
+        if (!err) {
+            
+        } else {
+            console.log(`Error performing inserts`);
+            console.log(err);
+        }
+    });
+
+}
 
 const persistTransfers = (evt) => {
 

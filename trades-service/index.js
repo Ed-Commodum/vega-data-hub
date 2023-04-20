@@ -794,7 +794,7 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
     kafkaConsumer.on("message", (msg) => {
         console.log("New message");
         const evt = JSON.parse(msg.value);
-        // console.log(evt);
+        console.log(evt);
         const trade = evt.trade;
         // console.log(mostRecentBeginBlock);
         // console.log(trade);
@@ -843,6 +843,22 @@ const formatTrade = (trade) => {
         if (trade.synthTimestamp/intervalMap[interval] > bucketIndices[interval]) {
             bucketIndices[interval] = trade.synthTimestamp/intervalMap[interval];
             isFirstInBucket += 1;
+        }
+    }
+
+    if (!trade.buyerFee) {
+        trade.buyerFee = {
+            makerFee: "0",
+            infrastructureFee: "0",
+            liquidityFee: "0"
+        }
+    }
+
+    if (!trade.sellerFee) {
+        trade.sellerFee = {
+            makerFee: "0",
+            infrastructureFee: "0",
+            liquidityFee: "0"
         }
     }
 

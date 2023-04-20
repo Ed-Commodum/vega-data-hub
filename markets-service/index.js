@@ -178,11 +178,11 @@ const setConsumer = (kafkaConsumer) => {
             console.dir(evt, { depth: null });
 
             if (evt.marketCreated) {
-                persistMarket(formatMarket(evt));
+                persistMarket(formatMarket(evt.marketCreated));
             }
 
             if (evt.marketUpdated) {
-                persistMarket(formatMarket(evt));
+                persistMarket(formatMarket(evt.marketUpdated));
             }
 
 
@@ -204,9 +204,9 @@ const formatMarket = (evt) => {
         JSON.stringify(evt.tradableInstrument.instrument.metadata.tags),
         evt.tradableInstrument.instrument.future.settlementAsset,
         evt.tradableInstrument.instrument.future.quoteName,
-        evt.tradableInstrument.instrument.marginCalculator.scalingfactors.searchLevel,
-        evt.tradableInstrument.instrument.marginCalculator.scalingfactors.initialMargin,
-        evt.tradableInstrument.instrument.marginCalculator.scalingfactors.collateralRelease,
+        evt.tradableInstrument.marginCalculator.scalingFactors.searchLevel,
+        evt.tradableInstrument.marginCalculator.scalingFactors.initialMargin,
+        evt.tradableInstrument.marginCalculator.scalingFactors.collateralRelease,
         parseInt(evt.decimalPlaces),
         evt.tradingMode,
         evt.state,

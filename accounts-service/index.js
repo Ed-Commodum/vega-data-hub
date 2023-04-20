@@ -29,24 +29,49 @@ const kafkaClient = new kafka.KafkaClient({ kafkaHost: kafkaBrokers });
 // const kafkaAdmin = new kafka.Admin(kafkaClient);
 let kafkaConsumer;
 
+const { accountEnumMappings } = require('./accountEnums.js');
+const { RecentBlocks } = require('./ringBuffers.js');
+const recentBlocks = new RecentBlocks(500);
+const accountUpdateQueue = [];
+let intervalId;
+
 const createTablesQuery = `
-CREATE TABLE IF NOT EXISTS accounts (
-    
+CREATE TABLE IF NOT EXISTS account_updates (
+    id TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    balance NUMERIC,
+    asset TEXT NOT NULL,
+    market_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    synth_timestamp BIGINT,
+    PRIMARY KEY (id, synth_timestamp)
 );
 
-SELECT create_hypertable('accounts', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
+SELECT create_hypertable('account_updates', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
 `;
 
 const insertAccountUpdate = `
-INSERT INTO accounts (
-    
+INSERT INTO account_updates (
+    id,
+    owner,
+    balance,
+    asset,
+    market_id,
+    type,
+    synth_timestamp
 ) values (
-
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7
 );
 `;
 
 const upsertAccountUpdate = `
-INSERT INTO accounts (
+INSERT INTO accountUpdates (
     
 ) values (
     
@@ -56,6 +81,35 @@ INSERT INTO accounts (
     
 ) RETURNING *;
 `;
+
+
+const flushAccountUpdateQueue = () => {
+    
+    clearInterval(intervalId);
+
+    while (accountUpdateQueue.length) {
+        
+        const event = accountUpdateQueue.shift();
+        const height = event.id.split('-')[0];
+        const eventIndex = event.id.split('-')[1];
+        const block = recentBlocks.get(height);
+
+        if (!block) {
+            accountUpdateQueue.unshift(event);
+            break;
+        }
+        
+        event.account["synthTimestamp"] = BigInt(block.timestamp) + BigInt(eventIndex);
+
+        persistAccountUpdate(formatAccountUpdate(event.account));
+
+    }
+
+    intervalId = setInterval(flushAccountUpdateQueue, 50);
+
+};
+
+intervalId = setInterval(flushAccountUpdateQueue, 50);
 
 
 const start = () => {
@@ -116,6 +170,13 @@ const setConsumer = (kafkaConsumer) => {
         if (msg.topic == "blocks") {
             // Save recent blocks in memory to use for calculating synthetic timestamps
             
+            const evt = JSON.parse(msg.value);
+
+            if (evt.beginBlock) {
+
+                recentBlocks.push(evt.beginBlock);
+
+            }
 
         }
 
@@ -124,7 +185,13 @@ const setConsumer = (kafkaConsumer) => {
             
             const evt = JSON.parse(msg.value);
             
-            console.log(evt);
+            // console.log(evt);
+
+            if (evt.account) {
+
+                accountUpdateQueue.push(evt);
+
+            }
 
 
         }
@@ -132,19 +199,26 @@ const setConsumer = (kafkaConsumer) => {
     });
 };
 
+const formatAccountUpdate = (acc) => {
 
-const persistAccountUpdate = (evt) => {
-
+    acc.type = accountEnumMappings.type[acc.type];
 
     const row = [
-
+        acc.id, acc.owner, acc.balance, acc.asset, acc.marketId, acc.type, acc.synthTimestamp
     ];
+
+    return row;
+
+}
+
+const persistAccountUpdate = (row) => {
 
     pgPool.query(insertAccountUpdate, row, (err, res) => {
         if (!err) {
             // console.dir(res, { depth: null });
         } else {
             console.log("Error inserting account update.");
+            console.log(err);
         }
     });
 

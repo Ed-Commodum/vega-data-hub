@@ -7,4 +7,4 @@ COPY src /app/src/
 RUN npm install
 RUN npm install -g nodemon
 COPY index.js busEventTypes.js busEventTopicMappings.js broker.js /app/
-CMD ["nodemon", "index.js"]
+CMD ["nodemon", "--prof", "index.js"]
