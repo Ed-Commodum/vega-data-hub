@@ -792,10 +792,10 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
     // });
     kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "trades" }], { groupId: "trades-group" });
     kafkaConsumer.on("message", (msg) => {
-        console.log("New message");
+        // console.log("New message");
         const evt = JSON.parse(msg.value);
-        console.log(evt);
-        const trade = evt.trade;
+        // console.log(evt);
+        const trade = evt.Event.Trade;
         // console.log(mostRecentBeginBlock);
         // console.log(trade);
 
@@ -809,7 +809,7 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
         const synthTimestamp = BigInt(trade.timestamp) + BigInt(idParts[1]);
         // console.log("Timestamp: ", trade.timestamp);
         // console.log("Synthetic Timestamp: ", synthTimestamp);
-        trade["synthTimestamp"] = synthTimestamp;
+        trade["synth_timestamp"] = synthTimestamp;
 
         // convert enum fields to their respective text values
         trade.type = tradeTypeMappings[trade.type];
@@ -840,35 +840,35 @@ const formatTrade = (trade) => {
     // Currently unused.
     let isFirstInBucket = 0;
     for (let interval of ["interval_5m", "interval_1h", "interval_1d"]) {
-        if (trade.synthTimestamp/intervalMap[interval] > bucketIndices[interval]) {
-            bucketIndices[interval] = trade.synthTimestamp/intervalMap[interval];
+        if (trade.synth_timestamp/intervalMap[interval] > bucketIndices[interval]) {
+            bucketIndices[interval] = trade.synth_timestamp/intervalMap[interval];
             isFirstInBucket += 1;
         }
     }
 
-    if (!trade.buyerFee) {
-        trade.buyerFee = {
-            makerFee: "0",
-            infrastructureFee: "0",
-            liquidityFee: "0"
+    if (!trade.buyer_fee) {
+        trade.buyer_fee = {
+            maker_fee: "0",
+            infrastructure_fee: "0",
+            liquidity_fee: "0"
         }
     }
 
-    if (!trade.sellerFee) {
-        trade.sellerFee = {
-            makerFee: "0",
-            infrastructureFee: "0",
-            liquidityFee: "0"
+    if (!trade.seller_fee) {
+        trade.seller_fee = {
+            maker_fee: "0",
+            infrastructure_fee: "0",
+            liquidity_fee: "0"
         }
     }
 
     console.dir(trade, { depth: null });
 
     const formatted = [
-        trade.id, trade.marketId, parseInt(trade.price), parseInt(trade.size), trade.buyer,
-        trade.seller, trade.aggressor, trade.buyOrder, trade.sellOrder, trade.timestamp, trade.synthTimestamp, trade.type, 
-        trade.buyerFee.makerFee, trade.buyerFee.infrastructureFee, trade.buyerFee.liquidityFee,
-        trade.sellerFee.makerFee, trade.sellerFee.infrastructureFee, trade.sellerFee.liquidityFee, isFirstInBucket
+        trade.id, trade.market_id, parseInt(trade.price), parseInt(trade.size), trade.buyer,
+        trade.seller, trade.aggressor, trade.buy_order, trade.sell_order, trade.timestamp, trade.synth_timestamp, trade.type, 
+        trade.buyer_fee.maker_fee, trade.buyer_fee.infrastructure_fee, trade.buyer_fee.liquidity_fee,
+        trade.seller_fee.maker_fee, trade.seller_fee.infrastructure_fee, trade.seller_fee.liquidity_fee, isFirstInBucket
     ];
 
     return formatted;

@@ -152,6 +152,8 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, d
 	msgCh := make(chan []kafka.Message)
 	batch := []kafka.Message{}
 	batchBytesCount := 0
+	tradeCount := 0
+	orderCount := 0
 
 	go func() {
 		defer close(msgCh)
@@ -163,6 +165,12 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, d
 			jsonEvt, err := json.Marshal(evt) // Convert each event into JSON
 			if err != nil {
 				log.Fatal("Failed to marshal bus event to JSON: %w", err)
+			}
+			if evtType.String() == "BUS_EVENT_TYPE_TRADE" {
+				tradeCount += 1
+			}
+			if evtType.String() == "BUS_EVENT_TYPE_ORDER" {
+				orderCount += 1
 			}
 			if topic, ok := busEventTopicMap[evtType.String()]; ok {
 				batch = append(batch, kafka.Message{ // Batch messages
@@ -177,9 +185,11 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, d
 			if len(batch) >= 1000 { // When batch is a certain size, send it
 				msgCh <- batch
 				batch = nil
-				fmt.Println(string(jsonEvt))
+				// fmt.Println(string(jsonEvt))
 				fmt.Println(evt.Id)
 				fmt.Println("Bytes count: ", batchBytesCount)
+				fmt.Println("Trade count: ", tradeCount)
+				fmt.Println("Order count: ", orderCount)
 				batchBytesCount = 0
 			}
 		}

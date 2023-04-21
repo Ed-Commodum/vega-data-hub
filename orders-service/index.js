@@ -248,7 +248,7 @@ const flushOrderQueue = () => {
         const block = recentBlocks.get(height);
 
         if (!block) {
-            posUpdateQueue.unshift(event);
+            orderQueue.unshift(event);
             break;
         }
         
