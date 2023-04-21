@@ -135,10 +135,10 @@ spec:
     image: ubuntu/kafka:latest
     resources:
       limits:
-        cpu: 700m
+        cpu: 600m
         memory: 2500Mi
       requests:
-        cpu: 700m
+        cpu: 600m
         memory: 2500Mi
     env:
     - name: ZOOKEEPER_HOST
@@ -320,9 +320,9 @@ spec:
     imagePullPolicy: Never
     resources:
       limits:
-        cpu: 500m
+        cpu: 900m
       requests:
-        cpu: 500m
+        cpu: 900m
     volumeMounts:
       - mountPath: /home/ian
         name: vega-node-pv-storage
@@ -373,7 +373,7 @@ spec:
     - port: 3005
       targetPort: 3005
   selector:
-    app: broker-pod
+    app: broker-go-pod
 ---
 # apiVersion: v1
 # kind: Pod

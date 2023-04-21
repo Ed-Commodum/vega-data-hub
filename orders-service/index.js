@@ -252,9 +252,9 @@ const flushOrderQueue = () => {
             break;
         }
         
-        event.order['synthTimestamp'] = BigInt(block.timestamp) + BigInt(eventIndex);
+        event.Event.Order['synth_timestamp'] = BigInt(block.timestamp) + BigInt(eventIndex);
 
-        toInsert.push(formatOrder(event.order));
+        toInsert.push(formatOrder(event.Event.Order));
         ordersFormatted += 1;
 
     }
@@ -335,20 +335,21 @@ const setConsumer = (kafkaConsumer) => {
         // console.log(`${dateTime}: New message`);
         const evt = JSON.parse(msg.value);
 
-        // if (!evt.order) {
+        // if (!evt.Event.Order) {
         //     console.dir(evt, { depth: null });
         // }
 
         if (msg.topic == "blocks") {
-            if (evt.beginBlock) recentBlocks.push(evt.beginBlock);
+            if (evt.Event.BeginBlock) recentBlocks.push(evt.Event.BeginBlock);
         }
 
         if (msg.topic == "orders") {
-            if (evt.order) {
+
+            if (evt.Event.Order) {
                 // console.log(evt);
-                // persistOrder(formatOrder(evt.order));
                 orderQueue.push(evt);
             }
+
         }
         
     });
@@ -363,8 +364,8 @@ const formatOrder = (order) => {
 
     // Convert to array format
     const formatted = [
-        order.id, order.marketId, order.partyId, order.side, order.price, order.size, order.remaining,
-        order.type, order.createdAt, order.synthTimestamp, order.status, order.version
+        order.id, order.market_id, order.party_id, order.side, order.price, order.size, order.remaining,
+        order.type, order.created_at, order.synth_timestamp, order.status, order.version
     ];
 
     // Set undefined types for when order is stopped

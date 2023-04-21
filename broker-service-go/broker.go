@@ -10,6 +10,7 @@ import (
 	// "strings"
 	"context"
 	"encoding/json"
+	"time"
 
 	// "go.nanomsg.org/mangos/v3"
 	// mangosErr "go.nanomsg.org/mangos/v3/errors"
@@ -60,7 +61,10 @@ func newKafkaClient() (*KafkaClient, error) {
 	w := &kafka.Writer{
 		Addr: kafka.TCP(kafkaBrokers),
 		Balancer: &kafka.LeastBytes{},
-		RequiredAcks: kafka.RequireAll,
+		RequiredAcks: kafka.RequireOne,
+		BatchSize: 1000,
+		BatchTimeout: time.Millisecond * 10,
+		BatchBytes: 2097152,
 	}
 
 	return &KafkaClient{
@@ -147,6 +151,7 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, d
 
 	msgCh := make(chan []kafka.Message)
 	batch := []kafka.Message{}
+	batchBytesCount := 0
 
 	go func() {
 		defer close(msgCh)
@@ -159,15 +164,23 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, d
 			if err != nil {
 				log.Fatal("Failed to marshal bus event to JSON: %w", err)
 			}
-			batch = append(batch, kafka.Message{ // Batch messages
-				Topic: busEventTopicMap[evtType.String()], // Get the topic based on the evtType
-				Value: jsonEvt, // Add JSON bytes to value field of kafka.Message.
-			})
-			if len(batch) >= 100 { // When batch is a certain size, send it
+			if topic, ok := busEventTopicMap[evtType.String()]; ok {
+				batch = append(batch, kafka.Message{ // Batch messages
+					Topic: topic, // Get the topic based on the evtType
+					Value: jsonEvt, // Add JSON bytes to value field of kafka.Message.
+				})
+				batchBytesCount += len(jsonEvt)
+				if len(jsonEvt) >= 5000 {
+					fmt.Println(string(jsonEvt))
+				}
+			}
+			if len(batch) >= 1000 { // When batch is a certain size, send it
 				msgCh <- batch
 				batch = nil
 				fmt.Println(string(jsonEvt))
 				fmt.Println(evt.Id)
+				fmt.Println("Bytes count: ", batchBytesCount)
+				batchBytesCount = 0
 			}
 		}
 	}()
@@ -183,7 +196,7 @@ func (kc KafkaClient) send(wg *sync.WaitGroup, msgCh chan []kafka.Message) {
 		for batch := range msgCh {
 			err := kc.writer.WriteMessages(ctx, batch...)
 			if err != nil {
-				log.Fatal("Error writing messages: %w", err)
+				log.Fatal("Error writing messages: ", err)
 			}
 
 			count += len(batch)
@@ -231,6 +244,8 @@ func (b Broker) start() {
 }
 
 func main() {
+
+	time.Sleep(time.Second * 35)
 
 	broker := newBroker()
 	broker.start()
