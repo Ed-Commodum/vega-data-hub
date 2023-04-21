@@ -8,6 +8,8 @@ import (
 	"sync"
 	"os"
 	// "strings"
+	"context"
+	"encoding/json"
 
 	// "go.nanomsg.org/mangos/v3"
 	// mangosErr "go.nanomsg.org/mangos/v3/errors"
@@ -25,30 +27,16 @@ import (
 
 type Broker struct {
 	ss SocketServer
-	d Decoder
-	mf MessageFormatter
 	kc KafkaClient
 }
 
 type SocketServer struct {
 	sock protocol.Socket
 	addr string
-	inCh chan []byte
-}
-
-type Decoder struct {
-	inCh chan []byte
-	deCh chan *eventspb.BusEvent
-}
-
-type MessageFormatter struct {
-	deCh chan *eventspb.BusEvent
-	msgCh chan []kafka.Message
 }
 
 type KafkaClient struct {
 	writer kafka.Writer
-	msgCh chan []kafka.Message
 }
 
 func newSocketServer(addr string) (*SocketServer, error) {
@@ -58,39 +46,14 @@ func newSocketServer(addr string) (*SocketServer, error) {
 		return nil, fmt.Errorf("Unable to create new socket %w", err)
 	}
 
-	inCh := make(chan []byte, 100000)
-
 	return &SocketServer{
 		addr: addr,
 		sock: sock,
-		inCh: inCh,
 	}, nil
 
 }
 
-func newDecoder(inCh chan []byte) (*Decoder, error) {
-
-	deCh := make(chan *eventspb.BusEvent)
-
-	return &Decoder{
-		inCh: inCh,
-		deCh: deCh,
-	}, nil
-
-}
-
-func newMessageFormatter(deCh chan *eventspb.BusEvent) (*MessageFormatter, error) {
-
-	msgCh := make(chan []kafka.Message)
-
-	return &MessageFormatter{
-		deCh: deCh,
-		msgCh: msgCh,
-	}, nil
-
-}
-
-func newKafkaClient(msgCh chan []kafka.Message) (*KafkaClient, error) {
+func newKafkaClient() (*KafkaClient, error) {
 
 	kafkaBrokers := os.Getenv("KAFKA_BROKERS")
 
@@ -102,7 +65,6 @@ func newKafkaClient(msgCh chan []kafka.Message) (*KafkaClient, error) {
 
 	return &KafkaClient{
 		writer: *w,
-		msgCh: msgCh,
 	}, nil
 
 }
@@ -116,25 +78,13 @@ func newBroker() *Broker {
 		log.Fatal("Failed to create socket server: %w", err)
 	}
 
-	decoder, err := newDecoder(socketServer.inCh)
-	if err != nil {
-		log.Fatal("Failed to create new decoder: %w", err)
-	}
-
-	messageFormatter, err := newMessageFormatter(decoder.deCh)
-	if err != nil {
-		log.Fatal("Failed to create new message formatter: %w", err)
-	}
-
-	kafkaClient, err := newKafkaClient(messageFormatter.msgCh)
+	kafkaClient, err := newKafkaClient()
 	if err != nil {
 		log.Fatal("Failed to create new kafka client: %w", err)
 	}
 
 	return &Broker{
 		ss: *socketServer,
-		d: *decoder,
-		mf: *messageFormatter,
 		kc: *kafkaClient,
 	}
 
@@ -151,53 +101,101 @@ func (s SocketServer) listen() (error) {
 
 }
 
-func (s SocketServer) recieve(wg *sync.WaitGroup) {
+func (s SocketServer) recieve(wg *sync.WaitGroup) chan []byte {
+
+	inCh := make(chan []byte, 100000)
 
 	go func() {
-		defer close(s.inCh)
+		defer close(inCh)
 		defer wg.Done()
 		for {
 			msg, err := s.sock.Recv()
 			if err != nil {
 				log.Fatal(fmt.Errorf("Failed to receive event from socket, err: %w", err))
 			}
-			s.inCh <- msg
+			inCh <- msg
 		}
 	}()
 
+	return inCh
+
+
 }
 
-func (d Decoder) decode(wg *sync.WaitGroup) {
+func (b Broker) decode(wg *sync.WaitGroup, inCh chan[]byte) chan *eventspb.BusEvent {
+
+	deCh := make(chan *eventspb.BusEvent)
 
 	go func() {
-		defer close(d.deCh)
-		for buf := range d.inCh {
+		defer close(deCh)
+		defer wg.Done()
+		for buf := range inCh {
 			busEvent := &eventspb.BusEvent{}
 			err := proto.Unmarshal(buf, busEvent)
 			if err != nil {
 				log.Fatal("Failed to unmarshal bus event %w", err)
 			}
-			d.deCh <- busEvent
+			deCh <- busEvent
 		}
 	}()
 
+	return deCh
+
 }
 
-func (mf MessageFormatter) format(wg *sync.WaitGroup) {
+func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, deCh chan *eventspb.BusEvent) chan []kafka.Message {
 
-	//
+	msgCh := make(chan []kafka.Message)
+	batch := []kafka.Message{}
 
 	go func() {
-		defer close(mf.msgCh)
-		for msg := range mf.deCh {
-			// fmt.Println(msg)
-			fmt.Printf("%+v\n", msg)
+		defer close(msgCh)
+		defer wg.Done()
+		for evt := range deCh {
+			// fmt.Printf("%+v\n", evt)
+			// fmt.Printf("%v\n", evt.Id)
+			evtType := evt.Type // Get type of evt
+			jsonEvt, err := json.Marshal(evt) // Convert each event into JSON
+			if err != nil {
+				log.Fatal("Failed to marshal bus event to JSON: %w", err)
+			}
+			batch = append(batch, kafka.Message{ // Batch messages
+				Topic: busEventTopicMap[evtType.String()], // Get the topic based on the evtType
+				Value: jsonEvt, // Add JSON bytes to value field of kafka.Message.
+			})
+			if len(batch) >= 100 { // When batch is a certain size, send it
+				msgCh <- batch
+				batch = nil
+				fmt.Println(string(jsonEvt))
+				fmt.Println(evt.Id)
+			}
+		}
+	}()
+
+	return msgCh
+}
+
+func (kc KafkaClient) send(wg *sync.WaitGroup, msgCh chan []kafka.Message) {
+
+	go func() {
+		ctx := context.Background()
+		count := 0
+		for batch := range msgCh {
+			err := kc.writer.WriteMessages(ctx, batch...)
+			if err != nil {
+				log.Fatal("Error writing messages: %w", err)
+			}
+
+			count += len(batch)
+			fmt.Println(count)
 		}
 	}()
 
 }
 
 func (b Broker) start() {
+
+	busEventTopicMap := GetBusEventTopicMap()
 
 	wg := &sync.WaitGroup{}
 	wg.Add(3)
@@ -207,13 +205,14 @@ func (b Broker) start() {
 		log.Fatal(fmt.Errorf("Failed to listen: ", err))
 	}
 
-	b.ss.recieve(wg)
+	inCh := b.ss.recieve(wg)
 	
-	b.d.decode(wg)
+	deCh := b.decode(wg, inCh)
 
-	b.mf.format(wg)
+	// msgCh := b.format(wg, deCh)
+	msgCh := b.format(wg, busEventTopicMap, deCh)
 
-	// b.kc.send()
+	b.kc.send(wg, msgCh)
 
 
 	wg.Wait()

@@ -375,26 +375,26 @@ spec:
   selector:
     app: broker-pod
 ---
-apiVersion: v1
-kind: Pod
-metadata:
-  name: broker-pod
-  labels:
-    app: broker-pod
-spec:
-  restartPolicy: Never
-  containers:
-  - name: broker
-    image: data-hub/broker
-    imagePullPolicy: Never
-    resources:
-      limits:
-        cpu: 1000m
-      requests:
-        cpu: 1000m
-    env:
-    - name: KAFKA_BROKERS
-      value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+# apiVersion: v1
+# kind: Pod
+# metadata:
+#   name: broker-pod
+#   labels:
+#     app: broker-pod
+# spec:
+#   restartPolicy: Never
+#   containers:
+#   - name: broker
+#     image: data-hub/broker
+#     imagePullPolicy: Never
+#     resources:
+#       limits:
+#         cpu: 1000m
+#       requests:
+#         cpu: 1000m
+#     env:
+#     - name: KAFKA_BROKERS
+#       value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
 ---
 apiVersion: v1
 kind: Pod
