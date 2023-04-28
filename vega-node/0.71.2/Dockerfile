@@ -40,8 +40,8 @@ RUN apt-get update && apt-get install -y curl pwgen lsb-release curl wget git jq
 #     vega version
 
 # Get vega binary from releases page
-RUN wget -q -P /root/vega-downloads/binaries/0.70.2/ https://github.com/vegaprotocol/vega/releases/download/v0.70.2/vega-linux-amd64.zip && \
-    unzip /root/vega-downloads/binaries/0.70.2/vega-linux-amd64.zip -d /bin/ && \
+RUN wget -q -P /root/vega-downloads/binaries/0.71.2/ https://github.com/vegaprotocol/vega/releases/download/v0.71.2/vega-linux-amd64.zip && \
+    unzip /root/vega-downloads/binaries/0.71.2/vega-linux-amd64.zip -d /bin/ && \
     vega version
 
 # Environemnt variables
@@ -56,14 +56,14 @@ RUN vega version
 
 # Get genesis, peers, and Ethereum RPC
 #RUN curl 'https://raw.githubusercontent.com/vegaprotocol/networks-internal/main/fairground/genesis.json' > genesis.json
-RUN mkdir fairground-node-config
+RUN mkdir node-config
 # RUN curl -s 'https://n00.testnet.vega.xyz/config/genesis.json' > fairground-node-config/genesis.json
-RUN curl -s 'https://n00.validators-testnet.vega.xyz/config/genesis.json' > fairground-node-config/genesis.json
-RUN jq -r '.chain_id' fairground-node-config/genesis.json > chain_id.txt
+RUN curl -s 'https://n00.validators-testnet.vega.xyz/config/genesis.json' > node-config/genesis.json
+RUN jq -r '.chain_id' node-config/genesis.json > chain_id.txt
 # RUN curl -s 'https://n00.testnet.vega.xyz/config/tendermint-config.toml' > fairground-node-config/tendermint-config.toml
-RUN curl -s 'https://n00.validators-testnet.vega.xyz/config/tendermint-config.toml' > fairground-node-config/tendermint-config.toml
-RUN grep -Po '(?<=^persistent_peers = ")[^"]*' fairground-node-config/tendermint-config.toml > peers.txt
-RUN grep -Po '(?<=^seeds = ")[^"]*' fairground-node-config/tendermint-config.toml > seeds.txt
+RUN curl -s 'https://n00.validators-testnet.vega.xyz/config/tendermint-config.toml' > node-config/tendermint-config.toml
+RUN grep -Po '(?<=^persistent_peers = ")[^"]*' node-config/tendermint-config.toml > peers.txt
+RUN grep -Po '(?<=^seeds = ")[^"]*' node-config/tendermint-config.toml > seeds.txt
 
 # ENV PEERS='503a32dbd88dfddaaedb26c08bf94e3b88271527@n01.testnet.vega.xyz:26656,d11e5c33795d1759db8bc50061e6a0c445aef47e@n02.testnet.vega.xyz:26656'
 # ENV ETH_RPC='https://sepolia.infura.io/v3/869041539dd64f1e911a18813bdf8712'
@@ -77,12 +77,11 @@ RUN touch pass.txt && \
     echo "$(pwgen 16 1)" >> pass.txt && \
     # vega datanode init $(cat chain_id.txt) --home /home/ian/datanode-home && \
     vega init --output json full && \
-    vega tm init full && \
+    vega tm init full --home /home/ian/.tendermint && \
     sed -i '/Broker\.Socket/,+9{/Broker\.Socket/,+8{b};s/.*/    Enabled = true/}' .config/vega/node/config.toml && \
     sed -i '/Broker\.Socket/,+7{/Broker\.Socket/,+6{b};s/.*/    Address = "broker_address"/}' .config/vega/node/config.toml && \
     sed -i '/Broker\.Socket/,+5{/Broker\.Socket/,+4{b};s/.*/    SocketChannelBufferSize = 10000/}' .config/vega/node/config.toml && \
-    sed -i '/Snapshot/,+6{/Snapshot/,+5{b};s/.*/  StartHeight = 0/}' .config/vega/node/config.toml && \
-    cp fairground-node-config/genesis.json .tendermint/config/genesis.json && \
+    cp node-config/genesis.json .tendermint/config/genesis.json && \
     # sed -i "/RPCEndpoint =/c\  RPCEndpoint = '$ETH_RPC'" .config/vega/node/config.toml && \
     sed -i "/persistent_peers =/c\persistent_peers = '$PEERS'" .tendermint/config/config.toml && \
     sed -i "/seeds =/c\seeds = '$SEEDS'" .tendermint/config/config.toml && \

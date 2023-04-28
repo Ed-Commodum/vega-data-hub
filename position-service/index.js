@@ -32,7 +32,7 @@ const kafkaClient = new kafka.KafkaClient({ kafkaHost: kafkaBrokers });
 let kafkaConsumer;
 
 const positionsObj = {};
-const recentBlocks = new RecentBlocks(500);
+const recentBlocks = new RecentBlocks(2000);
 const posUpdateQueue = [];
 let intervalId;
 
@@ -223,10 +223,10 @@ const flushPosUpdateQueue = () => {
             break;
         }
         
-        event.positionStateEvent["synthTimestamp"] = BigInt(block.timestamp) + BigInt(eventIndex);
+        event.Event.PositionStateEvent["synth_timestamp"] = BigInt(block.timestamp) + BigInt(eventIndex);
 
-        persistPositionStateUpdate(event.positionStateEvent);
-        persistPositionState(event.positionStateEvent);
+        persistPositionStateUpdate(event.Event.PositionStateEvent);
+        persistPositionState(event.Event.PositionStateEvent);
 
     }
 
@@ -307,6 +307,7 @@ const setConsumer = (kafkaConsumer) => {
             const evt = JSON.parse(msg.value);
             // console.log(evt);
             
+            if (evt.Event.BeginBlock) recentBlocks.push(evt.Event.BeginBlock);
             if (evt.beginBlock) recentBlocks.push(evt.beginBlock);
 
         }
@@ -323,8 +324,8 @@ const setConsumer = (kafkaConsumer) => {
             };
 
             if (evt.type == busEventTypes.BUS_EVENT_TYPE_SETTLE_POSITION) {
-                const evt = JSON.parse(msg.value);
-                if (evt.tradeSettlements) console.dir(evt, {depth:null});    
+                
+                if (evt.Event.TradeSettlements) console.dir(evt, { depth: null });
             };
 
             // Maybe necessary to add position_resolution events too?
@@ -342,15 +343,15 @@ const persistPositionStateUpdate = (pos) => {
     // console.log(pos);
 
     const row = [
-        pos.marketId, pos.partyId, pos.size, pos.potentialBuys, pos.potentialSells,
-        pos.vwBuyPrice, pos.vwSellPrice, pos.synthTimestamp
+        pos.market_id, pos.party_id, pos.size, pos.potential_buys, pos.potential_sells,
+        pos.vw_buy_price, pos.vw_sell_price, pos.synth_timestamp
     ];
 
     pgPool.query(insertPositionStateUpdate, row, (err, res) => {
         if (!err) {
             // console.dir(res, { depth: null });
         } else {
-            console.log("Error inserting position.");
+            console.log("Error inserting position: ", err);
         }
     });
 
@@ -359,15 +360,15 @@ const persistPositionStateUpdate = (pos) => {
 const persistPositionState = (pos) => {
 
     const row = [
-        pos.marketId, pos.partyId, pos.size, pos.potentialBuys, pos.potentialSells,
-        pos.vwBuyPrice, pos.vwSellPrice, pos.synthTimestamp
+        pos.market_id, pos.party_id, pos.size, pos.potential_buys, pos.potential_sells,
+        pos.vw_buy_price, pos.vw_sell_price, pos.synth_timestamp
     ];
 
     pgPool.query(upsertPositionState, row, (err, res) => {
         if (!err) {
             // console.dir(res, { depth: null });
         } else {
-            console.log("Error inserting position.");
+            console.log("Error inserting position: ", err);
         }
     });
 

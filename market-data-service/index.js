@@ -9,13 +9,13 @@ const pgClient = new Client({
     password: 'ilovetimescaledb'
 });
 
-const pgPool = new Pool({
-    host: process.env.TIMESCALEDB_HOST,
-    port: process.env.TIMESCALEDB_PORT,
-    database: 'postgres',
-    user: 'postgres',
-    password: 'ilovetimescaledb'
-});
+// const pgPool = new Pool({
+//     host: process.env.TIMESCALEDB_HOST,
+//     port: process.env.TIMESCALEDB_PORT,
+//     database: 'postgres',
+//     user: 'postgres',
+//     password: 'ilovetimescaledb'
+// });
 
 
 const kafka = require("kafka-node");
@@ -214,7 +214,7 @@ const start = () => {
     const kafkaAdmin = new kafka.Admin(kafkaClient);
 
     // Connect to postgres.
-    pgPool.connect((err) => {
+    pgClient.connect((err) => {
         if (err) {
             console.log(err);
         }
@@ -231,7 +231,7 @@ const start = () => {
                     pgClient.query(setIntegerNowFunc, (err, res) => {
                         if(!err) {
                             console.log(res);
-                            // createContAggs(pgPool, ["openInterest", "pnls"]);
+                            // createContAggs(pgClient, ["openInterest", "pnls"]);
                             
                         } else {
                             console.log(err);
@@ -269,15 +269,15 @@ const setConsumer = (kafkaConsumer) => {
     kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "market_data" }], { groupId: "market-data-group" });
     kafkaConsumer.on("message", (msg) => {
 
-        const dateTime = new Date(Date.now()).toISOString();
-        console.log(`${dateTime}: New message`);
+        // const dateTime = new Date(Date.now()).toISOString();
+        // console.log(`${dateTime}: New message`);
 
         const evt = JSON.parse(msg.value);
         // console.log(evt);
 
         // Ignore events from markets with state that is not active or suspended.
-        if (evt.marketData.marketState == marketState.STATE_ACTIVE || evt.marketData.marketState == marketState.STATE_SUSPENDED) {
-            persistMarketData(formatMarketData(evt.marketData));
+        if (evt.Event.MarketData.market_state == marketState.STATE_ACTIVE || evt.Event.MarketData.market_state == marketState.STATE_SUSPENDED) {
+            persistMarketData(formatMarketData(evt.Event.MarketData));
         }
         
     });
@@ -285,14 +285,14 @@ const setConsumer = (kafkaConsumer) => {
 
 formatMarketData = (item) => {
 
-    console.log(item);
+    // console.log(item);
 
     const formatted = [
-        item.market, item.markPrice, item.bestBidPrice, item.bestBidVolume, item.bestOfferPrice,
-        item.bestOfferVolume, item.midPrice, BigInt(item.timestamp), item.openInterest, item.lastTradedPrice
+        item.market, item.mark_price, item.best_bid_price, item.best_bid_volume, item.best_offer_price,
+        item.best_offer_volume, item.mid_price, BigInt(item.timestamp), item.open_interest, item.last_traded_price
     ];
 
-    console.log(formatted);
+    // console.log(formatted);
 
     return formatted;
 
@@ -300,12 +300,12 @@ formatMarketData = (item) => {
 
 persistMarketData = (item) => {
 
-    pgPool.query(insertMarketDataUpdate, item, (err, res) => {
-        if(err) {
+    pgClient.query(insertMarketDataUpdate, item, (err, res) => {
+        if(!err) {
+            
+        } else {
             console.log("Error performing insert of market data update");
             console.log(err);
-        } else {
-            console.log("Insert successful");
         };
     });
 

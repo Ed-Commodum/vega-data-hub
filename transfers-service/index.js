@@ -32,7 +32,7 @@ let kafkaConsumer;
 
 const { transferEnumMappings } = require('./transferEnums.js');
 const { RecentBlocks } = require('./ringBuffers.js');
-const recentBlocks = new RecentBlocks(500);
+const recentBlocks = new RecentBlocks(2000);
 const ledgerMovementsQueue = [];
 const ledgerMovementsToInsert = [];
 const transfersQueue = [];
@@ -43,7 +43,7 @@ let intervalId;
 
 const createTablesQuery = `
 CREATE TABLE IF NOT EXISTS transfers (
-    timestamp BIGINT
+    synth_timestamp BIGINT
 );
 
 CREATE TABLE IF NOT EXISTS ledger_movements (
@@ -57,26 +57,16 @@ CREATE TABLE IF NOT EXISTS ledger_movements (
     to_account_market TEXT NOT NULL,
     amount NUMERIC,
     type TEXT NOT NULL,
-    timestamp BIGINT,
+    synth_timestamp BIGINT,
     from_balance NUMERIC,
     to_balance NUMERIC,
     PRIMARY KEY (
-        timestamp,
-        from_account_asset,
-        from_account_owner,
-        from_account_type,
-        from_account_market,
-        to_account_asset,
-        to_account_owner,
-        to_account_type,
-        to_account_market,
-        from_balance,
-        to_balance
+        synth_timestamp
     )
 );
 
-SELECT create_hypertable('transfers', 'timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
-SELECT create_hypertable('ledger_movements', 'timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
+SELECT create_hypertable('transfers', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
+SELECT create_hypertable('ledger_movements', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
 `;
 
 const insertLedgerMovements = `
@@ -91,7 +81,7 @@ INSERT INTO ledger_movements (
     to_account_market,
     amount,
     type,
-    timestamp,
+    synth_timestamp,
     from_balance,
     to_balance
 ) values (
@@ -123,7 +113,7 @@ INSERT INTO ledger_movements (
     to_account_market,
     amount,
     type,
-    timestamp,
+    synth_timestamp,
     from_balance,
     to_balance
 ) values %L RETURNING *;`
@@ -226,16 +216,27 @@ const flushLedgerMovementsQueue = () => {
 
     while (ledgerMovementsQueue.length) {
 
+        const evt = ledgerMovementsQueue.shift();
+        const idParts = evt.id.split("-");
+        const height = idParts[0];
+        const evtIndex = idParts[1];
+        const block = recentBlocks.get(height);
+
+        if (!block) {
+            console.log(`Missing block at height ${height}...`)
+            ledgerMovementsQueue.unshift(evt);
+            break;
+        }
+
+        // Only format ledgerMovements fields that are not empty
+        if (evt.Event.LedgerMovements.ledger_movements) {
+            // ledgerMovementsToInsert.push(...formatLedgerMovements(evt.Event.LedgerMovements.ledger_movements));
+            ledgerMovementsToInsert.push(...formatLedgerMovements(evt, block));
+        }
+
         if (ledgerMovementsToInsert.length >= 100) {
             persistLedgerMovements(ledgerMovementsToInsert);
             while (ledgerMovementsToInsert.length) ledgerMovementsToInsert.shift();
-        }
-
-        const evt = ledgerMovementsQueue.shift();
-
-        // Only format ledgerMovements fields that are not empty
-        if (evt.ledgerMovements.ledgerMovements) {
-            ledgerMovementsToInsert.push(...formatLedgerMovements(evt.ledgerMovements.ledgerMovements));
         }
 
     }
@@ -339,23 +340,27 @@ const start = () => {
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "blocks" },{ topic: "transfers" }], { groupId: "transfers-group" });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "blocks" },{ topic: "transfers" }], { groupId: "transfers-group", fetchMaxBytes: 2 * 1024 * 1024 });
     kafkaConsumer.on("message", (msg) => {
 
-        const dateTime = new Date(Date.now()).toISOString();
+        // const dateTime = new Date(Date.now()).toISOString();
         // console.log(`${dateTime}: New message`);
 
+        const evt = JSON.parse(msg.value);
+
         if (msg.topic == "blocks") {
-            const evt = JSON.parse(msg.value);
+            // const evt = JSON.parse(msg.value);
             // console.log(evt);
             
-            // if (evt.beginBlock) recentBlocks.push(evt.beginBlock);
-
+            if (evt.Event.BeginBlock) {
+                evt.Event.BeginBlock["ledger_movement_count"] = 0;
+                recentBlocks.push(evt.Event.BeginBlock);
+            }
         }
 
         if (msg.topic == "transfers") {
             
-            const evt = JSON.parse(msg.value);
+            // const evt = JSON.parse(msg.value);
             // console.log(evt);
             // console.dir(evt, { depth: null });
 
@@ -363,9 +368,11 @@ const setConsumer = (kafkaConsumer) => {
 
             }
 
-            if (evt.ledgerMovements) {
+            if (evt.Event.LedgerMovements) {
 
-                ledgerMovementsQueue.push(evt)
+                // console.dir(evt, { depth: null });
+
+                ledgerMovementsQueue.push(evt);
 
             }
 
@@ -374,39 +381,48 @@ const setConsumer = (kafkaConsumer) => {
     });
 };
 
-const formatLedgerMovements = (movements) => {
+const formatLedgerMovements = (evt, block) => { // movements) => {
+
+    console.log("Formatting");
+
+    const movements = evt.Event.LedgerMovements.ledger_movements;
 
     const rows = [];
 
+    
     for (let movement of movements) {
         for (let entry of movement.entries) {
 
+            // Assign synthetic timestamp to ledger movement
+            entry["synth_timestamp"] = BigInt(block.timestamp) + BigInt(block.ledger_movement_count);
+            block.ledger_movement_count ++;
+
             // Convert enums to field names
             entry.type = transferEnumMappings.type[entry.type];
-            entry.fromAccount.type = transferEnumMappings.accountType[entry.fromAccount.type];
-            entry.toAccount.type = transferEnumMappings.accountType[entry.toAccount.type];
+            entry.from_account.type = transferEnumMappings.accountType[entry.from_account.type];
+            entry.to_account.type = transferEnumMappings.accountType[entry.to_account.type];
 
             // Replace undefined fields to prevent nulls in the PRIMARY KEY of the table
-            if (entry.fromAccount.owner == undefined) entry.fromAccount.owner = "network";
-            if (entry.toAccount.owner == undefined) entry.toAccount.owner = "network";
+            if (entry.from_account.owner == undefined) entry.from_account.owner = "network";
+            if (entry.to_account.owner == undefined) entry.to_account.owner = "network";
             
-            if (entry.fromAccount.marketId == undefined) entry.fromAccount.marketId = "N/A";
-            if (entry.toAccount.marketId == undefined) entry.toAccount.marketId = "N/A";
+            if (entry.from_account.market_id == undefined) entry.from_account.market_id = "N/A";
+            if (entry.to_account.market_id == undefined) entry.to_account.market_id = "N/A";
 
             const row = [
-                entry.fromAccount.assetId,
-                entry.fromAccount.owner,
-                entry.fromAccount.type,
-                entry.fromAccount.marketId,
-                entry.toAccount.assetId,
-                entry.toAccount.owner,
-                entry.toAccount.type,
-                entry.toAccount.marketId,
+                entry.from_account.asset_id,
+                entry.from_account.owner,
+                entry.from_account.type,
+                entry.from_account.market_id,
+                entry.to_account.asset_id,
+                entry.to_account.owner,
+                entry.to_account.type,
+                entry.to_account.market_id,
                 entry.amount,
                 entry.type,
-                entry.timestamp,
-                entry.fromAccountBalance,
-                entry.toAccountBalance
+                entry.synth_timestamp,
+                entry.from_account_balance,
+                entry.to_account_balance
             ];
 
             rows.push(row);
@@ -420,7 +436,10 @@ const formatLedgerMovements = (movements) => {
 
 const persistLedgerMovements = (rows) => {
 
-    pgClient.query(format(fInsertLedgerMovements, rows), [], (err, res) => {
+    console.log("Inserting")
+
+    // pgClient.query(format(fInsertLedgerMovements, rows), [], (err, res) => {
+    pgPool.query(format(fInsertLedgerMovements, rows), [], (err, res) => {
         if (!err) {
             
         } else {

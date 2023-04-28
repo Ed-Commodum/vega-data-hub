@@ -135,10 +135,10 @@ spec:
     image: ubuntu/kafka:latest
     resources:
       limits:
-        cpu: 600m
+        cpu: 500m
         memory: 2500Mi
       requests:
-        cpu: 600m
+        cpu: 500m
         memory: 2500Mi
     env:
     - name: ZOOKEEPER_HOST
@@ -320,9 +320,9 @@ spec:
     imagePullPolicy: Never
     resources:
       limits:
-        cpu: 900m
+        cpu: 700m
       requests:
-        cpu: 900m
+        cpu: 700m
     volumeMounts:
       - mountPath: /home/ian
         name: vega-node-pv-storage
@@ -449,6 +449,11 @@ spec:
   - name: orders
     image: data-hub/orders
     imagePullPolicy: Never
+    resources:
+      limits:
+        cpu: 400m
+      requests:
+        cpu: 400m
     env:
     - name: KAFKA_BROKERS
       value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"

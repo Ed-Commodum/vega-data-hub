@@ -29,12 +29,13 @@ console.log(process.env);
 const kafkaClient = new kafka.KafkaClient({ kafkaHost: kafkaBrokers });
 // const kafkaProducer = new kafka.Producer(kafkaClient);
 // const kafkaAdmin = new kafka.Admin(kafkaClient);
+let kafkaBlockConsumer;
 let kafkaConsumer;
 
 const { RecentBlocks } = require('./ringBuffers.js');
 
 const orderQueue = [];
-const recentBlocks = new RecentBlocks(500);
+const recentBlocks = new RecentBlocks(2000);
 let flushOrderQueueInterval
 
 const createTablesQuery = `
@@ -237,7 +238,7 @@ const flushOrderQueue = () => {
 
     while (orderQueue.length) {
 
-        if (toInsert.length >= 100) {
+        if (toInsert.length >= 200) {
             persistOrders(toInsert);
             while (toInsert.length) toInsert.shift();
         }
@@ -293,7 +294,7 @@ const start = () => {
                     pgClient.query(setIntegerNowFunc, (err, res) => {
                         if(!err) {
                             console.log(res);
-                            // createContAggs(pgPool, ["openInterest", "pnls"]);
+                            // createContAggs(pgClient, ["openInterest", "pnls"]);
                             
                         } else {
                             console.log(err);
@@ -328,7 +329,8 @@ const start = () => {
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [ { topic: "orders" }, { topic: "blocks" } ], { groupId: "orders-group" });
+    // kafkaBlockConsumer = new kafka.Consumer(kafkaClient, [ { topic: "blocks" } ], { groupId: "orders-blocks-group" });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [ { topic: "orders" }, { topic: "blocks" } ], { groupId: "orders-group", fetchMaxBytes: 2 * 1024 * 1024 });
     kafkaConsumer.on("message", (msg) => {
 
         const dateTime = new Date(Date.now()).toISOString();
@@ -382,7 +384,7 @@ const formatOrder = (order) => {
 
 const persistOrder = (item) => {
 
-    pgPool.query(insertOrderUpdate, item, (err, res) => {
+    pgClient.query(insertOrderUpdate, item, (err, res) => {
         if(err) {
             console.log("Error performing insert of order update");
             console.log(err);
@@ -396,7 +398,7 @@ const persistOrder = (item) => {
 
 const persistOrders = (items) => {
 
-    pgClient.query(format(fInsertOrderUpdate, items), [], (err, res) => {
+    pgPool.query(format(fInsertOrderUpdate, items), [], (err, res) => {
         if (err) {
             console.log(`Error performing inserts`);
             console.log(err);

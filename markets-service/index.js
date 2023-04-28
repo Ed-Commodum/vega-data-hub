@@ -8,13 +8,13 @@ const pgClient = new Client({
     password: 'ilovetimescaledb'
 });
 
-const pgPool = new Pool({
-    host: process.env.TIMESCALEDB_HOST,
-    port: process.env.TIMESCALEDB_PORT,
-    database: 'postgres',
-    user: 'postgres',
-    password: 'ilovetimescaledb'
-});
+// const pgPool = new Pool({
+//     host: process.env.TIMESCALEDB_HOST,
+//     port: process.env.TIMESCALEDB_PORT,
+//     database: 'postgres',
+//     user: 'postgres',
+//     password: 'ilovetimescaledb'
+// });
 
 
 const kafka = require("kafka-node");
@@ -177,12 +177,12 @@ const setConsumer = (kafkaConsumer) => {
             // console.log(evt);
             console.dir(evt, { depth: null });
 
-            if (evt.marketCreated) {
-                persistMarket(formatMarket(evt.marketCreated));
+            if (evt.Event.MarketCreated) {
+                persistMarket(formatMarket(evt.Event.MarketCreated));
             }
 
-            if (evt.marketUpdated) {
-                persistMarket(formatMarket(evt.marketUpdated));
+            if (evt.Event.MarketUpdated) {
+                persistMarket(formatMarket(evt.Event.MarketUpdated));
             }
 
 
@@ -194,23 +194,23 @@ const setConsumer = (kafkaConsumer) => {
 
 const formatMarket = (evt) => {
 
-    evt.tradingMode = marketEnumMappings.tradingMode[evt.tradingMode];
+    evt.trading_mode = marketEnumMappings.tradingMode[evt.trading_mode];
     evt.state = marketEnumMappings.state[evt.state];
 
     const row = [
         evt.id,
-        evt.tradableInstrument.instrument.code,
-        evt.tradableInstrument.instrument.name,
-        JSON.stringify(evt.tradableInstrument.instrument.metadata.tags),
-        evt.tradableInstrument.instrument.future.settlementAsset,
-        evt.tradableInstrument.instrument.future.quoteName,
-        evt.tradableInstrument.marginCalculator.scalingFactors.searchLevel,
-        evt.tradableInstrument.marginCalculator.scalingFactors.initialMargin,
-        evt.tradableInstrument.marginCalculator.scalingFactors.collateralRelease,
-        parseInt(evt.decimalPlaces),
-        evt.tradingMode,
+        evt.tradable_instrument.instrument.code,
+        evt.tradable_instrument.instrument.name,
+        JSON.stringify(evt.tradable_instrument.instrument.metadata.tags),
+        evt.tradable_instrument.instrument.Product.Future.settlement_asset,
+        evt.tradable_instrument.instrument.Product.Future.quote_name,
+        evt.tradable_instrument.margin_calculator.scaling_factors.search_level,
+        evt.tradable_instrument.margin_calculator.scaling_factors.initial_margin,
+        evt.tradable_instrument.margin_calculator.scaling_factors.collateral_release,
+        parseInt(evt.decimal_places),
+        evt.trading_mode,
         evt.state,
-        parseInt(evt.positionDecimalPlaces)
+        parseInt(evt.position_decimal_places)
     ];
 
     return row

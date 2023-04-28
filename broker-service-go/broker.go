@@ -11,6 +11,9 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+	"strconv"
+
+	"github.com/tidwall/sjson"
 
 	// "go.nanomsg.org/mangos/v3"
 	// mangosErr "go.nanomsg.org/mangos/v3/errors"
@@ -154,6 +157,13 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, d
 	batchBytesCount := 0
 	tradeCount := 0
 	orderCount := 0
+	posStateCount := 0
+	marketDataCount := 0
+	assetCount := 0
+	marketCount := 0
+	ledgerMovementsCount := 0
+	depositWithdrawalCount := 0
+	accountCount := 0
 
 	go func() {
 		defer close(msgCh)
@@ -162,24 +172,67 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, d
 			// fmt.Printf("%+v\n", evt)
 			// fmt.Printf("%v\n", evt.Id)
 			evtType := evt.Type // Get type of evt
-			jsonEvt, err := json.Marshal(evt) // Convert each event into JSON
+			jsonEvtBytes, err := json.Marshal(evt) // Convert each event into JSON
 			if err != nil {
 				log.Fatal("Failed to marshal bus event to JSON: %w", err)
 			}
+			if evtType.String() == "BUS_EVENT_TYPE_BEGIN_BLOCK" {
+				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.BeginBlock.timestamp`, strconv.FormatInt(evt.GetBeginBlock().Timestamp, 10))
+				jsonEvtBytes = []byte(jsonEvt)
+			}
 			if evtType.String() == "BUS_EVENT_TYPE_TRADE" {
 				tradeCount += 1
+				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.Trade.timestamp`, strconv.FormatInt(evt.GetTrade().Timestamp, 10))
+				jsonEvtBytes = []byte(jsonEvt)
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_ORDER" {
 				orderCount += 1
+				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.Order.created_at`, strconv.FormatInt(evt.GetOrder().CreatedAt, 10))
+				jsonEvt, _ = sjson.Set(jsonEvt, `Event.Order.updated_at`, strconv.FormatInt(evt.GetOrder().UpdatedAt, 10))
+				jsonEvtBytes = []byte(jsonEvt)
 			}
+			if evtType.String() == "BUS_EVENT_TYPE_POSITION_STATE" {
+				posStateCount += 1
+			}
+			if evtType.String() == "BUS_EVENT_TYPE_MARKET_DATA" {
+				marketDataCount += 1
+				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.MarketData.timestamp`, strconv.FormatInt(evt.GetMarketData().Timestamp, 10))
+				jsonEvt, _ = sjson.Set(jsonEvt, `Event.MarketData.next_mark_to_market`, strconv.FormatInt(evt.GetMarketData().NextMarkToMarket, 10))
+				jsonEvtBytes = []byte(jsonEvt)
+			}
+			if evtType.String() == "BUS_EVENT_TYPE_ASSET" {
+				assetCount += 1
+			}
+			if ( evtType.String() == "BUS_EVENT_TYPE_MARKET_CREATED" || evtType.String() == "BUS_EVENT_TYPE_MARKET_UPDATED" ) {
+				marketCount += 1
+			}
+			if evtType.String() == "BUS_EVENT_TYPE_LEDGER_MOVEMENTS" {
+				ledgerMovementsCount += 1
+			}
+			if evtType.String() == "BUS_EVENT_TYPE_DEPOSIT" {
+				depositWithdrawalCount += 1
+				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.Deposit.created_timestamp`, strconv.FormatInt(evt.GetDeposit().CreatedTimestamp, 10))
+				jsonEvt, _ = sjson.Set(jsonEvt, `Event.Deposit.credited_timestamp`, strconv.FormatInt(evt.GetDeposit().CreditedTimestamp, 10))
+				jsonEvtBytes = []byte(jsonEvt)
+			}
+			if evtType.String() == "BUS_EVENT_TYPE_WITHDRAWAL" {
+				depositWithdrawalCount += 1
+				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.Withdrawal.created_timestamp`, strconv.FormatInt(evt.GetWithdrawal().CreatedTimestamp, 10))
+				jsonEvt, _ = sjson.Set(jsonEvt, `Event.Withdrawal.withdrawn_timestamp`, strconv.FormatInt(evt.GetWithdrawal().WithdrawnTimestamp, 10))
+				jsonEvtBytes = []byte(jsonEvt)
+			}
+			if evtType.String() == "BUS_EVENT_TYPE_ACCOUNT" {
+				accountCount += 1
+			}
+
 			if topic, ok := busEventTopicMap[evtType.String()]; ok {
 				batch = append(batch, kafka.Message{ // Batch messages
 					Topic: topic, // Get the topic based on the evtType
-					Value: jsonEvt, // Add JSON bytes to value field of kafka.Message.
+					Value: jsonEvtBytes, // Add JSON bytes to value field of kafka.Message.
 				})
-				batchBytesCount += len(jsonEvt)
-				if len(jsonEvt) >= 5000 {
-					fmt.Println(string(jsonEvt))
+				batchBytesCount += len(jsonEvtBytes)
+				if len(jsonEvtBytes) >= 5000 {
+					fmt.Println(string(jsonEvtBytes))
 				}
 			}
 			if len(batch) >= 1000 { // When batch is a certain size, send it
@@ -190,6 +243,13 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, d
 				fmt.Println("Bytes count: ", batchBytesCount)
 				fmt.Println("Trade count: ", tradeCount)
 				fmt.Println("Order count: ", orderCount)
+				fmt.Println("Position state count: ", posStateCount)
+				fmt.Println("Market data count: ", marketDataCount)
+				fmt.Println("Asset count: ", assetCount)
+				fmt.Println("Market count: ", marketCount)
+				fmt.Println("Legder movements count: ", ledgerMovementsCount)
+				fmt.Println("Deposit withdrawal count: ", depositWithdrawalCount)
+				fmt.Println("Account count: ", accountCount)
 				batchBytesCount = 0
 			}
 		}

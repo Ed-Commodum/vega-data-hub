@@ -99,9 +99,9 @@ const flushAccountUpdateQueue = () => {
             break;
         }
         
-        event.account["synthTimestamp"] = BigInt(block.timestamp) + BigInt(eventIndex);
+        event.Event.Account["synth_timestamp"] = BigInt(block.timestamp) + BigInt(eventIndex);
 
-        persistAccountUpdate(formatAccountUpdate(event.account));
+        persistAccountUpdate(formatAccountUpdate(event.Event.Account));
 
     }
 
@@ -167,14 +167,16 @@ const setConsumer = (kafkaConsumer) => {
         const dateTime = new Date(Date.now()).toISOString();
         // console.log(`${dateTime}: New message`);
 
+        const evt = JSON.parse(msg.value);
+
+        console.dir(evt, { depth: null });
+
         if (msg.topic == "blocks") {
             // Save recent blocks in memory to use for calculating synthetic timestamps
-            
-            const evt = JSON.parse(msg.value);
 
-            if (evt.beginBlock) {
+            if (evt.Event.BeginBlock) {
 
-                recentBlocks.push(evt.beginBlock);
+                recentBlocks.push(evt.Event.BeginBlock);
 
             }
 
@@ -183,11 +185,9 @@ const setConsumer = (kafkaConsumer) => {
 
         if (msg.topic == "accounts") {
             
-            const evt = JSON.parse(msg.value);
-            
             // console.log(evt);
 
-            if (evt.account) {
+            if (evt.Event.Account) {
 
                 accountUpdateQueue.push(evt);
 
@@ -204,7 +204,7 @@ const formatAccountUpdate = (acc) => {
     acc.type = accountEnumMappings.type[acc.type];
 
     const row = [
-        acc.id, acc.owner, acc.balance, acc.asset, acc.marketId, acc.type, acc.synthTimestamp
+        acc.id, acc.owner, acc.balance, acc.asset, acc.market_id, acc.type, acc.synth_timestamp
     ];
 
     return row;

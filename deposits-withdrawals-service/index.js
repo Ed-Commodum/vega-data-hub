@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS deposits_withdrawals (
     asset TEXT NOT NULL,
     amount NUMERIC,
     created_timestamp BIGINT,
-    credited_timestamp BIGINT,
+    finalized_timestamp BIGINT,
     ext_erc20_addr TEXT,
     PRIMARY KEY (id, created_timestamp)
     );
@@ -56,7 +56,7 @@ INSERT INTO deposits_withdrawals (
     asset,
     amount,
     created_timestamp,
-    credited_timestamp,
+    finalized_timestamp,
     ext_erc20_addr
 ) values (
     $1,
@@ -76,7 +76,7 @@ INSERT INTO deposits_withdrawals (
     asset,
     amount,
     created_timestamp,
-    credited_timestamp,
+    finalized_timestamp,
     ext_erc20_addr
 ) = (
     $1,
@@ -226,28 +226,29 @@ const setConsumer = (kafkaConsumer) => {
         const dateTime = new Date(Date.now()).toISOString();
         // console.log(`${dateTime}: New message`);
 
+        const evt = JSON.parse(msg.value);
+
         if (msg.topic == "blocks") {
-            const evt = JSON.parse(msg.value);
-            // console.log(evt);
             
+            // console.log(evt);
             // if (evt.beginBlock) recentBlocks.push(evt.beginBlock);
 
         }
 
         if (msg.topic == "deposits_withdrawals") {
             
-            const evt = JSON.parse(msg.value);
+            console.dir(evt, { depth: null });
 
-            if (evt.deposit) {
-                evt.deposit.status = depositWithdrawalEnumMappings.status[evt.deposit.status];
-                evt.deposit["type"] = "DEPOSIT";
-                persistDeopsitsWithdrawals(evt.deposit);
+            if (evt.Event.Deposit) {
+                evt.Event.Deposit.status = depositWithdrawalEnumMappings.status[evt.Event.Deposit.status];
+                evt.Event.Deposit["type"] = "DEPOSIT";
+                persistDeopsitsWithdrawals(evt.Event.Deposit);
 
                 console.log(evt);
-            } else if (evt.withdrawal) {
-                evt.withdrawal.status = depositWithdrawalEnumMappings.status[evt.withdrawal.status];
-                evt.withdrawal["type"] = "WITHDRAWAL";
-                persistDeopsitsWithdrawals(evt.withdrawal);
+            } else if (evt.Event.Withdrawal) {
+                evt.Event.Withdrawal.status = depositWithdrawalEnumMappings.status[evt.Event.Withdrawal.status];
+                evt.Event.Withdrawal["type"] = "WITHDRAWAL";
+                persistDeopsitsWithdrawals(evt.Event.Withdrawal);
 
                 console.log(evt);
             }
@@ -261,17 +262,26 @@ const setConsumer = (kafkaConsumer) => {
 const persistDeopsitsWithdrawals = (evt) => {
 
     // console.log(pos);
+    let row;
 
-    if(!evt.ext) evt.ext = { erc20: {} };
+    if (evt.type == "DEPOSIT") {
+        row = [
+            evt.type, evt.id, evt.status, evt.party_id, evt.asset, evt.amount, evt.created_timestamp,
+            evt.credited_timestamp, undefined
+        ];
+    }
 
-    const row = [
-        evt.type, evt.id, evt.status, evt.partyId, evt.asset, evt.amount, evt.createdTimestamp,
-        evt.creditedTimestamp, evt.ext.erc20.recieverAddress
-    ];
+    if (evt.type == "WITHDRAWAL") {
+        row = [
+            evt.type, evt.id, evt.status, evt.party_id, evt.asset, evt.amount, evt.created_timestamp,
+            evt.withdrawn_timestamp, evt.ext.Ext.Erc20.receiver_address
+        ];
+    }
 
     pgPool.query(upsertDepositWithdrawal, row, (err, res) => {
         if (!err) {
-            // console.dir(res, { depth: null });
+            console.log("Insert Successful")
+            console.dir(res, { depth: null });
         } else {
             console.log("Error inserting deposit/withdrawal.");
         }

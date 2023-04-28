@@ -8,13 +8,13 @@ const pgClient = new Client({
     password: 'ilovetimescaledb'
 });
 
-const pgPool = new Pool({
-    host: process.env.TIMESCALEDB_HOST,
-    port: process.env.TIMESCALEDB_PORT,
-    database: 'postgres',
-    user: 'postgres',
-    password: 'ilovetimescaledb'
-});
+// const pgPool = new Pool({
+//     host: process.env.TIMESCALEDB_HOST,
+//     port: process.env.TIMESCALEDB_PORT,
+//     database: 'postgres',
+//     user: 'postgres',
+//     password: 'ilovetimescaledb'
+// });
 
 
 const kafka = require("kafka-node");
@@ -146,7 +146,7 @@ const setConsumer = (kafkaConsumer) => {
     kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "assets" }], { groupId: "assets-group" });
     kafkaConsumer.on("message", (msg) => {
 
-        const dateTime = new Date(Date.now()).toISOString();
+        // const dateTime = new Date(Date.now()).toISOString();
         // console.log(`${dateTime}: New message`);
 
 
@@ -156,9 +156,9 @@ const setConsumer = (kafkaConsumer) => {
 
             console.dir(evt, {depth: null});
 
-            if (evt.asset.details.erc20) {
+            if (evt.Event.Asset.details.Source.Erc20) {
                 
-                persistAsset(formatAsset(evt.asset));
+                persistAsset(formatAsset(evt.Event.Asset));
 
             }
 
@@ -173,8 +173,8 @@ const formatAsset = (evt) => {
 
     const row = [
         evt.id, evt.status, evt.details.name, evt.details.symbol, parseInt(evt.details.decimals),
-        evt.details.quantum, evt.details.erc20.contractAddress, evt.details.erc20.lifetimeLimit,
-        evt.details.erc20.withdrawThreshold
+        evt.details.quantum, evt.details.Source.Erc20.contract_address, evt.details.Source.Erc20.lifetime_limit,
+        evt.details.Source.Erc20.withdraw_threshold
     ];
 
     return row
