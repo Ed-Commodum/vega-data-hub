@@ -8,13 +8,13 @@ const pgClient = new Client({
     password: 'ilovetimescaledb'
 });
 
-const pgPool = new Pool({
-    host: process.env.TIMESCALEDB_HOST,
-    port: process.env.TIMESCALEDB_PORT,
-    database: 'postgres',
-    user: 'postgres',
-    password: 'ilovetimescaledb'
-});
+// const pgPool = new Pool({
+//     host: process.env.TIMESCALEDB_HOST,
+//     port: process.env.TIMESCALEDB_PORT,
+//     database: 'postgres',
+//     user: 'postgres',
+//     password: 'ilovetimescaledb'
+// });
 
 
 const kafka = require("kafka-node");
@@ -168,7 +168,7 @@ const start = () => {
     const kafkaAdmin = new kafka.Admin(kafkaClient);
 
     // Connect to postgres.
-    pgPool.connect((err) => {
+    pgClient.connect((err) => {
         if (err) {
             console.log(err);
         }
@@ -185,7 +185,7 @@ const start = () => {
                     pgClient.query(setIntegerNowFunc, (err, res) => {
                         if(!err) {
                             console.log(res);
-                            // createContAggs(pgPool, ["pnls"]);
+                            // createContAggs(pgClient, ["pnls"]);
                             
                         } else {
                             console.log(err);
@@ -278,7 +278,7 @@ const persistDeopsitsWithdrawals = (evt) => {
         ];
     }
 
-    pgPool.query(upsertDepositWithdrawal, row, (err, res) => {
+    pgClient.query(upsertDepositWithdrawal, row, (err, res) => {
         if (!err) {
             console.log("Insert Successful")
             console.dir(res, { depth: null });

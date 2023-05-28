@@ -367,7 +367,8 @@ const continuousAggregates = {
                 sum(buyer_fee_infrastructure + seller_fee_infrastructure) AS fees_paid_infrastructure,
                 sum(buyer_fee_infrastructure + buyer_fee_maker +
                     buyer_fee_liquidity + seller_fee_infrastructure +
-                    seller_fee_maker + seller_fee_liquidity) AS fees_paid
+                    seller_fee_maker + seller_fee_liquidity) AS fees_paid,
+                max(timestamp) as timestamp
             FROM trades
             GROUP BY market_id, buyer, seller, time_bucket(300000000000, synth_timestamp);
             `,
@@ -398,7 +399,8 @@ const continuousAggregates = {
                 sum(seller_fee_infrastructure + seller_fee_maker + seller_fee_liquidity) AS seller_fee,
                 sum(seller_fee_infrastructure) as seller_fee_infrastructure,
                 sum(seller_fee_maker) as seller_fee_maker,
-                sum(seller_fee_liquidity) as seller_fee_liquidity
+                sum(seller_fee_liquidity) as seller_fee_liquidity,
+                max(timestamp) as timestamp
             FROM trades
             GROUP BY market_id, buyer, seller, time_bucket(300000000000, synth_timestamp);
             `,
@@ -828,7 +830,7 @@ const persistTrade = (trade) => {
             console.log("Error performing insert of trade");
             console.log(err);
         } else {
-            console.log("Insert successful");
+            // console.log("Insert successful");
         };
     });
 };
@@ -861,8 +863,6 @@ const formatTrade = (trade) => {
             liquidity_fee: "0"
         }
     }
-
-    console.dir(trade, { depth: null });
 
     const formatted = [
         trade.id, trade.market_id, parseInt(trade.price), parseInt(trade.size), trade.buyer,

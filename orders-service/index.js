@@ -1,4 +1,4 @@
-const { orderEnumMappings } = require('./order-enums.js');
+const { orderEnums, orderEnumMappings } = require('./order-enums.js');
 const { Client, Pool } = require('pg');
 const format = require('pg-format');
 
@@ -35,7 +35,10 @@ let kafkaConsumer;
 const { RecentBlocks } = require('./ringBuffers.js');
 
 const orderQueue = [];
+const toInsert = [];
+const diffsToInsert = [];
 const recentBlocks = new RecentBlocks(2000);
+const orderBookMap = new Map();
 let flushOrderQueueInterval
 
 const createTablesQuery = `
@@ -60,8 +63,19 @@ CREATE TABLE IF NOT EXISTS orders (
     synth_timestamp BIGINT
 );
 
+CREATE TABLE IF NOT EXISTS order_book_diffs (
+    id TEXT NOT NULL,
+    market_id TEXT NOT NULL,
+    side TEXT NOT NULL,
+    price TEXT NOT NULL,
+    size BIGINT,
+    synth_timestamp BIGINT,
+    PRIMARY KEY (synth_timestamp, id, price)
+);
+
 SELECT create_hypertable('order_updates', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
 SELECT create_hypertable('orders', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
+SELECT create_hypertable('order_book_diffs', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
 `
 
 const insertOrderUpdate = `
@@ -110,6 +124,17 @@ INSERT INTO order_updates (
     version
 ) values %L RETURNING *;`
 
+const fInsertDiffs = `
+INSERT INTO order_book_diffs (
+    id,
+    market_id,
+    side,
+    price,
+    size,
+    synth_timestamp
+) values %L RETURNING *;
+`
+
 const upsertOrder = `
 INSERT INTO order_updates (
     
@@ -125,31 +150,22 @@ SELECT set_integer_now_func('orders', 'current_time_ns');
 `;
 
 const continuousAggregates = {
-    openInterest: {
-        interval_5m: {
-            createMatView: `CREATE MATERIALIZED VIEW open_interest_5m
-            WITH (timescaledb.continuous) AS
-            SELECT market_id,
-                time_bucket(300000000000, timestamp) AS bucket,
-                first(open_interest, timestamp) AS first,
-                first(timestamp, timestamp) AS first_ts,
-                last(open_interest, timestamp) AS last,
-                last(timestamp, timestamp) AS last_ts,
-                first(open_interest, timestamp) - last(open_interest, timestamp) AS diff,
-                avg(open_interest) AS avg,
-                count(timestamp) AS num_updates
-            FROM open_interest_updates
-            GROUP BY market_id, time_bucket(300000000000, timestamp);
+    // To create order snapshots we need to capture each change (diff) in the order books within
+    // a particular time period. Order books can be expressed as an array of ( size, volume ) pairs
+    
+    order_book_diffs: {
+        interval_1m: {
+            createMatView: `
+            CREATE METERIALIZED VIEW order_book_diffs_1m
+            with (timescaledb.continuous) AS
+            SELECT 
+            
             `,
-            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('open_interest_5m',
-            start_offset => '2592000000000000'::bigint,
-            end_offset => '60000000000'::bigint,
-            schedule_interval => INTERVAL '1 minute');
-            `
-        }
-    },
-    candles: {
-        interval_5m: {
+            addRefreshPolicy: {
+
+            }
+        },
+        interval_5m: { 
             createMatView: {
 
             },
@@ -231,14 +247,18 @@ const createContAggs = async (client, types) => {
 
 let ordersFormatted = 0;
 let rowsForInsertion = 0;
-const toInsert = [];
 
 const flushOrderQueue = () => {
     clearInterval(flushOrderQueueInterval);
 
     while (orderQueue.length) {
 
-        if (toInsert.length >= 200) {
+        if (diffsToInsert.length >= 400) {
+            persistDiffs(diffsToInsert);
+            while (diffsToInsert.length) diffsToInsert.shift();
+        }
+
+        if (toInsert.length >= 400) {
             persistOrders(toInsert);
             while (toInsert.length) toInsert.shift();
         }
@@ -249,15 +269,43 @@ const flushOrderQueue = () => {
         const block = recentBlocks.get(height);
 
         if (!block) {
+            console.log(`Block not found for height: ${height}`);
             orderQueue.unshift(event);
             break;
         }
-        
-        event.Event.Order['synth_timestamp'] = BigInt(block.timestamp) + BigInt(eventIndex);
 
-        toInsert.push(formatOrder(event.Event.Order));
-        ordersFormatted += 1;
+        // Add distressedOrdersClosed events to account for positions closed by the network
 
+        if (event.Event.ExpiredOrders) {
+
+            const marketId = event.Event.ExpiredOrders.market_id;
+            
+            const synthTimestamp = BigInt(block.timestamp) + BigInt(eventIndex);
+
+            for (let orderId of event.Event.ExpiredOrders.order_ids) {
+                const diff = convertExpiredOrderToDiff(marketId, orderId, synthTimestamp);
+                if (diff) diffsToInsert.push(diff);
+            }
+
+        }
+
+        if (event.Event.Order) {
+
+            event.Event.Order['synth_timestamp'] = BigInt(block.timestamp) + BigInt(eventIndex);
+
+            const diffs = convertOrderToDiff(event.Event.Order);
+            if (diffs) diffsToInsert.push(...diffs);
+
+            toInsert.push(formatOrder(event.Event.Order));
+            ordersFormatted += 1;
+
+        }
+
+    }
+
+    if (diffsToInsert.length > 0) {
+        persistDiffs(diffsToInsert);
+        while(diffsToInsert.length) diffsToInsert.shift();
     }
 
     if (toInsert.length > 0) {
@@ -352,6 +400,15 @@ const setConsumer = (kafkaConsumer) => {
                 orderQueue.push(evt);
             }
 
+            if (evt.Event.ExpiredOrders) {
+                // console.log(evt);
+                orderQueue.push(evt);
+            }
+
+            if (evt.Event.DistressedOrdersClosed) {
+                console.log(evt);
+            }
+
         }
         
     });
@@ -371,7 +428,7 @@ const formatOrder = (order) => {
     ];
 
     // Set undefined types for when order is stopped
-    if (order.status == "STATUS_STOPPED") {
+    if (order.status == orderEnumMappings.status[orderEnums.status.STATUS_STOPPED]) {
         formatted[5] = "0";
         formatted[6] = "0";
         formatted[7] = "N/A";
@@ -379,6 +436,201 @@ const formatOrder = (order) => {
     }
 
     return formatted;
+
+}
+
+const convertOrderToDiff = (order) => {
+
+    if (!orderBookMap.get(order.id)) {
+
+        if (order.status == orderEnums.status.STATUS_ACTIVE) {
+            
+            orderBookMap.set(order.id, {
+                id: order.id,
+                marketId: order.market_id,
+                side: order.side,
+                price: order.price,
+                size: order.size,
+                synthTimestamp: order.synth_timestamp,
+                active: true
+            })
+    
+            return [ [
+                order.id,
+                order.market_id,
+                order.side,
+                order.price,
+                order.size,
+                order.synth_timestamp
+            ] ];
+
+        } else {
+            return null;
+        }
+
+    } else {
+
+        if (order.status == orderEnums.status.STATUS_ACTIVE) {
+            const details = orderBookMap.get(order.id);
+            
+            // Check for orders changing from inactive to active
+            if (!details.active) {
+                orderBookMap.set(order.id, {
+                    id: order.id,
+                    marketId: order.market_id,
+                    side: order.side,
+                    price: order.price,
+                    size: order.size,
+                    synthTimestamp: order.synth_timestamp,
+                    active: true
+                })
+
+                return [ [
+                    order.id,
+                    order.market_id,
+                    order.side,
+                    order.price,
+                    order.size,
+                    order.synth_timestamp
+                ] ];
+            }
+
+            // Check for ammendment
+            if (order.version > 1) {
+
+                // If price has changed then generate diffs for both prices
+                if (order.price != details.price) {
+
+                    const diff1 = [
+                        details.id,
+                        details.marketId,
+                        details.side,
+                        details.price,
+                        0n - BigInt(details.size),
+                        order.synth_timestamp
+                    ]
+
+                    const diff2 = [
+                        order.id,
+                        order.market_id,
+                        order.side,
+                        order.price,
+                        order.remaining,
+                        order.synth_timestamp
+                    ]
+
+                    return [ diff1, diff2 ];
+
+                }
+
+                // If size has changed then generate diff
+                if (order.remaining != details.size) {
+
+                    const diff = [
+                        order.id,
+                        order.market_id,
+                        order.side,
+                        order.price,
+                        BigInt(order.remaining) - BigInt(details.size),
+                        order.synth_timestamp
+                    ];
+
+                    return [ diff ];
+                }
+
+            }
+
+            // Check for partial fill
+            if (order.remaining != details.size) {
+
+                const diff = [
+                    order.id,
+                    order.market_id,
+                    order.side,
+                    order.price,
+                    BigInt(order.remaining) - BigInt(details.size),
+                    order.synth_timestamp
+                ];
+
+                orderBookMap.set(order.id.valueOf(), {
+                    id: order.id,
+                    marketId: order.market_id,
+                    side: order.side,
+                    price: order.price,
+                    size: order.remaining,
+                    synthTimestamp: order.synth_timestamp,
+                    active: true
+                });
+
+                return [ diff ];
+            }
+
+        }
+
+
+        // Check for cancellation, generate diff for cancelled amount
+        if (order.status == orderEnums.status.STATUS_CANCELLED) {
+            const details = orderBookMap.get(order.id);
+
+            // Generate diff using remaining size
+            const diff = [
+                details.id,
+                details.marketId,
+                details.side,
+                details.price,
+                0n - BigInt(details.size),
+                order.synth_timestamp
+            ]
+
+            // Delete entry in order book map
+            orderBookMap.delete(order.id);
+
+            return [ diff ];
+
+        }
+
+        // Check for parked
+        if (order.status == orderEnums.status.STATUS_PARKED) {
+
+            // Mark order as inactive
+            const details = orderBookMap.get(order.id);
+            details.active = false;
+
+            // Generate diffs
+            const diff = [
+                details.id,
+                details.marketId,
+                details.side,
+                details.price,
+                0n - BigInt(details.size),
+                order.synth_timestamp
+            ];
+
+            return [ diff ];
+
+        }
+
+    }
+
+}
+
+const convertExpiredOrderToDiff = (marketId, orderId, synthTimestamp) => {
+
+    // For each expired order, create it's diff then remove it from the map
+    const details = orderBookMap.get(orderId);
+
+    const diff = [
+        orderId,
+        marketId,
+        details.side.valueOf(),
+        details.price.valueOf(),
+        0n - BigInt(details.size),
+        synthTimestamp
+    ];
+
+    orderBookMap.delete(orderId);
+
+    return diff
 
 }
 
@@ -403,13 +655,25 @@ const persistOrders = (items) => {
             console.log(`Error performing inserts`);
             console.log(err);
         } else {
-            
+            // console.log("Order Insertions successful")
         }
     });
 
-    rowsForInsertion += items.length;
-    console.log(`Total rows sent for insetion: ${rowsForInsertion}`);
-    console.log(`Total orders formatted: ${ordersFormatted}`);
+    // rowsForInsertion += items.length;
+    // console.log(`Total rows sent for insetion: ${rowsForInsertion}`);
+    // console.log(`Total orders formatted: ${ordersFormatted}`);
+
+}
+
+const persistDiffs = (diffs) => {
+
+    pgPool.query(format(fInsertDiffs, diffs), [], (err, res) => {
+        if (!err) {
+            // console.log("Diff insertions successful");
+        } else {
+            console.log(`Error performing inserts: `, err);
+        }
+    })
 
 }
 

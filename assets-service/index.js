@@ -101,7 +101,7 @@ const start = () => {
     const kafkaAdmin = new kafka.Admin(kafkaClient);
 
     // Connect to postgres.
-    pgPool.connect((err) => {
+    pgClient.connect((err) => {
         if (err) {
             console.log(err);
         }
@@ -183,7 +183,7 @@ const formatAsset = (evt) => {
 
 const persistAsset = (row) => {
 
-    pgPool.query(upsertAsset, row, (err, res) => {
+    pgClient.query(upsertAsset, row, (err, res) => {
         if (!err) {
             // console.dir(res, { depth: null });
         } else {

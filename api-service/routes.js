@@ -376,7 +376,6 @@ const routes = (app, pgPool) => {
         res.send(result);
     });
     
-
     /**
      *  @openapi
      *  /market-moving-averages:
@@ -469,8 +468,6 @@ const routes = (app, pgPool) => {
         res.send(result);
     });
     
-
-    
     // app.get('/party-fees-total', (req, res) => {
     
     //     const partyId = req.query.partyId;
@@ -499,6 +496,212 @@ const routes = (app, pgPool) => {
     //         }
     //     });
     // });
+
+    /* --------------- New APIs --------------- */
+
+    /*
+
+    1b-1 
+
+    Volume 
+    Transaction history ( Deposit/Withdrawal History )
+    Fees paid 
+    Risk metrics for open positions ( VaR and ES )
+    Moving Averages 
+    Open Interest 
+
+    1b-2 
+
+    Taker longs and shorts 
+    Historical volatilities, eg; simple, EWMA, GARCH 
+    Liquidity measures, eg; book depth, book snapshots 
+    Total market leverage, eg; OI against collateral deposits 
+    Estimated liquidation levels 
+    Performance metrics for positions, eg: Sharpe Ratio, Sortino Ratio, alpha, beta, R-squared
+    Individual position and portfolio historical PnLs ( From ledger movements )
+
+    */
+
+    app.get('/volume', async (req, res) => {
+        // Takes a marketId (optional) and a partyId (optional) and returns the most recent cumulative volume
+        // for the party/market. If no party or market is specified then the global cumulative volume is returned.
+
+        // Empty result. To be returned if party or market not found
+        const result = {
+            timestamp: "0", // Should be Vega time
+            volume: "0"
+        }
+
+        // Set headers
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+
+        const marketId = req.query.marketId;
+        const partyId = req.query.partyId;
+
+        switch (true) {
+            case (marketId != undefined && partyId != undefined): {
+                // Get volume for party on market
+                
+                const res = await asyncQuery('volume', ...partyQueries.volume(partyId), pgPool);
+
+                if (!res[1][0].timestamp) {
+                    break;
+                };
+
+                for (let market of res[1]) {
+                    if (market.market_id == marketId) {
+                        result.volume = (BigInt(market.volume) + BigInt(market.self_volume)).toString();
+                        result.timestamp = market.timestamp;
+                    }
+                };
+
+                break;
+            }
+            case (marketId != undefined && partyId == undefined): {
+                // Get volume for market
+
+                const res = await asyncQuery('volume', ...marketQueries.volume(marketId), pgPool);
+
+                if (!res[1][0].timestamp) {
+                    break;
+                };
+
+                result.volume = res[1][0].volume;
+                result.timestamp = res[1][0].timestamp;
+
+                break;
+            }
+            case (marketId == undefined && partyId != undefined): {
+                // Get volume for party
+
+                const res = await asyncQuery('totalVolume', ...partyQueries.totalVolume(partyId), pgPool);
+
+                if (!res[1][0].timestamp) {
+                    break;
+                };
+
+                result.volume = (BigInt(res[1][0].volume) + BigInt(res[1][0].self_volume)).toString();
+                result.timestamp = res[1][0].timestamp;
+
+                break;
+            }
+            default: {
+                // Get total volume across all markets
+
+                const res = await asyncQuery('volume', ...marketQueries.totalVolume(), pgPool);
+
+                if (!res[1][0].timestamp) {
+                    break;
+                };
+
+                result.volume = res[1][0].volume;
+                result.timestamp = res[1][0].timestamp;
+
+            }
+        }
+
+        res.send(result);
+
+
+    });
+
+
+    app.get('/trades-count', async (req, res) => {
+        // Takes a marketId (optional) and a partyId (optional) and returns the most recent count of trades for
+        // that party/market. If no party or market is specified then the global count of trades is returned.
+
+        const result = {
+            timestamp: "0",
+            tradesCount: "0"
+        };
+
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+
+        const marketId = req.query.marketId;
+        const partyId = req.query.partyId;
+
+        console.log(req.query);
+
+        switch (true) {
+
+            case (marketId != undefined && partyId != undefined): {
+                // Get count of trades for party on market
+                
+                const res = await asyncQuery('tradesCount', ...partyQueries.numTrades(partyId), pgPool);
+
+                console.log(res);
+
+                if (!res[1][0].timestamp) {
+                    break;
+                };
+
+                for (let market of res[1]) {
+                    if (market.market_id == marketId) {
+                        result.timestamp = market.timestamp;
+                        result.tradesCount = (BigInt(market.num_trades) + BigInt(market.num_self_trades)).toString();
+                    }
+                }
+
+                break;
+            };
+
+            case (marketId != undefined && partyId == undefined): {
+                // Get count of trades for market
+
+                const res = await asyncQuery('tradesCount', ...marketQueries.numTrades(marketId), pgPool);
+
+                if (!res[1][0].timestamp) {
+                    break;
+                };
+
+                result.timestamp = res[1][0].timestamp;
+                result.tradesCount = res[1][0].num_trades;
+
+                break;
+            };
+
+            case (marketId == undefined && partyId != undefined): {
+                // Get count of trades for party
+                
+                const res = await asyncQuery('tradesCount', ...partyQueries.totalNumTrades(partyId), pgPool);
+
+                if (!res[1][0].timestamp) {
+                    break;
+                };
+
+                result.timestamp = res[1][0].timestamp;
+                result.tradesCount = (BigInt(res[1][0].num_trades) + BigInt(res[1][0].num_self_trades)).toString();
+
+                break;
+            };
+
+            case (marketId == undefined && partyId == undefined): {
+                // Get global count of trades
+
+                const res = await asyncQuery('tradesCount', ...marketQueries.totalNumTrades(), pgPool);
+
+                if (!res[1][0].timestamp) {
+                    break;
+                };
+
+                result.timestamp = res[1][0].timestamp;
+                result.tradesCount = res[1][0].num_trades;
+
+                break;
+            };
+
+        }
+        
+        res.send(result);
+
+    });
+
+
+
 
 };
 

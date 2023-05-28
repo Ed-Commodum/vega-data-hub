@@ -82,6 +82,74 @@ INSERT INTO accountUpdates (
 ) RETURNING *;
 `;
 
+const setIntegerNowFunc = `
+SELECT set_integer_now_func('account_updates', 'current_time_ns');
+`;
+
+const continuousAggregates = {
+    marginAccounts: {
+        interval_1m: {
+            createMatView: `
+            `,
+            addRefreshPolicy: {
+
+            }
+        },
+        interval_5m: { 
+            createMatView: {
+
+            },
+            addRefreshPolicy: {
+
+            }
+
+        },
+        interval_1h: {
+
+        },
+        interval_1d: {
+
+        }
+    }
+};
+
+const createContAggs = async (client, types) => {
+
+    const queryQueue = [];
+
+    for (let type of types) {
+        for (let [ interval, queries ] of Object.entries(continuousAggregates[type])) {
+            for (let [ name, query ] of Object.entries(queries)) {
+                queryQueue.push({
+                    type: type,
+                    interval: interval,
+                    name: name,
+                    query: query
+                });
+            };
+        };
+    };
+
+    const next = (obj) => {
+        return new Promise((resolve, reject) => {
+            console.log(`Submitting query ${obj.name} of type ${obj.type} for interval ${obj.interval}.`)
+            client.query(obj.query, (err, res) => {
+                if (!err) {
+                    console.log(res);
+                    resolve();
+                } else {
+                    console.log("Query failed: ", err);
+                    reject();
+                }
+            });
+        });
+    };
+
+    while (queryQueue.length) {
+        await next(queryQueue.shift());
+    };
+
+};
 
 const flushAccountUpdateQueue = () => {
     
@@ -132,6 +200,15 @@ const start = () => {
                 if (!err) {
                     console.log("Created tables.");
                     console.log(res);
+                    pgClient.query(setIntegerNowFunc, (err, res) => {
+                        if(!err) {
+                            console.log(res);
+                            // createContAggs(pgClient, ["marginAccounts"]);
+                            
+                        } else {
+                            console.log(err);
+                        };
+                    });
                 } else {
                     console.log(err);
                 };

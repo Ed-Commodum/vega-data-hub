@@ -25,21 +25,43 @@ const marketData = {
 };
 
 const marketQueries = {
-    totalNumTrades(marketId) {
+    checkForMarket(marketId) {
         const query = `
-        SELECT sum(num_trades) AS num_trades FROM market_data_5m
+        SELECT count(*) FROM markets
+        WHERE id = $1;
+        `;
+
+        return [ query, [ marketId ] ];
+    },
+    numTrades(marketId) {
+        const query = `
+        SELECT sum(num_trades) AS num_trades, max(timestamp) AS timestamp FROM market_data_5m
         WHERE market_id = $1;
         `;
 
         return [ query, [ marketId ] ];
     },
-    totalVolume(marketId) {
+    totalNumTrades() {
         const query = `
-        SELECT sum(volume) AS volume FROM market_data_5m
+        SELECT sum(num_trades) AS num_trades, max(timestamp) AS timestamp FROM market_data_5m;
+        `;
+
+        return [ query, [] ];
+    },
+    volume(marketId) {
+        const query = `
+        SELECT sum(volume) AS volume, max(timestamp) AS timestamp FROM market_data_5m
         WHERE market_id = $1;
         `;
 
         return [ query, [ marketId ] ];
+    },
+    totalVolume() {
+        const query = `
+        SELECT sum(volume) AS volume, max(timestamp) AS timestamp FROM market_data_5m;
+        `;
+
+        return [ query, [] ];
     },
     totalFees(marketId) {
         const query = `
@@ -263,15 +285,25 @@ const partyQueries = {
     },
     numTrades(partyId) {
         const query = `
-        SELECT market_id, sum(num_trades) AS num_trades, sum(num_self_trades) AS num_self_trades FROM party_data_5m
-        WHERE buyer = $1 OR seller = $1 GROUP BY market_id;
+        SELECT
+            market_id,
+            sum(num_trades) AS num_trades,
+            sum(num_self_trades) AS num_self_trades,
+            max(timestamp) AS timestamp
+        FROM party_data_5m
+        WHERE buyer = $1 OR seller = $1
+        GROUP BY market_id;
         `;
 
         return [ query, [ partyId ] ];
     },
     totalNumTrades(partyId) {
         const query = `
-        SELECT sum(num_trades) AS num_trades, sum(num_self_trades) AS num_self_trades FROM party_data_5m
+        SELECT
+            sum(num_trades) AS num_trades,
+            sum(num_self_trades) AS num_self_trades,
+            max(timestamp) AS timestamp
+        FROM party_data_5m
         WHERE buyer = $1 OR seller = $1;
         `;
 
@@ -279,7 +311,7 @@ const partyQueries = {
     },
     volume(partyId) {
         const query = `
-        SELECT market_id, sum(volume) AS volume, sum(self_volume) AS self_volume FROM party_data_5m
+        SELECT market_id, sum(volume) AS volume, sum(self_volume) AS self_volume, max(timestamp) AS timestamp FROM party_data_5m
         WHERE buyer = $1 OR seller = $1 GROUP BY market_id;
         `;
 
@@ -287,7 +319,7 @@ const partyQueries = {
     },
     totalVolume(partyId) {
         const query = `
-        SELECT sum(volume) AS volume, sum(self_volume) AS self_volume FROM party_data_5m
+        SELECT sum(volume) AS volume, sum(self_volume) AS self_volume, max(timestamp) AS timestamp FROM party_data_5m
         WHERE buyer = $1 OR seller = $1;
         `;
 
@@ -339,25 +371,31 @@ const asyncQuery = (type, query, values, pgPool) => {
         
         console.log(query);
 
-        // pgPool.query(query, (err, result) => {
-        //     if (!err) {
-        //         console.log(type);
-        //         console.log(result.rows);
-        //         resolve([type, result.rows]);
-        //     } else {
-        //         console.log(err);
-        //     };
-        // });
-        
-        pgPool.query(query, values, (err, result) => {
-          if (!err) {
-              console.log(type);
-              console.log(result.rows);
-              resolve([type, result.rows]);
-          } else {
-              console.log(err);
-          };
-      }); 
+        if (values.length == 0) {
+            
+            pgPool.query(query, (err, result) => {
+                if (!err) {
+                    console.log(type);
+                    console.log(result.rows);
+                    resolve([type, result.rows]);
+                } else {
+                    console.log(err);
+                };
+            });
+
+        } else {
+
+            pgPool.query(query, values, (err, result) => {
+                if (!err) {
+                    console.log(type);
+                    console.log(result.rows);
+                    resolve([type, result.rows]);
+                } else {
+                    console.log(err);
+                };
+            });
+
+        }
 
     });
 };

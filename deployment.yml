@@ -136,10 +136,10 @@ spec:
     resources:
       limits:
         cpu: 500m
-        memory: 2500Mi
+        memory: 1800Mi
       requests:
         cpu: 500m
-        memory: 2500Mi
+        memory: 1800Mi
     env:
     - name: ZOOKEEPER_HOST
       value: zookeeper-service
@@ -452,8 +452,10 @@ spec:
     resources:
       limits:
         cpu: 400m
+        memory: 600Mi
       requests:
         cpu: 400m
+        memory: 600Mi
     env:
     - name: KAFKA_BROKERS
       value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"

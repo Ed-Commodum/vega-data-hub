@@ -146,30 +146,114 @@ SELECT set_integer_now_func('ledger_movements', 'current_time_ns');
 `;
 
 const continuousAggregates = {
-    pnls: {
+    gainsLosses: {
         interval_5m: {
-            createMatView: `CREATE MATERIALIZED VIEW pnls_5m
+            createMatView: `CREATE MATERIALIZED VIEW gains_losses_5m
             WITH (timescaledb.continuous) AS
             SELECT market_id,
-                party_id,
-                time_bucket(300000000000, updated_at) AS bucket,
-                last(realised_pnl, updated_at) AS last_rpnl,
-                max(realised_pnl) AS max_rpnl,
-                min(realised_pnl) AS min_rpnl,
-                last(unrealised_pnl, updated_at) as last_upnl,
-                max(unrealised_pnl) as max_upnl,
-                min(unrealised_pnl) as min_upnl
-            FROM position_updates
-            GROUP BY market_id, party_id, time_bucket(300000000000, updated_at);
+                time_bucket(300000000000, synth_timestamp) AS bucket,
+                from_account_owner as loser,
+                to_account_owner as gainer,
+                sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MTM_WIN') as unrealized_gain,
+                sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MTM_LOSS') as unrealized_loss,
+                sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_WIN') AS relaized_gain,
+                sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_LOSS') as realized_loss
+            FROM ledger_movements
+            GROUP BY market_id, party_id, time_bucket(300000000000, synth_timestamp);
             `,
-            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('pnls_5m',
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('gains_losses_5m',
             start_offset => '2592000000000000'::bigint,
             end_offset => '60000000000'::bigint,
             schedule_interval => INTERVAL '1 minute');`
         },
         // interval_1h: {},
         // interval_1d: {}
+    },
+    marginAdditions: {
+        interval_5m: {
+            createMatView: `CREATE METERIALIZED VIEW margin_additions_5m
+            with (timescaledb.continuous) AS
+            SELECT 
+                to_account_market as market_id,
+                time_bucket(300000000000, synth_timestamp) as bucket,
+                sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MARGIN_LOW') as margin_added,
+                to_account_owner as party
+            FROM ledger_movements
+            GROUP BY market_id, party_id, time_bucket(300000000000, synth_timestamp);
+
+            `,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('margin_additions_5m',
+            start_offset => '2592000000000000'::bigint,
+            end_offset => '60000000000'::bigint,
+            schedule_interval => INTERVAL '1 minute');`
+        }
+    },
+    marginDeductions: {
+        interval_5m: {
+            createMatView: `CREATE METERIALIZED VIEW margin_deductions_5m
+            with (timescaledb.continuous) AS
+            SELECT
+                from_account_market as market_id,
+                time_bucket(300000000000, synth_timestamp) as bucket,
+                sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MARGIN_HIGH') as margin_deducted,
+                from_account_owner as party
+            FROM ledger_movements
+            GROUP BY market_id, party_id, time_bucket(300000000000, synth_timestamp);
+            `,
+            addrefreshPolicy: `SELECT add_continuous_aggregate_policy('margin_deductions_5m',
+            start_offset => '2592000000000000'::bigint,
+            end_offset => '60000000000'::bigint,
+            schedule_interval => INTERVAL '1 minute');`
+        }
+    },
+    depositsWithdrawals: {
+        interval_5m: {
+            createMatView: `CREATE MATERIALIZED VIEW deposits_withdrawals_5m
+            with (timescaledb.continuous) AS
+            SELECT
+                time_bucket(300000000000, synth_timestamp) as bucket,
+                CASE
+                    WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN to_account_owner
+                    WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN from_account_owner
+                END as party_id,
+                CASE
+                    WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN to_account_asset
+                    WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN from_account_asset
+                END as asset,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN amount
+                        WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN - amount
+                    END) as diff
+            FROM ledger_movements
+            GROUP BY asset, party_id, time_bucket(300000000000, synth_timestamp);
+            `,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('deposits_withdrawals_5m',
+            start_offset => '2592000000000000'::bigint,
+            end_offset => '60000000000'::bigint,
+            schedule_interval => INTERVAL '1 minute');`
+        }
+    },
+    infraFeesByAsset: {
+        interval_5m: {
+            createMatView: `CREATE MATERIALIZED VIEW infra_fees_by_asset_5m
+            WITH (timescaledb.continuous) AS
+            SELECT
+                time_bucket(300000000000, synth_timestamp) as bucket,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_INFRASTRUCTURE_FEE_PAY' THEN amount ELSE 0
+                    END) as amount_paid,
+                from_account_asset as asset
+            FROM ledger_movements
+            GROUP BY asset, time_bucket(300000000000, synth_timestamp);
+                
+            `,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('infra_fees_by_asset_5m',
+            start_offset => '2592000000000000'::bigint,
+            end_offset => '60000000000'::bigint,
+            schedule_interval => INTERVAL '1 minute');`
+        }
     }
+
 };
 
 const createContAggs = async (client, types) => {
@@ -234,7 +318,7 @@ const flushLedgerMovementsQueue = () => {
             ledgerMovementsToInsert.push(...formatLedgerMovements(evt, block));
         }
 
-        if (ledgerMovementsToInsert.length >= 100) {
+        if (ledgerMovementsToInsert.length >= 200) {
             persistLedgerMovements(ledgerMovementsToInsert);
             while (ledgerMovementsToInsert.length) ledgerMovementsToInsert.shift();
         }
@@ -305,7 +389,7 @@ const start = () => {
                     pgClient.query(setIntegerNowFunc, (err, res) => {
                         if(!err) {
                             console.log(res);
-                            // createContAggs(pgPool, ["pnls"]);
+                            // createContAggs(pgPool, ["gainsLosses", "marginAdditions", "marginDeductions"]);
                             
                         } else {
                             console.log(err);
@@ -383,51 +467,53 @@ const setConsumer = (kafkaConsumer) => {
 
 const formatLedgerMovements = (evt, block) => { // movements) => {
 
-    console.log("Formatting");
-
     const movements = evt.Event.LedgerMovements.ledger_movements;
 
     const rows = [];
 
-    
-    for (let movement of movements) {
-        for (let entry of movement.entries) {
+    try {
+        for (let movement of movements) {
+            for (let entry of movement.entries) {
 
-            // Assign synthetic timestamp to ledger movement
-            entry["synth_timestamp"] = BigInt(block.timestamp) + BigInt(block.ledger_movement_count);
-            block.ledger_movement_count ++;
+                // Assign synthetic timestamp to ledger movement
+                entry["synth_timestamp"] = BigInt(block.timestamp) + BigInt(block.ledger_movement_count);
+                block.ledger_movement_count ++;
 
-            // Convert enums to field names
-            entry.type = transferEnumMappings.type[entry.type];
-            entry.from_account.type = transferEnumMappings.accountType[entry.from_account.type];
-            entry.to_account.type = transferEnumMappings.accountType[entry.to_account.type];
+                // Convert enums to field names
+                entry.type = transferEnumMappings.type[entry.type];
+                entry.from_account.type = transferEnumMappings.accountType[entry.from_account.type];
+                entry.to_account.type = transferEnumMappings.accountType[entry.to_account.type];
 
-            // Replace undefined fields to prevent nulls in the PRIMARY KEY of the table
-            if (entry.from_account.owner == undefined) entry.from_account.owner = "network";
-            if (entry.to_account.owner == undefined) entry.to_account.owner = "network";
-            
-            if (entry.from_account.market_id == undefined) entry.from_account.market_id = "N/A";
-            if (entry.to_account.market_id == undefined) entry.to_account.market_id = "N/A";
+                // Replace undefined fields to prevent nulls in the PRIMARY KEY of the table
+                if (entry.from_account.owner == undefined) entry.from_account.owner = "network";
+                if (entry.to_account.owner == undefined) entry.to_account.owner = "network";
+                
+                if (entry.from_account.market_id == undefined) entry.from_account.market_id = "N/A";
+                if (entry.to_account.market_id == undefined) entry.to_account.market_id = "N/A";
 
-            const row = [
-                entry.from_account.asset_id,
-                entry.from_account.owner,
-                entry.from_account.type,
-                entry.from_account.market_id,
-                entry.to_account.asset_id,
-                entry.to_account.owner,
-                entry.to_account.type,
-                entry.to_account.market_id,
-                entry.amount,
-                entry.type,
-                entry.synth_timestamp,
-                entry.from_account_balance,
-                entry.to_account_balance
-            ];
+                const row = [
+                    entry.from_account.asset_id,
+                    entry.from_account.owner,
+                    entry.from_account.type,
+                    entry.from_account.market_id,
+                    entry.to_account.asset_id,
+                    entry.to_account.owner,
+                    entry.to_account.type,
+                    entry.to_account.market_id,
+                    entry.amount,
+                    entry.type,
+                    entry.synth_timestamp,
+                    entry.from_account_balance,
+                    entry.to_account_balance
+                ];
 
-            rows.push(row);
+                rows.push(row);
 
+            }
         }
+    } catch (err) {
+        console.log(err);
+        console.log(movements)
     }
 
     return rows;

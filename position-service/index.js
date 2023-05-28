@@ -260,7 +260,7 @@ const start = () => {
                     pgClient.query(setIntegerNowFunc, (err, res) => {
                         if(!err) {
                             console.log(res);
-                            // createContAggs(pgPool, ["pnls"]);
+                            // createContAggs(pgClient, ["pnls"]);
                             
                         } else {
                             console.log(err);
