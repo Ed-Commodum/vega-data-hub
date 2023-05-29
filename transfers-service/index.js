@@ -245,7 +245,6 @@ const continuousAggregates = {
                 from_account_asset as asset
             FROM ledger_movements
             GROUP BY asset, time_bucket(300000000000, synth_timestamp);
-                
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('infra_fees_by_asset_5m',
             start_offset => '2592000000000000'::bigint,

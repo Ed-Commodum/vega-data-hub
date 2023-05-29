@@ -99,9 +99,10 @@ const continuousAggregates = {
                 first(timestamp, timestamp) AS first_ts,
                 last(open_interest, timestamp) AS last,
                 last(timestamp, timestamp) AS last_ts,
+                max(timestamp) AS max_ts,
                 max(open_interest) AS high,
                 min(open_interest) AS low,
-                first(open_interest, timestamp) - last(open_interest, timestamp) AS diff,
+                last(open_interest, timestamp) - first(open_interest, timestamp) AS diff,
                 avg(open_interest) AS avg,
                 count(timestamp) AS num_updates
             FROM market_data_updates
@@ -122,12 +123,12 @@ const continuousAggregates = {
                 first(first_ts, bucket) AS first_ts,
                 last(last, bucket) AS last,
                 last(last_ts, bucket) AS last_ts,
-                max(open_interest) AS high,
-                min(open_interest) AS low,
-                first(first, bucket) - last(last, bucket) AS diff,
+                max(high) AS high,
+                min(low) AS low,
+                last(last, bucket) - first(first, bucket) AS diff,
                 sum(avg * num_updates) / sum(num_updates) AS avg,
                 sum(num_updates) AS num_updates
-            FROM market_data_updates
+            FROM open_interest_5m
             GROUP BY market_id, time_bucket(3600000000000, bucket);
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('open_interest_1h',
@@ -145,12 +146,12 @@ const continuousAggregates = {
                 first(first_ts, bucket) AS first_ts,
                 last(last, bucket) AS last,
                 last(last_ts, bucket) AS last_ts,
-                max(open_interest) AS high,
-                min(open_interest) AS low,
-                first(first, bucket) - last(last, bucket) AS diff,
+                max(high) AS high,
+                min(low) AS low,
+                last(last, bucket) - first(first, bucket) AS diff,
                 sum(avg * num_updates) / sum(num_updates) AS avg,
                 sum(num_updates) num_updates
-            FROM market_data_updates
+            FROM open_interest_1h
             GROUP BY market_id, time_bucket(86400000000000, bucket);
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('open_interest_1d',
@@ -161,16 +162,16 @@ const continuousAggregates = {
         }
     },
     bidAskSpread: {
-        interval_500ms: {
-            createMatView: `CREATE MATERIALIZED VIEW bid_ask_spread_500ms
-            WITH (timescaledb.continuous) AS 
-            SELECT market_id,
-                time_bucket(500000000, timestamp) as bucket,
+        // interval_500ms: {
+        //     createMatView: `CREATE MATERIALIZED VIEW bid_ask_spread_500ms
+        //     WITH (timescaledb.continuous) AS 
+        //     SELECT market_id,
+        //         time_bucket(500000000, timestamp) as bucket,
                 
-            `,
-            addRefreshPolicy:`
-            `
-        },
+        //     `,
+        //     addRefreshPolicy:`
+        //     `
+        // },
         interval_5m: {
             createMatview: `CREATE MATERIALIZED VIEW bid_ask_spread_5m
             WITH (timescaledb.continuous) AS 
@@ -179,11 +180,11 @@ const continuousAggregates = {
                 min(best_ask_price - best_bid_price) as min_abs,
                 min((best_ask_price - best_bid_price) / best_ask_price) as min_percent,
                 max(best_ask_price - best_bid_price) as max_abs,
-                max((best_ask_price - best_bid_price) / best_ask_price) as max_perent,
-                first(best_ask_price - best_bid_price) as first_abs,
-                first((best_ask_price - best_bid_price) / best_ask_price) as first_percent,
-                last(best_ask_price - best_bid_price) as last_abs,
-                last((best_ask_price - best_bid_price) / best_ask_price) as last_percent,
+                max((best_ask_price - best_bid_price) / best_ask_price) as max_percent,
+                first(best_ask_price - best_bid_price, timestamp) as first_abs,
+                first((best_ask_price - best_bid_price) / best_ask_price, timestamp) as first_percent,
+                last(best_ask_price - best_bid_price, timestamp) as last_abs,
+                last((best_ask_price - best_bid_price) / best_ask_price, timestamp) as last_percent,
                 avg(best_ask_price - best_bid_price) as average_abs,
                 avg((best_ask_price - best_bid_price) / best_ask_price) as average_percent
                 FROM market_data_updates
@@ -195,30 +196,30 @@ const continuousAggregates = {
             schedule_interval => INTERVAL '1 minute');
             `
         },
-        interval_1h: {
-            createMatview: `CREATE MATERIALIZED VIEW bid_ask_spread_1h
-            WITH (timescaledb.continuous) AS 
-            SELECT market_id,
-                time_bucket(3600000000000, timestamp) as bucket,
-                min(best_ask_price - best_bid_price) as min_abs,
-                min((best_ask_price - best_bid_price) / best_ask_price) as min_percent,
-                max(best_ask_price - best_bid_price) as max_abs,
-                max((best_ask_price - best_bid_price) / best_ask_price) as max_perent,
-                first(best_ask_price - best_bid_price) as first_abs,
-                first((best_ask_price - best_bid_price) / best_ask_price) as first_percent,
-                last(best_ask_price - best_bid_price) as last_abs,
-                last((best_ask_price - best_bid_price) / best_ask_price) as last_percent,
-                avg(best_ask_price - best_bid_price) as average_abs,
-                avg((best_ask_price - best_bid_price) / best_ask_price) as average_percent
-                FROM market_data_updates
-                GROUP BY market_id, time_bucket(3600000000000, timestamp);
-            `,
-            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('bid_ask_spread_1h',
-            start_offset => '2592000000000000'::bigint,
-            end_offset => '60000000000'::bigint,
-            schedule_interval => INTERVAL '1 minute');
-            `
-        }
+        // interval_1h: {
+        //     createMatview: `CREATE MATERIALIZED VIEW bid_ask_spread_1h
+        //     WITH (timescaledb.continuous) AS 
+        //     SELECT market_id,
+        //         time_bucket(3600000000000, timestamp) as bucket,
+        //         min(best_ask_price - best_bid_price) as min_abs,
+        //         min((best_ask_price - best_bid_price) / best_ask_price) as min_percent,
+        //         max(best_ask_price - best_bid_price) as max_abs,
+        //         max((best_ask_price - best_bid_price) / best_ask_price) as max_percent,
+        //         first(best_ask_price - best_bid_price) as first_abs,
+        //         first((best_ask_price - best_bid_price) / best_ask_price) as first_percent,
+        //         last(best_ask_price - best_bid_price) as last_abs,
+        //         last((best_ask_price - best_bid_price) / best_ask_price) as last_percent,
+        //         avg(best_ask_price - best_bid_price) as average_abs,
+        //         avg((best_ask_price - best_bid_price) / best_ask_price) as average_percent
+        //         FROM market_data_updates
+        //         GROUP BY market_id, time_bucket(3600000000000, timestamp);
+        //     `,
+        //     addRefreshPolicy: `SELECT add_continuous_aggregate_policy('bid_ask_spread_1h',
+        //     start_offset => '2592000000000000'::bigint,
+        //     end_offset => '60000000000'::bigint,
+        //     schedule_interval => INTERVAL '1 minute');
+        //     `
+        // }
     },
     candles: {
         interval_5m: {
@@ -279,12 +280,12 @@ const start = () => {
     const kafkaClient = new kafka.KafkaClient({ kafkaHost: kafkaBrokers });
     const kafkaAdmin = new kafka.Admin(kafkaClient);
 
-    // Connect to postgres.
-    pgClient.connect((err) => {
-        if (err) {
-            console.log(err);
-        }
-    });
+    // // Connect to postgres.
+    // pgClient.connect((err) => {
+    //     if (err) {
+    //         console.log(err);
+    //     }
+    // });
 
     pgClient.connect((err) => {
         if (!err) {
@@ -297,7 +298,7 @@ const start = () => {
                     pgClient.query(setIntegerNowFunc, (err, res) => {
                         if(!err) {
                             console.log(res);
-                            // createContAggs(pgClient, ["openInterest", "pnls"]);
+                            createContAggs(pgClient, ["openInterest", "bidAskSpread"]);
                             
                         } else {
                             console.log(err);

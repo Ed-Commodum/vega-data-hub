@@ -75,11 +75,32 @@ const marketQueries = {
     },
     openInterest(marketId) {
         const query = `
-        SELECT bucket, first AS first_open_interest FROM open_interest_5m
-        WHERE market_id = $1 ORDER BY bucket DESC LIMIT 1;
+        SELECT
+            market_id,
+            bucket,
+            last_ts AS timestamp,
+            last AS open_interest
+        FROM open_interest_5m
+        WHERE market_id = $1
+        ORDER BY bucket DESC
+        LIMIT 1;
         `;
 
         return [ query, [ marketId ] ];
+    },
+    totalOpenInterest() {
+        const query = `
+        SELECT
+            market_id,
+            last(bucket, bucket) AS bucket,
+            last(last_ts, last_ts) AS timestamp,
+            last(last, last_ts) AS open_interest
+        FROM open_interest_5m
+        GROUP BY market_id
+        ORDER BY bucket DESC;
+        `;
+
+        return [ query, [] ];
     },
     returns(marketId, interval) {
 
@@ -170,9 +191,12 @@ const marketQueries = {
     },
     mostRecentPrice(marketId) {
         const query = `
-        SELECT time_bucket_gapfill('3600000000000'::bigint, bucket) AS bucket_gf,
-            last(close, bucket) AS close,
-            locf(last(close, bucket)) AS close_gf
+        SELECT
+            time_bucket_gapfill('3600000000000'::bigint, bucket) AS bucket_gf,
+            last(close, bucket) AS price,
+            locf(last(close, bucket)) AS close_gf,
+            last(last_timestamp, last_timestamp) AS timestamp,
+            locf(last(last_timestamp, bucket))
         FROM candles_1h
         WHERE bucket >= most_recent_trade_time($1) - '2592000000000000'::bigint
             AND bucket < most_recent_trade_time($1)

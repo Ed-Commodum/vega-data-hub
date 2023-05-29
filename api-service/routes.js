@@ -512,7 +512,7 @@ const routes = (app, pgPool) => {
 
     1b-2 
 
-    Taker longs and shorts 
+    Taker data long and short 
     Historical volatilities, eg; simple, EWMA, GARCH 
     Liquidity measures, eg; book depth, book snapshots 
     Total market leverage, eg; OI against collateral deposits 
@@ -546,7 +546,7 @@ const routes = (app, pgPool) => {
                 
                 const res = await asyncQuery('volume', ...partyQueries.volume(partyId), pgPool);
 
-                if (!res[1][0].timestamp) {
+                if (!res[1][0].timestamp || !res[1][0].volume) {
                     break;
                 };
 
@@ -564,7 +564,7 @@ const routes = (app, pgPool) => {
 
                 const res = await asyncQuery('volume', ...marketQueries.volume(marketId), pgPool);
 
-                if (!res[1][0].timestamp) {
+                if (!res[1][0].timestamp || !res[1][0].volume) {
                     break;
                 };
 
@@ -578,7 +578,7 @@ const routes = (app, pgPool) => {
 
                 const res = await asyncQuery('totalVolume', ...partyQueries.totalVolume(partyId), pgPool);
 
-                if (!res[1][0].timestamp) {
+                if (!res[1][0].timestamp || !res[1][0].volume) {
                     break;
                 };
 
@@ -587,12 +587,18 @@ const routes = (app, pgPool) => {
 
                 break;
             }
-            default: {
+            case (marketId == undefined && partyId == undefined): {
                 // Get total volume across all markets
+
+                // ------------------------------ REFACTOR ------------------------------ //
+                // This API needs to be refactored to receive all market volumes separately
+                // then account for differing settlement assets between markets. This is not
+                // urgent since currently all markets use USDT as the settlement asset.
+                // ---------------------------------------------------------------------- //
 
                 const res = await asyncQuery('volume', ...marketQueries.totalVolume(), pgPool);
 
-                if (!res[1][0].timestamp) {
+                if (!res[1][0].timestamp || !res[1][0].volume) {
                     break;
                 };
 
@@ -635,7 +641,7 @@ const routes = (app, pgPool) => {
 
                 console.log(res);
 
-                if (!res[1][0].timestamp) {
+                if (!res[1][0].timestamp || !res[1][0].num_trades) {
                     break;
                 };
 
@@ -654,7 +660,7 @@ const routes = (app, pgPool) => {
 
                 const res = await asyncQuery('tradesCount', ...marketQueries.numTrades(marketId), pgPool);
 
-                if (!res[1][0].timestamp) {
+                if (!res[1][0].timestamp || !res[1][0].num_trades) {
                     break;
                 };
 
@@ -669,7 +675,7 @@ const routes = (app, pgPool) => {
                 
                 const res = await asyncQuery('tradesCount', ...partyQueries.totalNumTrades(partyId), pgPool);
 
-                if (!res[1][0].timestamp) {
+                if (!res[1][0].timestamp || !res[1][0].num_trades) {
                     break;
                 };
 
@@ -684,7 +690,7 @@ const routes = (app, pgPool) => {
 
                 const res = await asyncQuery('tradesCount', ...marketQueries.totalNumTrades(), pgPool);
 
-                if (!res[1][0].timestamp) {
+                if (!res[1][0].timestamp || !res[1][0].num_trades) {
                     break;
                 };
 
@@ -701,6 +707,132 @@ const routes = (app, pgPool) => {
     });
 
 
+    app.get('/open-interest', async (req, res) => {
+        // Uses market data updates to keep track of OI, accepts a marketId (optional) as input and
+        // returns the most recent value of OI for that market, omitting marketId will return the OI
+        // across all markets on Vega.
+
+        const result = {
+            openInterestList: [
+                {
+                    marketId: "",
+                    timestamp: "0",
+                    openInterest: "0"
+                }
+            ]
+        }
+
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+
+        const marketId = req.query.marketId;
+
+        switch (true) {
+            case (marketId != undefined): {
+                // Get open interets for a specific market
+
+                const res = await asyncQuery('openInterest', ...marketQueries.openInterest(marketId), pgPool);
+
+                if (!res[1][0].market_id || !res[1][0].timestamp || !res[1][0].open_interest) {
+                    break;
+                };
+
+                result.openInterestList[0].marketId = res[1][0].market_id;
+                result.openInterestList[0].timestamp = res[1][0].timestamp;
+                result.openInterestList[0].openInterest = res[1][0].open_interest;
+
+                break;
+            };
+            case (marketId == undefined): {
+                // Get open interest for all markets
+
+                const res = await asyncQuery('openInterest', ...marketQueries.totalOpenInterest(), pgPool);
+
+                if (!res[1][0].market_id || !res[1][0].timestamp || !res[1][0].open_interest) {
+                    break;
+                };
+
+                result.openInterestList.shift();
+
+                for (let market of res[1]) {
+                    result.openInterestList.push(
+                        {
+                            marketId: market.market_id,
+                            timestamp: market.timestamp,
+                            openInterest: market.open_interest
+                        }
+                    );
+                }
+
+                break;
+            };
+        }
+
+        res.send(result);
+
+    });
+
+
+    app.get('/fees-paid', async (req, res) => {
+        // Accepts a partyId (mandatory) and a marketId (optional) returns a summary of trading fees paid 
+        // by a party on all markets or by a party on a specific market. Omitting the partyId will return
+        // an empty result.
+        
+        const result = {
+            feesPaidList: [
+                {
+                    marketId: "",
+                    timestamp: "0",
+                    fees: {
+                        total: "0",
+                        maker: "0",
+                        liquidity: "0",
+                        infrastructure: "0"
+                    }
+                }
+            ]
+        }
+
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+
+        const partyId = req.query.partyId;
+        const marketId = req.query.marketId;
+
+
+        
+    });
+
+
+    app.get('/fees-earned', async () => {
+        // Accepts a partyId (mandatory) and a marketId (optional), returns a summary of all trading fees earned
+        // by a party on a specific market or all trading fees earned by a party on all markets. Omitting the
+        // partyId will return an empty result.
+
+        const result = {};
+
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+
+
+    });
+
+
+    app.get('/fees-generated', async (req, res) => {
+        // Accepts a marketId (optional) and returns a summary of all the fees that have been generated by
+        // that market. Omitting a marketId will return a summary of all fees generate by all markets.
+
+        const result = {};
+
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+        
+
+    });
 
 
 };

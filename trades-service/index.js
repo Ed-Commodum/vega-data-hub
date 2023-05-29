@@ -189,7 +189,9 @@ const continuousAggregates = {
                 min(price) AS low,
                 first(price, synth_timestamp) AS open,
                 last(price, synth_timestamp) AS close,
-                sum(size) AS volume
+                last(timestamp, timestamp) AS last_timestamp,
+                sum(size) AS volume_contracts,
+                sum(size * price) AS volume
             FROM trades
             GROUP BY market_id, time_bucket(300000000000, synth_timestamp);`,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('candles_5m',
@@ -206,6 +208,8 @@ const continuousAggregates = {
                 min(low) AS low,
                 first(open, bucket) AS open,
                 last(close, bucket) AS close,
+                last(last_timestamp, last_timestamp) AS last_timestamp,
+                sum(volume_contracts) AS volume_contracts,
                 sum(volume) AS volume
             FROM candles_5m
             GROUP BY market_id, time_bucket(3600000000000, bucket);`,
@@ -223,6 +227,8 @@ const continuousAggregates = {
                 min(low) AS low,
                 first(open, bucket) AS open,
                 last(close, bucket) AS close,
+                last(last_timestamp, last_timestamp) AS last_timestamp,
+                sum(volume_contracts) AS volume_contracts,
                 sum(volume) AS volume
             FROM candles_1h
             GROUP BY market_id, time_bucket(86400000000000, bucket);`,
@@ -238,12 +244,16 @@ const continuousAggregates = {
             WITH (timescaledb.continuous) AS
             SELECT market_id,
                 time_bucket(300000000000, synth_timestamp) AS bucket,
-                sum(CASE WHEN aggressor = 'SIDE_BUY' THEN size ELSE 0 END) AS volume_long,
-                sum(CASE WHEN aggressor = 'SIDE_SELL' THEN size ELSE 0 END) AS volume_short,
+                sum(CASE WHEN aggressor = 'SIDE_BUY' THEN size ELSE 0 END) AS volume_long_contracts,
+                sum(CASE WHEN aggressor = 'SIDE_BUY' THEN size ELSE 0 END * price) AS volume_long,
+                sum(CASE WHEN aggressor = 'SIDE_SELL' THEN size ELSE 0 END) AS volume_short_contracts,
+                sum(CASE WHEN aggressor = 'SIDE_SELL' THEN size ELSE 0 END * price) AS volume_short,
                 count(DISTINCT buyer) FILTER (WHERE aggressor = 'SIDE_BUY') AS num_buyers,
                 count(DISTINCT seller) FILTER (WHERE aggressor = 'SIDE_SELL') AS num_sellers,
                 count(*) FILTER (WHERE aggressor = 'SIDE_BUY') AS num_buys,
                 count(*) FILTER (WHERE aggressor = 'SIDE_SELL') AS num_sells,
+                sum(size) FILTER (WHERE aggressor = 'SIDE_BUY') AS sum_buyer_size,
+                sum(size) FILTER (WHERE aggressor = 'SIDE_SELL') AS sum_seller_size,
                 avg(size) FILTER (WHERE aggressor = 'SIDE_BUY') AS avg_buyer_size,
                 avg(size) FILTER (WHERE aggressor = 'SIDE_SELL') AS avg_seller_size
             FROM trades
@@ -259,17 +269,21 @@ const continuousAggregates = {
             createMatView: `CREATE MATERIALIZED VIEW taker_data_1h
             WITH (timescaledb.continuous) AS
             SELECT market_id,
-                time_bucket(3600000000000, synth_timestamp) AS bucket,
-                sum(CASE WHEN aggressor = 'SIDE_BUY' THEN size ELSE 0 END) AS volume_long,
-                sum(CASE WHEN aggressor = 'SIDE_SELL' THEN size ELSE 0 END) AS volume_short,
-                count(DISTINCT buyer) FILTER (WHERE aggressor = 'SIDE_BUY') AS num_buyers,
-                count(DISTINCT seller) FILTER (WHERE aggressor = 'SIDE_SELL') AS num_sellers,
-                count(*) FILTER (WHERE aggressor = 'SIDE_BUY') AS num_buys,
-                count(*) FILTER (WHERE aggressor = 'SIDE_SELL') AS num_sells,
-                avg(size) FILTER (WHERE aggressor = 'SIDE_BUY') AS avg_buyer_size,
-                avg(size) FILTER (WHERE aggressor = 'SIDE_SELL') AS avg_seller_size
-            FROM trades
-            GROUP BY market_id, time_bucket(3600000000000, synth_timestamp);
+                time_bucket(3600000000000, bucket) AS bucket,
+                sum(volume_long_contracts) AS volume_long_contracts,
+                sum(volume_long) AS volume_long,
+                sum(volume_short_contracts) AS volume_short_contracts,
+                sum(volume_short) AS volume_short,
+                sum(num_buyers) AS num_buyers,
+                sum(num_sellers) AS num_sellers,
+                sum(num_buys) AS num_buys,
+                sum(num_sells) AS num_sells,
+                sum(sum_buyer_size) AS sum_buyer_size,
+                sum(sum_seller_size) AS sum_seller_size,
+                sum(sum_buyer_size) / sum(num_buys) AS avg_buyer_size,
+                sum(sum_seller_size) / sum(num_sells) AS avg_seller_size
+            FROM taker_data_5m
+            GROUP BY market_id, time_bucket(3600000000000, bucket);
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('taker_data_1h',
             start_offset => 2592000000000000,
@@ -281,17 +295,21 @@ const continuousAggregates = {
             createMatView: `CREATE MATERIALIZED VIEW taker_data_1d
             WITH (timescaledb.continuous) AS
             SELECT market_id,
-                time_bucket(86400000000000, synth_timestamp) AS bucket,
-                sum(CASE WHEN aggressor = 'SIDE_BUY' THEN size ELSE 0 END) AS volume_long,
-                sum(CASE WHEN aggressor = 'SIDE_SELL' THEN size ELSE 0 END) AS volume_short,
-                count(DISTINCT buyer) FILTER (WHERE aggressor = 'SIDE_BUY') AS num_buyers,
-                count(DISTINCT seller) FILTER (WHERE aggressor = 'SIDE_SELL') AS num_sellers,
-                count(*) FILTER (WHERE aggressor = 'SIDE_BUY') AS num_buys,
-                count(*) FILTER (WHERE aggressor = 'SIDE_SELL') AS num_sells,
-                avg(size) FILTER (WHERE aggressor = 'SIDE_BUY') AS avg_buyer_size,
-                avg(size) FILTER (WHERE aggressor = 'SIDE_SELL') AS avg_seller_size
-            FROM trades
-            GROUP BY market_id, time_bucket(86400000000000, synth_timestamp);
+                time_bucket(86400000000000, bucket) AS bucket,
+                sum(volume_long_contracts) AS volume_long_contracts,
+                sum(volume_long) AS volume_long,
+                sum(volume_short_contracts) AS volume_short_contracts,
+                sum(volume_short) AS volume_short,
+                sum(num_buyers) AS num_buyers,
+                sum(num_sellers) AS num_sellers,
+                sum(num_buys) AS num_buys,
+                sum(num_sells) AS num_sells,
+                sum(sum_buyer_size) AS sum_buyer_size,
+                sum(sum_seller_size) AS sum_seller_size,
+                sum(sum_buyer_size) / sum(num_buys) AS avg_buyer_size,
+                sum(sum_seller_size) / sum(num_sells) AS avg_seller_size
+            FROM taker_data_1h
+            GROUP BY market_id, time_bucket(86400000000000, bucket);
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('taker_data_1d',
             start_offset => 2592000000000000,
@@ -362,8 +380,9 @@ const continuousAggregates = {
             WITH (timescaledb.continuous) AS
             SELECT market_id,
                 time_bucket(300000000000, synth_timestamp) AS bucket,
-                count(market_id) as num_trades,
-                sum(size) as volume,
+                count(market_id) AS num_trades,
+                sum(size) AS volume_contracts,
+                sum(size * price) AS volume,
                 sum(buyer_fee_infrastructure + seller_fee_infrastructure) AS fees_paid_infrastructure,
                 sum(buyer_fee_infrastructure + buyer_fee_maker +
                     buyer_fee_liquidity + seller_fee_infrastructure +
@@ -390,7 +409,9 @@ const continuousAggregates = {
                 seller AS seller,
                 count(buyer) FILTER (WHERE buyer != seller) AS num_trades,
                 count(buyer) FILTER (WHERE buyer = seller) AS num_self_trades,
-                sum(CASE WHEN buyer != seller THEN size ELSE 0 END) AS volume,
+                sum(CASE WHEN buyer != seller THEN size ELSE 0 END) AS volume_contracts,
+                sum(CASE WHEN buyer != seller THEN size ELSE 0 END * price) AS volume,
+                sum(CASE WHEN buyer = seller THEN size ELSE 0 END) AS self_volume_contracts,
                 sum(CASE WHEN buyer = seller THEN size ELSE 0 END) AS self_volume,
                 sum(buyer_fee_infrastructure + buyer_fee_maker + buyer_fee_liquidity) AS buyer_fee,
                 sum(buyer_fee_infrastructure) as buyer_fee_infrastructure,
