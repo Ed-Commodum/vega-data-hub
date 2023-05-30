@@ -736,7 +736,7 @@ const start = () => {
                             pgClient.query(setIntegerNowFunc, (err, res) => {
                                 if(!err) {
                                     console.log(res);
-                                    createContAggs(pgPool, ["candles", "takerData", "feesPaid", "marketData", "partyData"]);
+                                    createContAggs(pgPool, ["candles", "takerData", "marketData", "partyData"]);
 
                                 } else {
                                     console.log(err);

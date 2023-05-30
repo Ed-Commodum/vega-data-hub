@@ -527,9 +527,20 @@ const routes = (app, pgPool) => {
         // for the party/market. If no party or market is specified then the global cumulative volume is returned.
 
         // Empty result. To be returned if party or market not found
+        // const result = {
+        //     timestamp: "0", // Should be Vega time
+        //     volume: "0"
+        // }
+
         const result = {
-            timestamp: "0", // Should be Vega time
-            volume: "0"
+            volumeList: [
+                {
+                    marketId: "",
+                    partyId: "",
+                    timestamp: "",
+                    volume: ""
+                }
+            ]
         }
 
         // Set headers
@@ -544,18 +555,16 @@ const routes = (app, pgPool) => {
             case (marketId != undefined && partyId != undefined): {
                 // Get volume for party on market
                 
-                const res = await asyncQuery('volume', ...partyQueries.volume(partyId), pgPool);
+                const res = await asyncQuery('volume', ...partyQueries.volume(partyId, marketId), pgPool);
 
                 if (!res[1][0].timestamp || !res[1][0].volume) {
                     break;
                 };
 
-                for (let market of res[1]) {
-                    if (market.market_id == marketId) {
-                        result.volume = (BigInt(market.volume) + BigInt(market.self_volume)).toString();
-                        result.timestamp = market.timestamp;
-                    }
-                };
+                result.volumeList[0].marketId = marketId;
+                result.volumeList[0].partyId = partyId;
+                result.volumeList[0].timestamp = res[1][0].timestamp;
+                result.volumeList[0].volume = (BigInt(res[1][0].volume) + BigInt(res[1][0].self_volume)).toString();
 
                 break;
             }
@@ -568,22 +577,43 @@ const routes = (app, pgPool) => {
                     break;
                 };
 
-                result.volume = res[1][0].volume;
-                result.timestamp = res[1][0].timestamp;
+                result.volumeList[0].marketId = marketId;
+                result.volumeList[0].partyId = "*";
+                result.volumeList[0].timestamp = res[1][0].timestamp;
+                result.volumeList[0].volume = res[1][0].volume;
 
                 break;
             }
             case (marketId == undefined && partyId != undefined): {
-                // Get volume for party
+                // Get total volume for party
 
-                const res = await asyncQuery('totalVolume', ...partyQueries.totalVolume(partyId), pgPool);
+                // ------------------------------ REFACTOR ------------------------------ //
+                // This API needs to be refactored to receive volumes grouped by marketId
+                // then account for differing settlement assets between markets. Each Market
+                // will also have a differing number of price and position decimal places.
+                // ---------------------------------------------------------------------- //
 
-                if (!res[1][0].timestamp || !res[1][0].volume) {
+                // ------------------------ REFACTORING COMPLETE ------------------------ //
+                // ---------------------------- TODO TESTING ---------------------------- //
+
+                const res = await asyncQuery('volume', ...partyQueries.totalVolume(partyId), pgPool);
+
+                if (!res[1][0].market_id || !res[1][0].timestamp || !res[1][0].volume) {
                     break;
                 };
 
-                result.volume = (BigInt(res[1][0].volume) + BigInt(res[1][0].self_volume)).toString();
-                result.timestamp = res[1][0].timestamp;
+                result.volumeList.shift();
+
+                for (let market of res[1]) {
+                    result.volumeList.push(
+                        {
+                            marketId: market.market_id,
+                            partyId: partyId,
+                            timestamp: market.timestamp,
+                            volume: (BigInt(market.volume) + BigInt(market.self_volume)).toString()
+                        }
+                    )
+                }
 
                 break;
             }
@@ -592,19 +622,31 @@ const routes = (app, pgPool) => {
 
                 // ------------------------------ REFACTOR ------------------------------ //
                 // This API needs to be refactored to receive all market volumes separately
-                // then account for differing settlement assets between markets. This is not
-                // urgent since currently all markets use USDT as the settlement asset.
+                // then account for differing settlement assets between markets. Each Market
+                // will also have a differing number of price and position decimal places.
                 // ---------------------------------------------------------------------- //
+
+                // ------------------------ REFACTORING COMPLETE ------------------------ //
+                // ---------------------------- TODO TESTING ---------------------------- //
 
                 const res = await asyncQuery('volume', ...marketQueries.totalVolume(), pgPool);
 
-                if (!res[1][0].timestamp || !res[1][0].volume) {
+                if (res[1][0].market_id || !res[1][0].timestamp || !res[1][0].volume) {
                     break;
                 };
 
-                result.volume = res[1][0].volume;
-                result.timestamp = res[1][0].timestamp;
+                for (let market of res[1]) {
+                    result.volumeList.push(
+                        {
+                            marketId: market.market_id,
+                            partyId: "*",
+                            timestamp: market.timestamp,
+                            volume: market.volume
+                        }
+                    );
+                }
 
+                break;
             }
         }
 
@@ -780,6 +822,7 @@ const routes = (app, pgPool) => {
         // an empty result.
         
         const result = {
+            partyId: "",
             feesPaidList: [
                 {
                     marketId: "",
@@ -801,7 +844,59 @@ const routes = (app, pgPool) => {
         const partyId = req.query.partyId;
         const marketId = req.query.marketId;
 
+        switch (true) {
+            case (marketId != undefined): {
+                // Fees paid by party on market
 
+                const res = await asyncQuery('feesPaid', ...partyQueries.feesPaid(partyId, marketId), pgPool);
+
+                if (res[1][0].timestamp || !res[1][0].maker_fee_paid || !res[1][0].liquidity_fee_paid || !res[1][0].infrastructure_fee_paid) {
+                    break;
+                };
+
+                result.partyId = partyId;
+                result.feesPaidList[0].marketId = marketId;
+                result.feesPaidList[0].timestamp = res[1][0].timestamp;
+                result.feesPaidList[0].fees.total = (BigInt(res[1][0].maker_fee_paid) + BigInt(res[1][0].liquidity_fee_paid) + BigInt(res[1][0].infrastructure_fee_paid)).toString();
+                result.feesPaidList[0].fees.maker = res[1][0].maker_fee_paid;
+                result.feesPaidList[0].fees.liquidity = res[1][0].liquidity_fee_paid;
+                result.feesPaidList[0].fees.infrastructure = res[1][0].infrastructure_fee_paid;
+
+                break;
+
+            };
+            case (marketId == undefined): {
+                // Fees paid by party on all markets
+
+                const res = await asyncQuery('feesPaid', ...partyQueries.totalFeesPaid(partyId), pgPool);
+
+                if (res[1][0].timestamp || !res[1][0].maker_fee_paid || !res[1][0].liquidity_fee_paid || !res[1][0].infrastructure_fee_paid) {
+                    break;
+                };
+
+                result.partyId = PartyId;
+                result.feesPaidList.shift();
+
+                for (let market of res[1]) {
+                    result.feesPaidList.push(
+                        {
+                            marketId: market.market_id,
+                            timestamp: market.timestamp,
+                            fees: {
+                                total: (BigInt(market.maker_fee_paid) + BigInt(market.liquidity_fee_paid) + BigInt(market.infrastructure_fee_paid)).toString(),
+                                maker: market.maker_fee_paid,
+                                liquidity: market.liquidity_fee_paid,
+                                infrastructure: market.infrastructure_fee_paid
+                            }
+                        }
+                    );
+                }
+
+                break;
+            };
+        };
+
+        res.send(result);
         
     });
 

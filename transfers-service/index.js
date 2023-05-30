@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS ledger_movements (
     to_account_market TEXT NOT NULL,
     amount NUMERIC,
     type TEXT NOT NULL,
+    timestamp BIGINT,
     synth_timestamp BIGINT,
     from_balance NUMERIC,
     to_balance NUMERIC,
@@ -81,6 +82,7 @@ INSERT INTO ledger_movements (
     to_account_market,
     amount,
     type,
+    timestamp,
     synth_timestamp,
     from_balance,
     to_balance
@@ -97,7 +99,8 @@ INSERT INTO ledger_movements (
     $10,
     $11,
     $12,
-    $13
+    $13,
+    $14
 ) ON CONFLICT DO NOTHING;
 `;
 
@@ -113,6 +116,7 @@ INSERT INTO ledger_movements (
     to_account_market,
     amount,
     type,
+    timestamp,
     synth_timestamp,
     from_balance,
     to_balance
@@ -167,7 +171,7 @@ const continuousAggregates = {
             schedule_interval => INTERVAL '1 minute');`
         },
         // interval_1h: {},
-        // interval_1d: {}
+        // intervaln_1d: {}
     },
     marginAdditions: {
         interval_5m: {
@@ -247,6 +251,34 @@ const continuousAggregates = {
             GROUP BY asset, time_bucket(300000000000, synth_timestamp);
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('infra_fees_by_asset_5m',
+            start_offset => '2592000000000000'::bigint,
+            end_offset => '60000000000'::bigint,
+            schedule_interval => INTERVAL '1 minute');`
+        }
+    },
+    feesPaid: {
+        interval_5m: {
+            createMatView: `CREATE MATERIALIZED VIEW fees_paid_5m
+            WITH (timescaledb.continuous) AS
+            SELECT
+                time_bucket(300000000000, synth_timestamp) AS bucket,
+                from_account_market AS market_id,
+                from_account_owner AS party_id,
+                last(timestamp, synth_timestamp) AS timestamp,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_MAKER_FEE_PAY' THEN amount ELSE 0
+                    END) as maker_fee_paid,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_LIQUIDITY_FEE_PAY' THEN amount ELSE 0
+                    END) as liquidity_fee_paid,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_INFRASTRUCTURE_FEE_PAY' THEN amount ELSE 0
+                    END) as infrastructure_fee_paid,
+                from_account_asset AS asset
+            FROM ledger_movements
+            GROUP BY market_id, party_id, asset, time_bucket(300000000000, synth_timestamp);
+            `,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('fees_paid_5m',
             start_offset => '2592000000000000'::bigint,
             end_offset => '60000000000'::bigint,
             schedule_interval => INTERVAL '1 minute');`
@@ -388,7 +420,7 @@ const start = () => {
                     pgClient.query(setIntegerNowFunc, (err, res) => {
                         if(!err) {
                             console.log(res);
-                            // createContAggs(pgPool, ["gainsLosses", "marginAdditions", "marginDeductions"]);
+                            // createContAggs(pgPool, ["feesPaid"]);
                             
                         } else {
                             console.log(err);
@@ -475,6 +507,7 @@ const formatLedgerMovements = (evt, block) => { // movements) => {
             for (let entry of movement.entries) {
 
                 // Assign synthetic timestamp to ledger movement
+                entry["timestamp"] = BigInt(block.timestamp);
                 entry["synth_timestamp"] = BigInt(block.timestamp) + BigInt(block.ledger_movement_count);
                 block.ledger_movement_count ++;
 
@@ -501,6 +534,7 @@ const formatLedgerMovements = (evt, block) => { // movements) => {
                     entry.to_account.market_id,
                     entry.amount,
                     entry.type,
+                    entry.timestamp,
                     entry.synth_timestamp,
                     entry.from_account_balance,
                     entry.to_account_balance

@@ -58,7 +58,12 @@ const marketQueries = {
     },
     totalVolume() {
         const query = `
-        SELECT sum(volume) AS volume, max(timestamp) AS timestamp FROM market_data_5m;
+        SELECT
+            market_id AS market_id,
+            sum(volume) AS volume,
+            max(timestamp) AS timestamp
+        FROM market_data_5m
+        GROUP BY market_id;
         `;
 
         return [ query, [] ];
@@ -333,7 +338,15 @@ const partyQueries = {
 
         return [ query, [ partyId ] ];
     },
-    volume(partyId) {
+    volume(partyId, marketId) {
+        const query = `
+        SELECT sum(volume) AS volume, sum(self_volume) AS self_volume, max(timestamp) AS timestamp FROM party_data_5m
+        WHERE buyer = $1 OR seller = $1 AND market_id = $2;
+        `;
+
+        return [ query, [ partyId, marketId ] ];
+    },
+    totalVolume(partyId) {
         const query = `
         SELECT market_id, sum(volume) AS volume, sum(self_volume) AS self_volume, max(timestamp) AS timestamp FROM party_data_5m
         WHERE buyer = $1 OR seller = $1 GROUP BY market_id;
@@ -341,16 +354,35 @@ const partyQueries = {
 
         return [ query, [ partyId ] ];
     },
-    totalVolume(partyId) {
+    feesPaid(partyId, marketId) {
         const query = `
-        SELECT sum(volume) AS volume, sum(self_volume) AS self_volume, max(timestamp) AS timestamp FROM party_data_5m
-        WHERE buyer = $1 OR seller = $1;
+        SELECT
+            last(timestamp, bucket) AS timestamp,
+            sum(maker_fee_paid) AS maker_fee_paid,
+            sum(liquidity_fee_paid) AS liquidity_fee_paid,
+            sum(infrastructure_fee_paid) AS infrastructure_fee_paid
+        FROM fees_paid_5m
+        WHERE party_id = $1 AND market_id = $2;
         `;
 
-        return [ query, [ partyId ] ];
-    }
-    ,
-    feesPaid(partyId) {
+        return [ query, [ partyId, marketId ] ];
+    },
+    totalFeesPaid(partyId) {
+        const query = `
+        SELECT
+            market_id,
+            last(timestamp, bucket) AS timestamp,
+            sum(maker_fee_paid) AS maker_fee_paid,
+            sum(liquidity_fee_paid) AS liquidity_fee_paid,
+            sum(infrastructure_fee_paid) AS infrastructure_fee_paid
+        FROM fees_paid_5m
+        WHERE party_id = $1
+        GROUP BY market_id;
+        `;
+
+        return [ query, [ partyId ]]; 
+    },
+    feesPaidOld(partyId) {
         const query = `
         SELECT
             y.market_id,
@@ -368,7 +400,7 @@ const partyQueries = {
 
         return [ query, [ partyId ] ];
     },
-    totalFeesPaid(partyId) {
+    totalFeesPaidOld(partyId) {
         const query = `
         SELECT y.party, SUM(y.fee) AS total_fees
         FROM fees_paid_5m x
