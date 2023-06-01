@@ -4,4 +4,5 @@ COPY package.json /app/
 RUN npm install
 RUN npm install -g nodemon
 COPY index.js order-enums.js ringBuffers.js /app/
+# CMD ["nodemon", "--inspect", "index.js"]
 CMD ["nodemon", "index.js"]

@@ -283,6 +283,34 @@ const continuousAggregates = {
             end_offset => '60000000000'::bigint,
             schedule_interval => INTERVAL '1 minute');`
         }
+    },
+    feesEarned: {
+        interval_5m: {
+            createMatView: `CREATE MATERIALIZED VIEW fees_earned_5m
+            WITH (timescaledb.continuous) AS
+            SELECT
+                time_bucket(300000000000, synth_timestamp) AS bucket,
+                from_account_market AS market_id,
+                from_account_owner AS party_id,
+                last(timestamp, synth_timestamp) AS timestamp,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_MAKER_FEE_RECEIVE' THEN amount ELSE 0
+                    END) as maker_fee_earned,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_LIQUIDITY_FEE_RECEIVE' THEN amount ELSE 0
+                    END) as liquidity_fee_earned,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_INFRASTRUCTURE_FEE_RECEIVE' THEN amount ELSE 0
+                    END) as infrastructure_fee_earned,
+                from_account_asset AS asset
+            FROM ledger_movements
+            GROUP BY market_id, party_id, asset, time_bucket(300000000000, synth_timestamp);
+            `,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('fees_paid_5m',
+            start_offset => '2592000000000000'::bigint,
+            end_offset => '60000000000'::bigint,
+            schedule_interval => INTERVAL '1 minute');`
+        }
     }
 
 };

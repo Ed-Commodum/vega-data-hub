@@ -1,3 +1,5 @@
+const format = require('pg-format');
+
 const marketData = {
     totalTrades: 0,
     totalVolume: 0,
@@ -32,6 +34,15 @@ const marketQueries = {
         `;
 
         return [ query, [ marketId ] ];
+    },
+    getMarkets() {
+        const query = `
+        SELECT
+            DISTINCT id
+        FROM markets;
+        `;
+
+        return [ query, [ ] ];
     },
     numTrades(marketId) {
         const query = `
@@ -98,14 +109,40 @@ const marketQueries = {
         SELECT
             market_id,
             last(bucket, bucket) AS bucket,
-            last(last_ts, last_ts) AS timestamp,
-            last(last, last_ts) AS open_interest
+            last(last_ts, bucket) AS timestamp,
+            last(last, bucket) AS open_interest
         FROM open_interest_5m
-        GROUP BY market_id
-        ORDER BY bucket DESC;
+        GROUP BY market_id;
         `;
 
         return [ query, [] ];
+    },
+    feesGenerated(marketId) {
+        const query = `
+        SELECT
+            last(timestamp, bucket) AS timestamp,
+            sum(maker_fee_paid) AS maker_fees_generated,
+            sum(liquidity_fee_paid) AS liquidity_fees_generated,
+            sum(infrastructure_fee_paid) AS infrastructure_fees_generated
+        FROM fees_paid_5m
+        WHERE market_id = $1;
+        `;
+
+        return [ query, [ marketId ] ]
+    },
+    totalFeesGenerated() {
+        const query = `
+        SELECT
+            market_id,
+            last(timestamp, bucket) AS timestamp,
+            sum(maker_fee_paid) AS maker_fees_generated,
+            sum(liquidity_fee_paid) AS liquidity_fees_generated,
+            sum(infrastructure_fee_paid) AS infrastructure_fees_generated
+        FROM fees_paid_5m
+        GROUP BY market_id;
+        `;
+
+        return [ query, [] ]
     },
     returns(marketId, interval) {
 
@@ -130,12 +167,12 @@ const marketQueries = {
                 table = 'candles_1h';
         };
 
-        const query = `
+        const fQuery = `
         WITH gf AS (
             SELECT time_bucket_gapfill($2::bigint, bucket) AS bucket_gf,
                 last(close, bucket) AS close,
                 locf(last(close, bucket)) AS close_gf
-            FROM ${table}
+            FROM %I
             WHERE bucket > first_trade_time($1) 
                 AND bucket < most_recent_trade_time($1)
                 AND market_id = $1
@@ -154,6 +191,8 @@ const marketQueries = {
             percentile_disc($3) WITHIN GROUP (ORDER BY return) AS p_disc
         FROM returns;
         `;
+
+        const query = format(fQuery, table);
 
         return [ query, [ marketId, bucketSize, (1-confidenceInterval) ] ];
 
@@ -213,7 +252,37 @@ const marketQueries = {
 
         return [ query, [ marketId ] ];
     },
-    simpleMovingAverages(marketId, interval, limit, bucketSize) {
+    simpleMovingAverage(marketId, table, bucketSize, windowLength, limit) {
+        const fQuery = `
+        WITH x AS (
+            SELECT
+                time_bucket_gapfill( $2::bigint, bucket) as bucket_gf,
+                last(close, bucket) as close,
+                locf(last(close, bucket)) as close_gf
+            FROM %I
+            WHERE bucket > first_trade_time($1)
+                AND bucket < most_recent_trade_time($1)
+                AND market_id = $1
+            GROUP BY bucket_gf
+            ORDER BY bucket_gf DESC
+        )
+        SELECT
+            bucket_gf,
+            close_gf,
+            avg(close_gf) OVER (
+                ORDER BY bucket_gf ROWS BETWEEN $3 PRECEDING AND CURRENT ROW
+            ) AS sma
+        FROM x
+        WHERE close_gf IS NOT NULL
+        ORDER BY bucket_gf DESC
+        LIMIT $4;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ marketId, bucketSize, windowLength-1, limit ] ];
+    },
+    simpleMovingAveragesOld(marketId, interval, limit, bucketSize) {
         
         let table;
         switch (interval) {
@@ -412,6 +481,34 @@ const partyQueries = {
 
         return [ query, [ partyId ] ];
     },
+    feesEarned(partyId, marketId) {
+        const query = `
+        SELECT
+            last(timestamp, bucket) AS timestamp,
+            sum(maker_fee_earned) AS maker_fee_earned,
+            sum(liquidity_fee_earned) AS liquidity_fee_earned,
+            sum(infrastructure_fee_earned) AS infrastructure_fee_earned
+        FROM fees_earned_5m
+        WHERE party_id = $1 AND market_id = $2;
+        `;
+
+        return [ query, [ partyId, marketId ] ];
+    },
+    totalFeesEarned(partyId) {
+        const query = `
+        SELECT
+            market_id,
+            last(timestamp, bucket) AS timestamp,
+            sum(maker_fee_earned) AS maker_fee_earned,
+            sum(liquidity_fee_earned) AS liquidity_fee_earned,
+            sum(infrastructure_fee_earned) AS infrastructure_fee_earned
+        FROM fees_earned_5m
+        WHERE party_id = $1
+        GROUP BY market_id;
+        `;
+
+        return [ query, [ partyId ] ];
+    },
     openPositions(partyId) {
         const query = `
         SELECT * FROM positions AS positions WHERE open_volume > 0 AND party_id = $1;
@@ -419,7 +516,7 @@ const partyQueries = {
 
         return [ query, [ partyId ] ];
     },
-    historicalPnls: ``
+    historicalPnls() {}
 }
 
 const asyncQuery = (type, query, values, pgPool) => {

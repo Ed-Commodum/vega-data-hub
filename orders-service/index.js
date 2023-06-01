@@ -1,6 +1,7 @@
 const { orderEnums, orderEnumMappings } = require('./order-enums.js');
 const { Client, Pool } = require('pg');
 const format = require('pg-format');
+const { performance } = require('node:perf_hooks');
 
 const pgClient = new Client({
     host: process.env.TIMESCALEDB_HOST,
@@ -251,16 +252,23 @@ let rowsForInsertion = 0;
 const flushOrderQueue = () => {
     clearInterval(flushOrderQueueInterval);
 
+    const startTime = performance.now();
+    let orderCount = 0;
+
     while (orderQueue.length) {
 
-        if (diffsToInsert.length >= 400) {
+        orderCount += 1;
+
+        if (diffsToInsert.length >= 1000) {
             persistDiffs(diffsToInsert);
-            while (diffsToInsert.length) diffsToInsert.shift();
+            diffsToInsert.length = 0;
+            // while (diffsToInsert.length) diffsToInsert.shift();
         }
 
-        if (toInsert.length >= 400) {
+        if (toInsert.length >= 1000) {
             persistOrders(toInsert);
-            while (toInsert.length) toInsert.shift();
+            toInsert.length = 0;
+            // while (toInsert.length) toInsert.shift();
         }
 
         const event = orderQueue.shift();
@@ -271,6 +279,7 @@ const flushOrderQueue = () => {
         if (!block) {
             console.log(`Block not found for height: ${height}`);
             orderQueue.unshift(event);
+            orderCount -= 1;
             break;
         }
 
@@ -305,13 +314,17 @@ const flushOrderQueue = () => {
 
     if (diffsToInsert.length > 0) {
         persistDiffs(diffsToInsert);
-        while(diffsToInsert.length) diffsToInsert.shift();
+        diffsToInsert.length = 0;
+        // while(diffsToInsert.length) diffsToInsert.shift();
     }
 
     if (toInsert.length > 0) {
         persistOrders(toInsert);
-        while (toInsert.length) toInsert.shift();
+        toInsert.length = 0;
+        // while (toInsert.length) toInsert.shift();
     }
+
+    console.log(`${orderCount} orders processed in ${performance.now() - startTime}ms`);
 
     flushOrderQueueInterval = setInterval(flushOrderQueue, 50);
 };
@@ -376,18 +389,29 @@ const start = () => {
     });
 };
 
-const setConsumer = (kafkaConsumer) => {
-    // kafkaBlockConsumer = new kafka.Consumer(kafkaClient, [ { topic: "blocks" } ], { groupId: "orders-blocks-group" });
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [ { topic: "orders" }, { topic: "blocks" } ], { groupId: "orders-group", fetchMaxBytes: 2 * 1024 * 1024 });
-    kafkaConsumer.on("message", (msg) => {
 
-        const dateTime = new Date(Date.now()).toISOString();
-        // console.log(`${dateTime}: New message`);
+const setConsumer = () => {
+
+    const options = {
+        kafkaHost: kafkaBrokers,
+        groupId: 'orders-group',
+        fetchMaxBytes: 2 * 1024 * 1024
+    };
+
+    const kafkaConsumer = new kafka.ConsumerGroup(options, ['orders', 'blocks']);
+
+    let startTime = performance.now();
+    let msgCount = 0;
+
+    kafkaConsumer.on('message', (msg) => {
+
+        msgCount++;
+        if (msgCount % 1000 == 0) {
+            console.log(`Time to poll 1000 messages: ${performance.now() - startTime}`);
+            startTime = performance.now();
+        }
+
         const evt = JSON.parse(msg.value);
-
-        // if (!evt.Event.Order) {
-        //     console.dir(evt, { depth: null });
-        // }
 
         if (msg.topic == "blocks") {
             if (evt.Event.BeginBlock) recentBlocks.push(evt.Event.BeginBlock);
@@ -410,9 +434,50 @@ const setConsumer = (kafkaConsumer) => {
             }
 
         }
-        
+
     });
+
+
+
 };
+
+// const setConsumer = (kafkaConsumer) => {
+//     // kafkaBlockConsumer = new kafka.Consumer(kafkaClient, [ { topic: "blocks" } ], { groupId: "orders-blocks-group" });
+//     kafkaConsumer = new kafka.Consumer(kafkaClient, [ { topic: "orders" }, { topic: "blocks" } ], { groupId: "orders-group", fetchMaxBytes: 2 * 1024 * 1024 });
+//     kafkaConsumer.on("message", (msg) => {
+
+//         const dateTime = new Date(Date.now()).toISOString();
+//         // console.log(`${dateTime}: New message`);
+//         const evt = JSON.parse(msg.value);
+
+//         // if (!evt.Event.Order) {
+//         //     console.dir(evt, { depth: null });
+//         // }
+
+//         if (msg.topic == "blocks") {
+//             if (evt.Event.BeginBlock) recentBlocks.push(evt.Event.BeginBlock);
+//         }
+
+//         if (msg.topic == "orders") {
+
+//             if (evt.Event.Order) {
+//                 // console.log(evt);
+//                 orderQueue.push(evt);
+//             }
+
+//             if (evt.Event.ExpiredOrders) {
+//                 // console.log(evt);
+//                 orderQueue.push(evt);
+//             }
+
+//             if (evt.Event.DistressedOrdersClosed) {
+//                 console.log(evt);
+//             }
+
+//         }
+        
+//     });
+// };
 
 const formatOrder = (order) => {
 
@@ -650,12 +715,19 @@ const persistOrder = (item) => {
 
 const persistOrders = (items) => {
 
-    pgPool.query(format(fInsertOrderUpdate, items), [], (err, res) => {
+    const startTime = performance.now();
+    const numItems = items.length;
+
+    const formatted = format(fInsertOrderUpdate, items);
+    console.log(`Took ${performance.now() - startTime}ms to formate ${numItems} order updates.`)
+
+    pgPool.query(formatted, [], (err, res) => {
         if (err) {
             console.log(`Error performing inserts`);
             console.log(err);
         } else {
-            // console.log("Order Insertions successful")
+            console.log(`Took ${performance.now() - startTime}ms to insert ${numItems} order updates`);
+            // console.log("Order Insertions successful");
         }
     });
 
@@ -667,9 +739,16 @@ const persistOrders = (items) => {
 
 const persistDiffs = (diffs) => {
 
-    pgPool.query(format(fInsertDiffs, diffs), [], (err, res) => {
+    const startTime = performance.now();
+    const numDiffs = diffs.length;
+
+    const formatted = format(fInsertDiffs, diffs);
+    console.log(`Took ${performance.now() - startTime}ms to formate ${numDiffs} diffs.`)
+
+    pgPool.query(formatted, [], (err, res) => {
         if (!err) {
             // console.log("Diff insertions successful");
+            console.log(`Took ${performance.now() - startTime}ms to insert ${numDiffs} orderbook diffs`);
         } else {
             console.log(`Error performing inserts: `, err);
         }

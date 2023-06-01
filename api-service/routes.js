@@ -522,6 +522,7 @@ const routes = (app, pgPool) => {
 
     */
 
+    // ---------- TEST AGAIN ---------- //
     app.get('/volume', async (req, res) => {
         // Takes a marketId (optional) and a partyId (optional) and returns the most recent cumulative volume
         // for the party/market. If no party or market is specified then the global cumulative volume is returned.
@@ -552,6 +553,7 @@ const routes = (app, pgPool) => {
         const partyId = req.query.partyId;
 
         switch (true) {
+
             case (marketId != undefined && partyId != undefined): {
                 // Get volume for party on market
                 
@@ -567,7 +569,8 @@ const routes = (app, pgPool) => {
                 result.volumeList[0].volume = (BigInt(res[1][0].volume) + BigInt(res[1][0].self_volume)).toString();
 
                 break;
-            }
+            };
+
             case (marketId != undefined && partyId == undefined): {
                 // Get volume for market
 
@@ -583,7 +586,8 @@ const routes = (app, pgPool) => {
                 result.volumeList[0].volume = res[1][0].volume;
 
                 break;
-            }
+            };
+
             case (marketId == undefined && partyId != undefined): {
                 // Get total volume for party
 
@@ -616,7 +620,8 @@ const routes = (app, pgPool) => {
                 }
 
                 break;
-            }
+            };
+
             case (marketId == undefined && partyId == undefined): {
                 // Get total volume across all markets
 
@@ -631,7 +636,7 @@ const routes = (app, pgPool) => {
 
                 const res = await asyncQuery('volume', ...marketQueries.totalVolume(), pgPool);
 
-                if (res[1][0].market_id || !res[1][0].timestamp || !res[1][0].volume) {
+                if (!res[1][0].market_id || !res[1][0].timestamp || !res[1][0].volume) {
                     break;
                 };
 
@@ -648,6 +653,7 @@ const routes = (app, pgPool) => {
 
                 break;
             }
+
         }
 
         res.send(result);
@@ -655,7 +661,7 @@ const routes = (app, pgPool) => {
 
     });
 
-
+    // ---------- TEST AGAIN ---------- //
     app.get('/trades-count', async (req, res) => {
         // Takes a marketId (optional) and a partyId (optional) and returns the most recent count of trades for
         // that party/market. If no party or market is specified then the global count of trades is returned.
@@ -748,7 +754,7 @@ const routes = (app, pgPool) => {
 
     });
 
-
+    // ---------- TEST AGAIN ---------- //
     app.get('/open-interest', async (req, res) => {
         // Uses market data updates to keep track of OI, accepts a marketId (optional) as input and
         // returns the most recent value of OI for that market, omitting marketId will return the OI
@@ -786,6 +792,7 @@ const routes = (app, pgPool) => {
 
                 break;
             };
+
             case (marketId == undefined): {
                 // Get open interest for all markets
 
@@ -815,7 +822,7 @@ const routes = (app, pgPool) => {
 
     });
 
-
+    // ---------- UNTESTED ---------- //
     app.get('/fees-paid', async (req, res) => {
         // Accepts a partyId (mandatory) and a marketId (optional) returns a summary of trading fees paid 
         // by a party on all markets or by a party on a specific market. Omitting the partyId will return
@@ -844,13 +851,16 @@ const routes = (app, pgPool) => {
         const partyId = req.query.partyId;
         const marketId = req.query.marketId;
 
+        if (!partyId) return res.send(result);
+
         switch (true) {
+
             case (marketId != undefined): {
                 // Fees paid by party on market
 
                 const res = await asyncQuery('feesPaid', ...partyQueries.feesPaid(partyId, marketId), pgPool);
 
-                if (res[1][0].timestamp || !res[1][0].maker_fee_paid || !res[1][0].liquidity_fee_paid || !res[1][0].infrastructure_fee_paid) {
+                if (!res[1][0].timestamp || !res[1][0].maker_fee_paid || !res[1][0].liquidity_fee_paid || !res[1][0].infrastructure_fee_paid) {
                     break;
                 };
 
@@ -865,16 +875,17 @@ const routes = (app, pgPool) => {
                 break;
 
             };
+
             case (marketId == undefined): {
                 // Fees paid by party on all markets
 
                 const res = await asyncQuery('feesPaid', ...partyQueries.totalFeesPaid(partyId), pgPool);
 
-                if (res[1][0].timestamp || !res[1][0].maker_fee_paid || !res[1][0].liquidity_fee_paid || !res[1][0].infrastructure_fee_paid) {
+                if (!res[1][0].timestamp || !res[1][0].maker_fee_paid || !res[1][0].liquidity_fee_paid || !res[1][0].infrastructure_fee_paid) {
                     break;
                 };
 
-                result.partyId = PartyId;
+                result.partyId = partyId;
                 result.feesPaidList.shift();
 
                 for (let market of res[1]) {
@@ -900,32 +911,300 @@ const routes = (app, pgPool) => {
         
     });
 
-
+    // ---------- UNTESTED ---------- //
     app.get('/fees-earned', async () => {
         // Accepts a partyId (mandatory) and a marketId (optional), returns a summary of all trading fees earned
         // by a party on a specific market or all trading fees earned by a party on all markets. Omitting the
         // partyId will return an empty result.
 
-        const result = {};
+        const result = {
+            partyId: "",
+            feesEarnedList: [
+                {
+                    marketId: "",
+                    timestamp: "0",
+                    fees: {
+                        total: "0",
+                        maker: "0",
+                        liquidity: "0",
+                        infrastructure: "0"
+                    }
+                }
+            ]
+        };
 
         res.append('Access-Control-Allow-Origin', ['*']);
         res.append('Access-Control-Allow-Methods', 'GET');
         res.append('Access-Control-Allow-Headers', 'Content-Type');
 
+        const partyId = req.query.partyId;
+        const marketId = req.query.marketId;
+
+        if (!partyId) return res.send(result);
+
+        switch (true) {
+
+            case (marketId != undefined): {
+
+                const res = await asyncQuery('feesEarned', ...partyQueries.feesEarned(partyId, marketId), pgPool);
+
+                if (!res[1][0].timestamp || !res[1][0].maker_fee_earned || !res[1][0].liquidity_fee_earned || !res[1][0].infrastructure_fee_earned) {
+                    break;
+                };
+
+                result.partyId = partyId;
+                result.feesEarnedList[0].marketId = marketId;
+                result.feesEarnedList[0].timestamp = res[1][0].timestamp;
+                result.feesEarnedList[0].fees.total = (BigInt(res[1][0].maker_fee_earned) + BigInt(res[1][0].liquidity_fee_earned) + BigInt(res[1][0].infrastructure_fee_earned)).toString();
+                result.feesEarnedList[0].fees.maker = res[1][0].maker_fee_earned;
+                result.feesEarnedList[0].fees.liquidity = res[1][0].liquidity_fee_earned;
+                result.feesEarnedList[0].fees.infrastructure = res[1][0].infrastructure_fee_earned;
+
+                break;
+            };
+
+            case (marketId == undefined): {
+
+                const res = await asyncQuery('feesEarned', ...partyQueries.totalFeesEarned(partyId), pgPool);
+
+                if (!res[1][0].timestamp || !res[1][0].maker_fee_earned || !res[1][0].liquidity_fee_earned || !res[1][0].infrastructure_fee_earned) {
+                    break;
+                };
+
+                result.partyId = partyId;
+                result.feesEarnedList.shift();
+
+
+                for (let market of res[1]) {
+                    result.feesEarnedList.push(
+                        {
+                            marketId: market.market_id,
+                            timestamp: market.timestamp,
+                            fees: {
+                                total: (BigInt(market.maker_fee_earned) + BigInt(market.liquidity_fee_earned) + BigInt(market.infrastructure_fee_earned)).toString(),
+                                maker: market.maker_fee_earned,
+                                liquidity: market.liquidity_fee_earned,
+                                infrastructure: market.infrastructure_fee_earned
+                            }
+                        }
+                    );
+                };
+
+                break;
+            };
+
+        }
+
+        res.send(result);
 
     });
 
-
+    // ---------- UNTESTED ---------- //
     app.get('/fees-generated', async (req, res) => {
         // Accepts a marketId (optional) and returns a summary of all the fees that have been generated by
-        // that market. Omitting a marketId will return a summary of all fees generate by all markets.
+        // that market. Omitting a marketId will return a summary of all fees generated by all markets.
 
-        const result = {};
+        const result = {
+            feesGeneratedList: [
+                {
+                    marketId: "",
+                    timestamp: "0",
+                    fees: {
+                        total: "0",
+                        maker: "0",
+                        liquidity: "0",
+                        infrastructure: "0"
+                    }
+                }
+            ]
+        };
 
         res.append('Access-Control-Allow-Origin', ['*']);
         res.append('Access-Control-Allow-Methods', 'GET');
         res.append('Access-Control-Allow-Headers', 'Content-Type');
         
+        const marketId = req.query.marketId;
+
+        switch (true) {
+
+            case (marketId != undefined): {
+
+                const res = await asyncQuery('feesGenerated', ...marketQueries.feesGenerated(marketId), pgPool);
+
+                if (!res[1][0].timestamp || !res[1][0].maker_fees_generated || !res[1][0].liquidity_fees_generated || !res[1][0].infrastructure_fees_generated) {
+                    break;
+                };
+
+                result.feesGeneratedList[0].marketId = marketId;
+                result.feesGeneratedList[0].timestamp = res[1][0].timestamp;
+                result.feesGeneratedList[0].fees.total = (BigInt(res[1][0].maker_fees_generated) + BigInt(res[1][0].liquidity_fees_generated) + BigInt(res[1][0].infrastructure_fees_generated)).toString();
+                result.feesGeneratedList[0].fees.maker = res[1][0].maker_fees_generated;
+                result.feesGeneratedList[0].fees.liquidity = res[1][0].liquidity_fees_generated;
+                result.feesGeneratedList[0].fees.infrastructure = res[1][0].infrastructure_fees_generated;
+
+                break;
+            };
+
+            case (marketId == undefined): {
+
+                const res = await asyncQuery('feesGenerated', ...marketQueries.totalFeesGenerated(), pgPool);
+
+                if (!res[1][0].timestamp || !res[1][0].maker_fees_generated || !res[1][0].liquidity_fees_generated || !res[1][0].infrastructure_fees_generated) {
+                    break;
+                };
+
+                result.feesGeneratedList.shift();
+
+                for (let market of res[1]) {
+                    result.feesGeneratedList.push(
+                        {
+                            marketId: market.market_id,
+                            timestamp: market.timestamp,
+                            fees: {
+                                total: (BigInt(market.maker_fees_generated) + BigInt(market.liquidity_fees_generated) + BigInt(market.infrastructure_fees_generated)).toString(),
+                                maker: market.maker_fees_generated,
+                                liquidity: market.liquidity_fees_generated,
+                                infrastructure: market.infrastructure_fees_generated
+                            }
+                        }
+                    );
+                };
+
+                break;
+            };
+
+        };
+
+        res.send(result);
+
+    });
+
+    // ---------- UNTESTED ---------- //
+    app.get('/simple-moving-average', async (req, res) => {
+        // Accepts a marketId, an interval, a windowLength, and a limit and returns the corresponding
+        // moving averages for those parameters. Omitting a marketId will return an empty result. Omitting
+        // any other argument will use a default value. Providing an invlaid value for any argument will
+        // return an empty result.
+
+        const result = {
+            marketId: "",
+            interval: "",
+            sma: [ [ "0", "0" ] ]
+        };
+
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+
+        const expectedArgs = [ 'marketId', 'interval', 'windowLength', 'limit' ];
+        const defaultArgs = { marketId: undefined, interval: 'INTERVAL_1H', windowLength: 50, limit: 500 };
+        const args = req.query;
+        console.log(args);
+    
+        for (let arg of expectedArgs) {
+            if (!args[arg]) {
+                // Arg was not provided, set to default
+                args[arg] = defaultArgs[arg];
+            }
+        }
+
+        console.log(args);
+
+        const [ marketId, interval, windowLength, limit ] =  [ args.marketId, args.interval, args.windowLength, args.limit ]
+        let table, bucketSize;
+
+        // const validIntervals = [ "INTERVAL_5M", "INTERVAL_15M", "INTERVAL_30M", "INTERVAL_1H", "INTERVAL_3H", "INTERVAL_1D" ]
+        const validIntervals = [ "INTERVAL_5M", "INTERVAL_1H", "INTERVAL_1D" ];
+        const validMarkets = (await asyncQuery('getMarkets', ...marketQueries.getMarkets(), pgPool))[1].map(x => x.id);
+
+        console.log('validMarkets: ', validMarkets);
+
+        if (!validIntervals.includes(interval)) return res.send(result);
+        if (!validMarkets.includes(marketId)) return res.send(result);
+        // if (!validMarkets.includes(marketId)) return res.send(result);
+
+        switch (interval) {
+            
+            case ('INTERVAL_5M') : {
+                table = 'candles_5m';
+                bucketSize = 300000000000;
+                break;
+            };
+
+            case ('INTERVAL_1H') : {
+                table = 'candles_1h';
+                bucketSize = 3600000000000;
+                break;
+            };
+
+            case ('INTERVAL_1D') : {
+                table = 'candles_5m';
+                bucketSize = 86400000000000;
+                break;
+            };
+        }
+
+        const queryRes = await asyncQuery(
+            'simpleMovingAverages', 
+            ...marketQueries.simpleMovingAverage(marketId, table, bucketSize, windowLength, limit),
+            pgPool
+        );
+
+        console.dir(queryRes);
+
+        result.marketId = marketId;
+        result.interval = interval;
+
+        if (queryRes[1].length != 0) result.sma.shift();
+
+        for (let item of queryRes[1]) {
+            result.sma.push([ item.bucket_gf, item.sma ]);
+        };
+
+        res.send(result);
+
+    });
+
+
+    app.get('/value-at-risk', async (req, res) => {
+        // Accepts a marketId, a time interval, and a confidence interval. Omitting a marketId will return
+        // an empty result (should it return VaR for all markets?), while omitting any other argument will
+        // use a defult value. Providing an invalid value for any argument will return an empty result. The
+        // return value is a decimal between 0 and 1 representing a percentage (ie: 1 == 100%, 0.05 == 5%).
+
+        const result = {
+            marketId: "",
+            interval: "",
+            confidenceInterval: "0",
+            valueAtRisk: "0"
+        };
+
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+
+        const args = req.query;
+        const expectedArgs = ['marketId', 'interval', 'confidenceInterval'];
+        const defaultArgs = { marketId: undefined, interval: "INTERVAL_1H", confidenceInterval: 95 }
+
+        for (let arg of expectedArgs) { 
+            if (!args[arg]) {
+                args[arg] = defaultArgs[arg];
+            };
+        };
+
+        // const validIntervals = [ "INTERVAL_5M", "INTERVAL_15M", "INTERVAL_30M", "INTERVAL_1H", "INTERVAL_3H", "INTERVAL_1D" ]
+        const validIntervals = [ "INTERVAL_5M", "INTERVAL_1H", "INTERVAL_1D" ];
+        const validMarkets = (await asyncQuery('getMarkets', ...marketQueries.getMarkets(), pgPool))[1].map(x => x.id);
+
+        // Convert confidenceInterval to valid value (int, 0 < CI < 100);
+        args['confidenceInterval'] = Math.min(Math.max(Math.round(parseFloat(args['confidenceInterval'])), min), max);
+
+        if (!args['confidenceInterval']) return res.send(result);
+        if (!validMarkets.includes(args['marketId'])) return res.send(result);
+        if (!validIntervals.includes(args['interval'])) return res.send(result);
+
+        const varRes = await asyncQuery('valueAtRisk', ...marketQueries.valueAtRisk(), pgPool);
 
     });
 

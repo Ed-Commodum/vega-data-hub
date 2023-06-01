@@ -36,14 +36,16 @@ spec:
         - containerPort: 5432
         resources:
           limits:
-            cpu: 700m
+            cpu: 600m
             memory: 2.5Gi
           requests:
-            cpu: 700m
+            cpu: 600m
             memory: 2.5Gi
         env:
         - name: POSTGRES_PASSWORD
-          value: ilovetimescaledb          
+          value: ilovetimescaledb
+        args:
+          - '-cmax_connections=75'
 ---
 apiVersion: v1
 kind: Service
@@ -438,6 +440,19 @@ spec:
       value: "5432"
 ---
 apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: orders-debug-service
+  name: orders-debug-service
+spec:
+  ports:
+    - port: 9229
+      targetPort: 9229
+  selector:
+    app: orders-pod
+---
+apiVersion: v1
 kind: Pod
 metadata:
   name: orders-pod
@@ -451,10 +466,10 @@ spec:
     imagePullPolicy: Never
     resources:
       limits:
-        cpu: 400m
+        cpu: 800m
         memory: 600Mi
       requests:
-        cpu: 400m
+        cpu: 800m
         memory: 600Mi
     env:
     - name: KAFKA_BROKERS

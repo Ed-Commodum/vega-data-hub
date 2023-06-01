@@ -246,7 +246,7 @@ const setConsumer = (kafkaConsumer) => {
 
         const evt = JSON.parse(msg.value);
 
-        console.dir(evt, { depth: null });
+        // console.dir(evt, { depth: null });
 
         if (msg.topic == "blocks") {
             // Save recent blocks in memory to use for calculating synthetic timestamps
