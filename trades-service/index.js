@@ -236,6 +236,44 @@ const continuousAggregates = {
             start_offset => 2592000000000000,
             end_offset => 60000000000,
             schedule_interval => INTERVAL '1 minute');`
+        },
+        interval_1d_from_5m: {
+            createMatView: `CREATE MATERIALIZED VIEW candles_1d_from_5m
+            WITH (timescaledb.continuous) AS
+            SELECT market_id,
+                time_bucket(86400000000000, bucket) AS bucket,
+                max(high) AS high,
+                min(low) AS low,
+                first(open, bucket) AS open,
+                last(close, bucket) AS close,
+                last(last_timestamp, last_timestamp) AS last_timestamp,
+                sum(volume_contracts) AS volume_contracts,
+                sum(volume) AS volume
+            FROM candles_5m
+            GROUP BY market_id, time_bucket(86400000000000, bucket);`,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('candles_1d_from_5m',
+            start_offset => 2592000000000000,
+            end_offset => 60000000000,
+            schedule_interval => INTERVAL '1 minute');`
+        },
+        interval_1d_from_raw: {
+            createMatView: `CREATE MATERIALIZED VIEW candles_1d_from_raw
+            WITH (timescaledb.continuous) AS
+            SELECT market_id,
+                time_bucket(86400000000000, synth_timestamp) AS bucket,
+                max(price) AS high,
+                min(price) AS low,
+                first(price, synth_timestamp) AS open,
+                last(price, synth_timestamp) AS close,
+                last(timestamp, timestamp) AS last_timestamp,
+                sum(size) AS volume_contracts,
+                sum(size * price) AS volume
+            FROM trades
+            GROUP BY market_id, time_bucket(86400000000000, synth_timestamp);`,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('candles_1d_from_raw',
+            start_offset => 2592000000000000,
+            end_offset => 60000000000,
+            schedule_interval => INTERVAL '1 minute');`
         }
     },
     takerData: {

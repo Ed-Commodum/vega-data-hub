@@ -150,21 +150,23 @@ const marketQueries = {
     variance(marketId, interval) {
 
     },
-    valueAtRisk(marketId, interval, bucketSize, confidenceInterval) {
+    valueAtRisk(marketId, interval, confidenceInterval) {
         
         let table;
+        let bucketSize;
         switch (interval) {
-            case '5m':
+            case 'INTERVAL_5M':
                 table = 'candles_5m';
+                bucketSize = '300000000000';
                 break;
-            case '1h':
+            case 'INTERVAL_1H':
                 table = 'candles_1h';
+                bucketSize = '3600000000000';
                 break;
-            case '1d':
+            case 'INTERVAL_1D':
                 table = 'candles_1d';
+                bucketSize = '86400000000000';
                 break;
-            default:
-                table = 'candles_1h';
         };
 
         const fQuery = `
@@ -194,7 +196,9 @@ const marketQueries = {
 
         const query = format(fQuery, table);
 
-        return [ query, [ marketId, bucketSize, (1-confidenceInterval) ] ];
+        console.log("Args: ", [ marketId, bucketSize, (1-confidenceInterval).toFixed(2) ]);
+
+        return [ query, [ marketId, bucketSize, (1-confidenceInterval).toFixed(2) ] ];
 
         `
         WITH gf AS (

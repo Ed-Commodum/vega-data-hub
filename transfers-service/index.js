@@ -448,7 +448,7 @@ const start = () => {
                     pgClient.query(setIntegerNowFunc, (err, res) => {
                         if(!err) {
                             console.log(res);
-                            // createContAggs(pgPool, ["feesPaid"]);
+                            createContAggs(pgPool, ["feesPaid", "feesEarned"]);
                             
                         } else {
                             console.log(err);

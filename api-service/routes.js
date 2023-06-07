@@ -1138,7 +1138,7 @@ const routes = (app, pgPool) => {
             };
 
             case ('INTERVAL_1D') : {
-                table = 'candles_5m';
+                table = 'candles_1d';
                 bucketSize = 86400000000000;
                 break;
             };
@@ -1165,18 +1165,21 @@ const routes = (app, pgPool) => {
 
     });
 
-
+    // ---------- UNTESTED ---------- //
     app.get('/value-at-risk', async (req, res) => {
         // Accepts a marketId, a time interval, and a confidence interval. Omitting a marketId will return
         // an empty result (should it return VaR for all markets?), while omitting any other argument will
         // use a defult value. Providing an invalid value for any argument will return an empty result. The
         // return value is a decimal between 0 and 1 representing a percentage (ie: 1 == 100%, 0.05 == 5%).
+        // The method for this API is historical simulation using all available trade data for a partiuculat
+        // market on Vega.
 
         const result = {
             marketId: "",
             interval: "",
             confidenceInterval: "0",
-            valueAtRisk: "0"
+            valueAtRiskContinuous: "0",
+            valueAtRiskDiscrete: "0"
         };
 
         res.append('Access-Control-Allow-Origin', ['*']);
@@ -1198,16 +1201,49 @@ const routes = (app, pgPool) => {
         const validMarkets = (await asyncQuery('getMarkets', ...marketQueries.getMarkets(), pgPool))[1].map(x => x.id);
 
         // Convert confidenceInterval to valid value (int, 0 < CI < 100);
-        args['confidenceInterval'] = Math.min(Math.max(Math.round(parseFloat(args['confidenceInterval'])), min), max);
+        args['confidenceInterval'] = Math.min(Math.max(Math.round(parseFloat(args['confidenceInterval'])), 1), 99)/100;
 
         if (!args['confidenceInterval']) return res.send(result);
         if (!validMarkets.includes(args['marketId'])) return res.send(result);
         if (!validIntervals.includes(args['interval'])) return res.send(result);
 
-        const varRes = await asyncQuery('valueAtRisk', ...marketQueries.valueAtRisk(), pgPool);
+        console.log(args);
+
+        const varRes = await asyncQuery(
+            'valueAtRisk',
+            ...marketQueries.valueAtRisk(args['marketId'], args['interval'], args['confidenceInterval']),
+            pgPool
+        );
+
+        result.marketId = args['marketId'];
+        result.interval = args['interval'];
+        result.confidenceInterval = args['confidenceInterval'];
+        result.valueAtRiskContinuous = Math.abs(Number(varRes[1][0].p_cont).toFixed(5)).toString();
+        result.valueAtRiskDiscrete = Math.abs(Number(varRes[1][0].p_disc).toFixed(5)).toString();
+
+        res.send(result);
 
     });
 
+    app.get('/expected-shortfall', async (req, res) => {
+
+    });
+
+    app.get('/sharpe-ratio', async (req, res) => {
+
+    });
+
+    app.get('/sortino-ratio', async (req, res) => {
+
+    });
+
+    app.get('/pnl', async (req, res) => {
+
+    });
+
+    app.get('/pnl-history', async (req, res) => {
+
+    });
 
 };
 
