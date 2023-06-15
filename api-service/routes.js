@@ -553,7 +553,6 @@ const routes = (app, pgPool) => {
         const partyId = req.query.partyId;
 
         switch (true) {
-
             case (marketId != undefined && partyId != undefined): {
                 // Get volume for party on market
                 
@@ -640,6 +639,8 @@ const routes = (app, pgPool) => {
                     break;
                 };
 
+                result.volumeList.shift();
+
                 for (let market of res[1]) {
                     result.volumeList.push(
                         {
@@ -660,6 +661,231 @@ const routes = (app, pgPool) => {
 
 
     });
+
+    // ---------- UNFINISHED ---------- //
+    app.get('/historical-volume', async (res, req) => {
+        // Accepts a partyId (optional), a marketId (optional), and a time interval. Returns a historical time series
+        // with data for the requested party and marketId. 
+
+        const result = {
+            volumeList: [
+                {
+                    partyId: "",
+                    marketId: "",
+                    interval: "",
+                    timestamp: "0",
+                    data: [
+                        { timeBucket: "0", volume:"0" }
+                    ]
+                    
+                }
+            ]
+        };
+
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+
+        const args = req.query;
+        const expectedArgs = ['partyId', 'marketId', 'interval'];
+        const defaultArgs = { partyId: undefined, marketId: undefined, interval: "INTERVAL_1H" };
+
+        for (let arg of expectedArgs) {
+            if (!args[arg]) {
+                args[arg] = defaultArgs[arg];
+            };
+        };
+
+        const [ partyId, marketId, interval, limit ] =  [ args.partyId, args.marketId, args.interval, 500 ]
+        // const validIntervals = [ "INTERVAL_5M", "INTERVAL_15M", "INTERVAL_30M", "INTERVAL_1H", "INTERVAL_3H", "INTERVAL_1D" ]
+        const validIntervals = [ "INTERVAL_5M", "INTERVAL_1H", "INTERVAL_1D" ];
+        const validMarkets = (await asyncQuery('getMarkets', ...marketQueries.getMarkets(), pgPool))[1].map(x => x.id);
+        if (!validIntervals.includes(interval)) return res.send(result);
+        if (!validMarkets.includes(marketId)) return res.send(result);
+        if (!partyId) return res.send(result);
+
+        let partyTable, marketTable, bucketSize; 
+        switch (interval) {
+            
+            case ('INTERVAL_5M') : {
+                partyTable = 'party_data_5m';
+                marketTable = 'market_data_5m';
+                bucketSize = '300000000000';
+                break;
+            };
+
+            case ('INTERVAL_1H') : {
+                partyTable = 'party_data_1h';
+                marketTable = 'market_data_1h';
+                bucketSize = '3600000000000';
+                break;
+            };
+
+            case ('INTERVAL_1D') : {
+                partyTable = 'party_data_1d';
+                marketTable = 'market_data_1d';
+                bucketSize = '86400000000000';
+                break;
+            };
+        }
+
+        switch (true) {
+            case (marketId != undefined && partyId != undefined): {
+                // Get volume for party on market
+                const res = await asyncQuery('historical-volume', ...partyQueries.historicalVolume(partyId, marketId, bucketSize, limit, partyTable), pgPool);
+
+                console.log(res);
+
+                // if (!res[1][0].timestamp || !res[1][0].volume) {
+                //     break;
+                // };
+
+                result.volumeList[0].partyId = partyId;
+                result.volumeList[0].marketId = marketId;
+                result.volumeList[0].interval = interval;
+                result.volumeList[0].timestamp = res[1][0][res[1][0].length-1].timestamp;
+                result.volumeList[0].data.shift();
+                for (let datum of res[1][0]) {
+                    result.volumeList[0].data.push(
+                        {
+                            timeBucket: datum.bucket,
+                            volume: (BigInt(datum.volume) + BigInt(datum.self_volume)).toString()
+                        }
+                    )
+                };
+
+                break;
+            };
+
+            case (marketId != undefined && partyId == undefined): {
+                // Get volume for market
+                const res = await asyncQuery('historical-volume', ...marketQueries.historicalVolume(marketId, bucketSize, limit, marketTable), pgPool);
+
+                console.log(res);
+
+                // if (!res[1][0].timestamp || !res[1][0].volume) {
+                //     break;
+                // };
+
+                result.volumeList[0].marketId = marketId;
+                result.volumeList[0].partyId = "*";
+                result.volumeList[0].interval = interval;
+                result.volumeList[0].data.shift();
+                for (let datum of res[1][0]) {
+                    this.volumeList[0].data.push(
+                        {
+                            timeBucket: datum.bucket,
+                            volume: (BigInt(datum.volume) + BigInt(datum.self_volume)).toString()
+                        }
+                    )
+                }
+
+                break;
+            };
+
+            case (marketId == undefined && partyId != undefined): {
+                // Get all volumes for party
+
+                // const res = await asyncQuery('historical-volume', ...partyQueries.allHistoricalVolumes(partyId, bucketSize, limit, partyTable), pgPool);
+                // The above query won't work because postgres GROUP BY treats NULL as a group, this is a problem because
+                // time_bucket_gapfill creates rows that contain NULL values. To rectify this problem we can use the
+                // partyQueries.HistoricalVolume() query instead, but we will have to call it once for each market.
+                const res = await asyncQuery('historical-volume', ...partyQueries.historicalVolume(partyId, marketId, bucketSize, limit, partyTable), pgPool);
+
+                // if (!res[1][0].market_id || !res[1][0].timestamp || !res[1][0].volume) {
+                //     break;
+                // };
+
+                // These results will usually be very sparse, very few traders will have volume
+                // in every interval on every timeframe. We can either return the sparse data or
+                // we can fill the gaps with zeros, for now we will fill the gaps.
+
+                result.volumeList.shift();
+
+                const marketIds = [];
+                const markets = {
+                    marketId: {
+                        partyId: partyId,
+                        marketId: "",
+                        interval: interval,
+                        timestamp: "",
+                        data: [
+                            { timeBucket: "0", volume:"0" }
+                        ]
+                        
+                    }
+                };
+
+                for (let datum of res[1]) {
+
+                    if (!marketIds.includes(datum.market_id)) {
+                        marketIds.push(datum.market_id);
+                        markets.push(
+                            {
+                                partyId: partyId,
+                                marketId: datum.market_id,
+                                interval: interval,
+                                timestamp: "",
+                                data: [
+                                    { timeBucket: "0", volume:"0" }
+                                ]
+                                
+                            }
+                        );
+                    }
+
+                    result.volumeList.push(
+                        {
+                            partyId: partyId,
+                            marketId: market.market_id,
+                            interval: interval,
+                            timestamp: market.timestamp,
+                            data: [
+                                { timeBucket: "0", volume:"0" }
+                            ]
+                            
+                        }
+                    );
+                }
+
+                break;
+            };
+
+            case (marketId == undefined && partyId == undefined): {
+                // Get volumes across all markets
+
+
+                const res = await asyncQuery('volume', ...marketQueries.totalVolume(), pgPool);
+
+                // if (!res[1][0].market_id || !res[1][0].timestamp || !res[1][0].volume) {
+                //     break;
+                // };
+
+                result.volumeList.shift();
+
+                for (let market of res[1]) {
+                    result.volumeList.push(
+                        {
+                            marketId: market.market_id,
+                            partyId: "*",
+                            timestamp: market.timestamp,
+                            volume: market.volume
+                        }
+                    );
+                }
+
+                break;
+            }
+
+        }
+
+
+    });
+
+    // app.get('/global-historical-volume', async (res, req) => {
+    //     // Returns a single time series of the global historical volume on vega.
+
+    // });
 
     // ---------- TEST AGAIN ---------- //
     app.get('/trades-count', async (req, res) => {
@@ -754,6 +980,10 @@ const routes = (app, pgPool) => {
 
     });
 
+    app.get('/historical-trades-count', async (res, req) => {
+
+    });
+
     // ---------- TEST AGAIN ---------- //
     app.get('/open-interest', async (req, res) => {
         // Uses market data updates to keep track of OI, accepts a marketId (optional) as input and
@@ -819,6 +1049,10 @@ const routes = (app, pgPool) => {
         }
 
         res.send(result);
+
+    });
+
+    app.get('/historical-open-interest', async (res, req) => {
 
     });
 
@@ -1110,7 +1344,7 @@ const routes = (app, pgPool) => {
 
         console.log(args);
 
-        const [ marketId, interval, windowLength, limit ] =  [ args.marketId, args.interval, args.windowLength, args.limit ]
+        const [ marketId, interval, windowLength, limit ] =  [ args.marketId, args.interval, args.windowLength, args.limit ];
         let table, bucketSize;
 
         // const validIntervals = [ "INTERVAL_5M", "INTERVAL_15M", "INTERVAL_30M", "INTERVAL_1H", "INTERVAL_3H", "INTERVAL_1D" ]
@@ -1127,19 +1361,19 @@ const routes = (app, pgPool) => {
             
             case ('INTERVAL_5M') : {
                 table = 'candles_5m';
-                bucketSize = 300000000000;
+                bucketSize = '300000000000';
                 break;
             };
 
             case ('INTERVAL_1H') : {
                 table = 'candles_1h';
-                bucketSize = 3600000000000;
+                bucketSize = '3600000000000';
                 break;
             };
 
             case ('INTERVAL_1D') : {
                 table = 'candles_1d';
-                bucketSize = 86400000000000;
+                bucketSize = '86400000000000';
                 break;
             };
         }
@@ -1162,6 +1396,94 @@ const routes = (app, pgPool) => {
         };
 
         res.send(result);
+
+    });
+
+    // ---------- UNTESTED ---------- //
+    app.get('/pnl', async (req, res) => {
+        // Accepts a partyId (mandatory) and a marketId (optional) and returns the most recent
+        // realized and unrealized PnLs for the party on the market. If the marketId is omitted
+        // then the PnLs for that party on all markets are returned. If the partyId is omitted
+        // then an empty result will be returned. If the party has no open positions on a market
+        // then no data is returned for that market.
+
+        const result = {
+            partyId: "",
+            pnlList: [
+                {
+                    marketId: "",
+                    timestamp: "",
+                    realizedPnl: "0",
+                    unrealizedPnl: "0"
+                }
+            ]
+        }
+
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+
+        const expectedArgs = [ 'partyId', 'marketId' ];
+        const defaultArgs = { partyId: undefined, marketId: undefined };
+        const args = req.query;
+        console.log(args);
+
+        for (let arg of expectedArgs) {
+            if (!args[arg]) {
+                args[arg] = defaultArgs[arg];
+            };
+        };
+
+        const [ partyId, marketId ] =  [ args.partyId, args.marketId]
+        const validMarkets = (await asyncQuery('getMarkets', ...marketQueries.getMarkets(), pgPool))[1].map(x => x.id);
+        if (!validMarkets.includes(marketId)) return res.send(result);
+        if (!partyId) return res.send(result);
+
+        switch (true) {
+            case (marketId != undefined): {
+                const res = await asyncQuery('pnl', ...partyQueries.pnls(partyId, marketId), pgPool);
+                if (!res[1][0].party_id) {
+                    break;
+                };
+
+                result.partyId = res[1][0].party_id;
+                result.pnlList[0].marketId = res[1][0].market_id;
+                result.pnlList[0].timestamp = res[1][0].timestamp;
+                result.pnlList[0].realizedPnl = res[1][0].unrealized_pnl;
+                result.pnlList[0].unrealizedPnl = res[1][0].realized_pnl;
+                
+                break;
+            }
+
+            case (marketId == undefined): {
+                const res = await asyncQuery('pnls', ...partyQueries.allPnls(partyId), pgPool);
+                if (!res[1][0].party_id) {
+                    break;
+                };
+
+                result.partyId = res[1][0].party_id;
+                result.pnlList.shift();
+                for (let market of res[1]) {
+                    result.pnlList.push({
+                        marketId: market.market_id,
+                        timestamp: market.timestamp,
+                        realizedPnl: market.unrealized_pnl,
+                        unrealizedPnl: market.realized_pnl
+                    })
+                };
+
+                break;
+            }
+        }
+
+        res.send(result);
+    });
+
+    app.get('/historical-pnl', async (req, res) => {
+        // Accepts a partyId (mandatory), a marketId (optional), and a time interval (optional) and returns
+        // the pnl history for the corresponding party, market, and time interval. If marketId is omitted
+        // then the histories for the party on all markets on which they have pnl history are returned. If the
+        // time interval is omitted then a default value is used. Invalid 
 
     });
 
@@ -1237,11 +1559,11 @@ const routes = (app, pgPool) => {
 
     });
 
-    app.get('/pnl', async (req, res) => {
+    app.get('/unique-traders', async (res, req) => {
 
     });
 
-    app.get('/pnl-history', async (req, res) => {
+    app.get('/unique-depositors', async (res, req) => {
 
     });
 

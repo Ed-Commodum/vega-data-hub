@@ -43,6 +43,9 @@ type KafkaClient struct {
 	writer kafka.Writer
 }
 
+type void struct{}
+var member void
+
 func newSocketServer(addr string) (*SocketServer, error) {
 
 	sock, err := pair.NewSocket()
@@ -150,10 +153,11 @@ func (b Broker) decode(wg *sync.WaitGroup, inCh chan[]byte) chan *eventspb.BusEv
 
 }
 
-func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, deCh chan *eventspb.BusEvent) chan []kafka.Message {
+func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, topicSet map[string]void, deCh chan *eventspb.BusEvent) chan []kafka.Message {
 
 	msgCh := make(chan []kafka.Message)
 	batch := []kafka.Message{}
+	blockCount := -0
 	batchBytesCount := 0
 	tradeCount := 0
 	orderCount := 0
@@ -175,10 +179,6 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, d
 			jsonEvtBytes, err := json.Marshal(evt) // Convert each event into JSON
 			if err != nil {
 				log.Fatal("Failed to marshal bus event to JSON: %w", err)
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_BEGIN_BLOCK" {
-				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.BeginBlock.timestamp`, strconv.FormatInt(evt.GetBeginBlock().Timestamp, 10))
-				jsonEvtBytes = []byte(jsonEvt)
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_TRADE" {
 				tradeCount += 1
@@ -224,22 +224,38 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, d
 			if evtType.String() == "BUS_EVENT_TYPE_ACCOUNT" {
 				accountCount += 1
 			}
-
-			if topic, ok := busEventTopicMap[evtType.String()]; ok {
-				batch = append(batch, kafka.Message{ // Batch messages
-					Topic: topic, // Get the topic based on the evtType
-					Value: jsonEvtBytes, // Add JSON bytes to value field of kafka.Message.
-				})
-				batchBytesCount += len(jsonEvtBytes)
-				if len(jsonEvtBytes) >= 5000 {
-					fmt.Println(string(jsonEvtBytes))
+			if evtType.String() == "BUS_EVENT_TYPE_BEGIN_BLOCK" {
+				blockCount += 1
+				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.BeginBlock.timestamp`, strconv.FormatInt(evt.GetBeginBlock().Timestamp, 10))
+				jsonEvtBytes = []byte(jsonEvt)
+				for topic := range topicSet {
+					batch = append(batch, kafka.Message{
+						Topic: topic,
+						Value: jsonEvtBytes,
+					})
+					batchBytesCount += len(jsonEvtBytes)
+				}
+			} else {
+				if topic, ok := busEventTopicMap[evtType.String()]; ok {
+					batch = append(batch, kafka.Message{ // Batch messages
+						Topic: topic, // Get the topic based on the evtType
+						Value: jsonEvtBytes, // Add JSON bytes to value field of kafka.Message.
+					})
+					batchBytesCount += len(jsonEvtBytes)
+					if len(jsonEvtBytes) >= 5000 {
+						fmt.Println(string(jsonEvtBytes))
+					}
+				} else {
+					// Topic not found for event
 				}
 			}
+
 			if len(batch) >= 1000 { // When batch is a certain size, send it
 				msgCh <- batch
 				batch = nil
 				// fmt.Println(string(jsonEvt))
 				fmt.Println(evt.Id)
+				fmt.Println("Blocks count: ", blockCount)
 				fmt.Println("Bytes count: ", batchBytesCount)
 				fmt.Println("Trade count: ", tradeCount)
 				fmt.Println("Order count: ", orderCount)
@@ -279,6 +295,13 @@ func (kc KafkaClient) send(wg *sync.WaitGroup, msgCh chan []kafka.Message) {
 func (b Broker) start() {
 
 	busEventTopicMap := GetBusEventTopicMap()
+	topicSet := make(map[string]void)
+	for _, v := range busEventTopicMap {
+		if v == "blocks" { continue }
+		topicSet[v] = member
+	}
+
+	fmt.Println(topicSet)
 
 	wg := &sync.WaitGroup{}
 	wg.Add(3)
@@ -293,7 +316,7 @@ func (b Broker) start() {
 	deCh := b.decode(wg, inCh)
 
 	// msgCh := b.format(wg, deCh)
-	msgCh := b.format(wg, busEventTopicMap, deCh)
+	msgCh := b.format(wg, busEventTopicMap, topicSet, deCh)
 
 	b.kc.send(wg, msgCh)
 

@@ -67,6 +67,24 @@ const marketQueries = {
 
         return [ query, [ marketId ] ];
     },
+    historicalVolume(marketId, limit, bucketSize, table) {
+        const fQuery = `
+        SELECT
+            time_bucket_gapfill($2::bigint, bucket) as bucket_gf,
+            CASE WHEN timestamp IS NULL THEN '0' ELSE timestamp END AS timestamp_gf,
+            CASE WHEN volume IS NULL THEN 0 ELSE volume END AS volume_gf
+        FROM %I
+        WHERE market_id = $1
+            AND bucket > first_trade_time($1)
+            AND bucket < most_recent_trade_time($1)
+        ORDER BY bucket_gf
+        LIMIT $3;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ marketId, bucketSize, limit ] ];
+    },
     totalVolume() {
         const query = `
         SELECT
@@ -413,7 +431,11 @@ const partyQueries = {
     },
     volume(partyId, marketId) {
         const query = `
-        SELECT sum(volume) AS volume, sum(self_volume) AS self_volume, max(timestamp) AS timestamp FROM party_data_5m
+        SELECT
+            sum(volume) AS volume,
+            sum(self_volume) AS self_volume,
+            max(timestamp) AS timestamp
+        FROM party_data_5m
         WHERE buyer = $1 OR seller = $1 AND market_id = $2;
         `;
 
@@ -421,11 +443,59 @@ const partyQueries = {
     },
     totalVolume(partyId) {
         const query = `
-        SELECT market_id, sum(volume) AS volume, sum(self_volume) AS self_volume, max(timestamp) AS timestamp FROM party_data_5m
+        SELECT
+            market_id,
+            sum(volume) AS volume,
+            sum(self_volume) AS self_volume,
+            max(timestamp) AS timestamp
+        FROM party_data_5m
         WHERE buyer = $1 OR seller = $1 GROUP BY market_id;
         `;
 
         return [ query, [ partyId ] ];
+    },
+    historicalVolume(partyId, marketId, bucketSize, limit, table) {
+        const fQuery = `
+        SELECT
+            time_bucket_gapfill($3::bigint, bucket) AS bucket_gf,
+            CASE WHEN timestamp IS NULL THEN '0' ELSE locf(timestamp) AS timestamp_gf,
+            CASE WHEN volume IS NULL THEN 0 ELSE volume AS volume_gf,
+            CASE WHEN self_volume IS NULL THEN 0 ELSE self_volume AS self_volume_gf
+        FROM %I
+        WHERE buyer = $1 OR seller = $1
+            AND market_id = $2
+            AND bucket > first_trade_time($2) 
+            AND bucket < most_recent_trade_time($2)
+        GROUP BY bucket_gf
+        ORDER BY bucket_gf
+        LIMIT $3;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ partyId, marketId, bucketSize, limit ] ];
+    },
+    allHistoricalVolumes(partyId, bucketSize, limit, table) {
+        const fQuery = `
+        SELECT
+            time_bucket_gapfill($2::bigint, bucket) as bucket_gf,
+            CASE WHEN market_id IS NULL THEN locf(market_id) ELSE market_id AS market_id,
+            CASE WHEN timestamp IS NULL THEN locf(timestamp) ELSE timestamp AS timestamp,
+            CASE WHEN volume IS NULL THEN 0 ELSE volume AS volume_gf,
+            CASE WHEN self_volume IS NULL THEN 0 ELSE self_volume AS self_volume_gf
+            
+        FROM %I
+        WHERE buyer = $1 OR seller = $1
+            AND bucket > first_trade_time($1)
+            AND bucket < most_recent_trade_time($1)
+        GROUP BY market_id
+        ORDER BY bucket_gf
+        LIMIT $3;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ partyId, bucketSize, limit ] ];
     },
     feesPaid(partyId, marketId) {
         const query = `
@@ -520,7 +590,35 @@ const partyQueries = {
 
         return [ query, [ partyId ] ];
     },
-    historicalPnls() {}
+    pnls(partyId, marketId) {
+        const query = `
+        SELECT 
+            market_id,
+            last(last_timestamp, last_timestamp), as timestamp
+            sum(unrealized_delta) AS unrealized_pnl,
+            sum(realized_delta) AS realized_pnl
+        FROM pnl_deltas_5m
+        WHERE party_id = $1 AND market_id = $2
+        GROUP BY market_id;
+        `;
+
+        return [ query, [ partyId, marketId ]]
+    },
+    allPnls(partyId) {
+        const query = `
+        SELECT 
+            market_id,
+            last(last_timestamp, last_timestamp), as timestamp
+            sum(unrealized_delta) AS unrealized_pnl,
+            sum(realized_delta) AS realized_pnl
+        FROM pnl_deltas_5m
+        WHERE party_id = $1
+        GROUP BY market_id;
+        `;
+
+        return [ query, [ partyId ]]
+    },
+    historicalPnl() {}
 }
 
 const asyncQuery = (type, query, values, pgPool) => {

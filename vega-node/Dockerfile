@@ -80,15 +80,15 @@ RUN touch pass.txt && \
     vega tm init full && \
     sed -i '/Broker\.Socket/,+9{/Broker\.Socket/,+8{b};s/.*/    Enabled = true/}' .config/vega/node/config.toml && \
     sed -i '/Broker\.Socket/,+7{/Broker\.Socket/,+6{b};s/.*/    Address = "broker_address"/}' .config/vega/node/config.toml && \
-    sed -i '/Broker\.Socket/,+5{/Broker\.Socket/,+4{b};s/.*/    SocketChannelBufferSize = 10000/}' .config/vega/node/config.toml && \
+    sed -i '/Broker\.Socket/,+5{/Broker\.Socket/,+4{b};s/.*/    SocketChannelBufferSize = 100000/}' .config/vega/node/config.toml && \
     sed -i '/Snapshot/,+6{/Snapshot/,+5{b};s/.*/  StartHeight = 0/}' .config/vega/node/config.toml && \
     cp fairground-node-config/genesis.json .tendermint/config/genesis.json && \
     # sed -i "/RPCEndpoint =/c\  RPCEndpoint = '$ETH_RPC'" .config/vega/node/config.toml && \
     sed -i "/persistent_peers =/c\persistent_peers = '$PEERS'" .tendermint/config/config.toml && \
     sed -i "/seeds =/c\seeds = '$SEEDS'" .tendermint/config/config.toml && \
-    sed -i "/max_packet_msg_payload_size =/c\max_packet_msg_payload_size = 16384" .tendermint/config/config.toml && \
-    vega nodewallet import --output json --chain tendermint --tendermint-home /home/ian/.tendermint --passphrase-file /home/ian/pass.txt --wallet-passphrase-file /home/ian/pass.txt && \
-    vega nodewallet generate --output json --chain vega --passphrase-file /home/ian/pass.txt --wallet-passphrase-file /home/ian/pass.txt
+    sed -i "/max_packet_msg_payload_size =/c\max_packet_msg_payload_size = 16384" .tendermint/config/config.toml
+    # vega nodewallet import --output json --chain tendermint --tendermint-home /home/ian/.tendermint --passphrase-file /home/ian/pass.txt --wallet-passphrase-file /home/ian/pass.txt && \
+    # vega nodewallet generate --output json --chain vega --passphrase-file /home/ian/pass.txt --wallet-passphrase-file /home/ian/pass.txt
 
 
 # Run the ting

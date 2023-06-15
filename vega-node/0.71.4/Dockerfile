@@ -38,6 +38,7 @@ RUN touch pass.txt && \
     sed -i '/Broker\.Socket/,+9{/Broker\.Socket/,+8{b};s/.*/    Enabled = true/}' .config/vega/node/config.toml && \
     sed -i '/Broker\.Socket/,+7{/Broker\.Socket/,+6{b};s/.*/    Address = "broker_address"/}' .config/vega/node/config.toml && \
     sed -i '/Broker\.Socket/,+5{/Broker\.Socket/,+4{b};s/.*/    SocketChannelBufferSize = 10000/}' .config/vega/node/config.toml && \
+    sed -i '/Snapshot/,+6{/Snapshot/,+5{b};s/.*/  StartHeight = 0/}' .config/vega/node/config.toml && \
     cp node-config/genesis.json .cometbft/config/genesis.json && \
     sed -i "/persistent_peers =/c\persistent_peers = '$PEERS'" .cometbft/config/config.toml && \
     # sed -i "/max_packet_msg_payload_size =/c\max_packet_msg_payload_size = 16384" .tendermint/config/config.toml && \
@@ -50,8 +51,8 @@ RUN visor init --home /home/ian/.visor && \
     sed -i '/args =/c\    args = [ "start" ]' .visor/genesis/run-config.toml && \
     sed -i '/socketPath =/c\    socketPath = "/tmp/vega.sock"' .visor/genesis/run-config.toml && \
     sed -i '/httpPath =/c\    httpPath = "/rpc"' .visor/genesis/run-config.toml && \
-    cp /bin/vega .visor/genesis/vega && \
-    visor --help
+    cp /bin/vega .visor/genesis/vega
+    # visor --help
 
 # Run the ting
 # CMD ["vega", "start"]

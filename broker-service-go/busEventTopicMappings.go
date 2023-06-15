@@ -28,7 +28,6 @@ func GetBusEventTopicMap() map[string]string {
 		"BUS_EVENT_TYPE_BEGIN_BLOCK": "blocks",
 		"BUS_EVENT_TYPE_END_BLOCK": "blocks",
 		"BUS_EVENT_TYPE_TIME_UPDATE": "time_updates",
-		// "BUS_EVENT_TYPE_DISTRESSED_ORDERS_CLOSED": "liquidations",
 		"BUS_EVENT_TYPE_SETTLE_DISTRESSED": "liquidations",
 		"BUS_EVENT_TYPE_WITHDRAWAL": "deposits_withdrawals",
 		"BUS_EVENT_TYPE_DEPOSIT": "deposits_withdrawals",

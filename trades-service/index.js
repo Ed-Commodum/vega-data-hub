@@ -427,7 +427,7 @@ const continuousAggregates = {
                     seller_fee_maker + seller_fee_liquidity) AS fees_paid,
                 max(timestamp) as timestamp
             FROM trades
-            GROUP BY market_id, buyer, seller, time_bucket(300000000000, synth_timestamp);
+            GROUP BY market_id, time_bucket(300000000000, synth_timestamp);
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('market_data_5m',
             start_offset => 2592000000000000,
@@ -450,7 +450,7 @@ const continuousAggregates = {
                 sum(CASE WHEN buyer != seller THEN size ELSE 0 END) AS volume_contracts,
                 sum(CASE WHEN buyer != seller THEN size ELSE 0 END * price) AS volume,
                 sum(CASE WHEN buyer = seller THEN size ELSE 0 END) AS self_volume_contracts,
-                sum(CASE WHEN buyer = seller THEN size ELSE 0 END) AS self_volume,
+                sum(CASE WHEN buyer = seller THEN size ELSE 0 END * price) AS self_volume,
                 sum(buyer_fee_infrastructure + buyer_fee_maker + buyer_fee_liquidity) AS buyer_fee,
                 sum(buyer_fee_infrastructure) as buyer_fee_infrastructure,
                 sum(buyer_fee_maker) as buyer_fee_maker,
@@ -855,29 +855,30 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
     kafkaConsumer.on("message", (msg) => {
         // console.log("New message");
         const evt = JSON.parse(msg.value);
-        // console.log(evt);
-        const trade = evt.Event.Trade;
-        // console.log(mostRecentBeginBlock);
-        // console.log(trade);
+        if (evt.Event.Trade) {
+            // console.log(evt);
+            const trade = evt.Event.Trade;
+            // console.log(mostRecentBeginBlock);
+            // console.log(trade);
 
-        // Extract evt index in block from index
-        const id = evt.id;
-        const idParts = id.split('-');
-        // console.log(idParts);
-        // console.log("Event index: ", idParts[1]);
-        
-        // Create synthetic timestamp for each trade
-        const synthTimestamp = BigInt(trade.timestamp) + BigInt(idParts[1]);
-        // console.log("Timestamp: ", trade.timestamp);
-        // console.log("Synthetic Timestamp: ", synthTimestamp);
-        trade["synth_timestamp"] = synthTimestamp;
+            // Extract evt index in block from index
+            const id = evt.id;
+            const idParts = id.split('-');
+            // console.log(idParts);
+            // console.log("Event index: ", idParts[1]);
+            
+            // Create synthetic timestamp for each trade
+            const synthTimestamp = BigInt(trade.timestamp) + BigInt(idParts[1]);
+            // console.log("Timestamp: ", trade.timestamp);
+            // console.log("Synthetic Timestamp: ", synthTimestamp);
+            trade["synth_timestamp"] = synthTimestamp;
 
-        // convert enum fields to their respective text values
-        trade.type = tradeTypeMappings[trade.type];
-        trade.aggressor = tradeAggressorMappings[trade.aggressor];
+            // convert enum fields to their respective text values
+            trade.type = tradeTypeMappings[trade.type];
+            trade.aggressor = tradeAggressorMappings[trade.aggressor];
 
-        persistTrade(formatTrade(trade));
-
+            persistTrade(formatTrade(trade));
+        }
     });
 };
 

@@ -252,7 +252,7 @@ let rowsForInsertion = 0;
 const flushOrderQueue = () => {
     clearInterval(flushOrderQueueInterval);
 
-    const startTime = performance.now();
+    // const startTime = performance.now();
     let orderCount = 0;
 
     while (orderQueue.length) {
@@ -324,7 +324,7 @@ const flushOrderQueue = () => {
         // while (toInsert.length) toInsert.shift();
     }
 
-    console.log(`${orderCount} orders processed in ${performance.now() - startTime}ms`);
+    // console.log(`${orderCount} orders processed in ${performance.now() - startTime}ms`);
 
     flushOrderQueueInterval = setInterval(flushOrderQueue, 50);
 };
@@ -395,29 +395,35 @@ const setConsumer = () => {
     const options = {
         kafkaHost: kafkaBrokers,
         groupId: 'orders-group',
+        // encoding: 'buffer',
         fetchMaxBytes: 2 * 1024 * 1024
     };
 
     const kafkaConsumer = new kafka.ConsumerGroup(options, ['orders', 'blocks']);
 
-    let startTime = performance.now();
-    let msgCount = 0;
+    // let startTime = performance.now();
+    // let msgCount = 0;
 
     kafkaConsumer.on('message', (msg) => {
 
-        msgCount++;
-        if (msgCount % 1000 == 0) {
-            console.log(`Time to poll 1000 messages: ${performance.now() - startTime}`);
-            startTime = performance.now();
-        }
+        // msgCount++;
+        // if (msgCount % 1000 == 0) {
+        //     console.log(`Time to poll 1000 messages: ${performance.now() - startTime}`);
+        //     startTime = performance.now();
+        // }
 
         const evt = JSON.parse(msg.value);
 
         if (msg.topic == "blocks") {
+            // console.log(msg);
             if (evt.Event.BeginBlock) recentBlocks.push(evt.Event.BeginBlock);
         }
 
         if (msg.topic == "orders") {
+
+            if (evt.Event.BeginBlock) {
+                recentBlocks.push(evt.Event.BeginBlock);
+            }
 
             if (evt.Event.Order) {
                 // console.log(evt);
@@ -715,18 +721,18 @@ const persistOrder = (item) => {
 
 const persistOrders = (items) => {
 
-    const startTime = performance.now();
+    // const startTime = performance.now();
     const numItems = items.length;
 
     const formatted = format(fInsertOrderUpdate, items);
-    console.log(`Took ${performance.now() - startTime}ms to formate ${numItems} order updates.`)
+    // console.log(`Took ${performance.now() - startTime}ms to formate ${numItems} order updates.`)
 
     pgPool.query(formatted, [], (err, res) => {
         if (err) {
             console.log(`Error performing inserts`);
             console.log(err);
         } else {
-            console.log(`Took ${performance.now() - startTime}ms to insert ${numItems} order updates`);
+            // console.log(`Took ${performance.now() - startTime}ms to insert ${numItems} order updates`);
             // console.log("Order Insertions successful");
         }
     });
@@ -739,16 +745,16 @@ const persistOrders = (items) => {
 
 const persistDiffs = (diffs) => {
 
-    const startTime = performance.now();
+    // const startTime = performance.now();
     const numDiffs = diffs.length;
 
     const formatted = format(fInsertDiffs, diffs);
-    console.log(`Took ${performance.now() - startTime}ms to formate ${numDiffs} diffs.`)
+    // console.log(`Took ${performance.now() - startTime}ms to formate ${numDiffs} diffs.`)
 
     pgPool.query(formatted, [], (err, res) => {
         if (!err) {
             // console.log("Diff insertions successful");
-            console.log(`Took ${performance.now() - startTime}ms to insert ${numDiffs} orderbook diffs`);
+            // console.log(`Took ${performance.now() - startTime}ms to insert ${numDiffs} orderbook diffs`);
         } else {
             console.log(`Error performing inserts: `, err);
         }
@@ -758,4 +764,4 @@ const persistDiffs = (diffs) => {
 
 
 
-setTimeout(start, 38000);
+setTimeout(start, 39000);

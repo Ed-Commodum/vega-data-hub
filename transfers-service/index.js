@@ -156,12 +156,16 @@ const continuousAggregates = {
             WITH (timescaledb.continuous) AS
             SELECT market_id,
                 time_bucket(300000000000, synth_timestamp) AS bucket,
-                from_account_owner as loser,
-                to_account_owner as gainer,
-                sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MTM_WIN') as unrealized_gain,
-                sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MTM_LOSS') as unrealized_loss,
-                sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_WIN') AS relaized_gain,
-                sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_LOSS') as realized_loss
+                CASE
+                    WHEN type = 'TRANSFER_TYPE_MTM_LOSS' THEN from_account_owner
+                    WHEN type = 'TRANSFER_TYPE_MTM_WIN' THEN to_account_owner
+                    WHEN type = 'TRANSFER_TYPE_LOSS' THEN from_account_owner
+                    WHEN type = 'TRANSFER_TYPE_WIN' THEN to_account_owner
+                END as party_id,
+                sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MTM_WIN') as sum_unrealized_gain,
+                sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MTM_LOSS') as sum_unrealized_loss,
+                sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_WIN') AS sum_realized_gain,
+                sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_LOSS') as sum_realized_loss
             FROM ledger_movements
             GROUP BY market_id, party_id, time_bucket(300000000000, synth_timestamp);
             `,
@@ -172,6 +176,56 @@ const continuousAggregates = {
         },
         // interval_1h: {},
         // intervaln_1d: {}
+    },
+    pnlDeltas: {
+        interval_5m: {
+            createMatView: `
+            CREATE MATERIALIZED VIEW pnl_deltas_5m
+            WITH (timescaledb.continuous) AS
+            SELECT
+                to_account_market as market_id,
+                time_bucket(300000000000, synth_timestamp) as bucket,
+                CASE
+                    WHEN type = 'TRANSFER_TYPE_MTM_LOSS' THEN from_account_owner
+                    WHEN type = 'TRANSFER_TYPE_MTM_WIN' THEN to_account_owner
+                    WHEN type = 'TRANSFER_TYPE_LOSS' THEN from_account_owner
+                    WHEN type = 'TRANSFER_TYPE_WIN' THEN to_account_owner
+                END as party_id,
+                (sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MTM_WIN') - sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MTM_LOSS')) as unrealized_delta,
+                (sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_WIN') - sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_LOSS')) as realized_delta,
+                last(timestamp, timestamp) as last_timestamp
+            FROM ledger_movements
+            GROUP BY market_id, party_id, time_bucket(300000000000, synth_timestamp);
+            `,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('pnl_deltas_5m',
+            start_offset => '2592000000000000'::bigint,
+            end_offset => '60000000000'::bigint,
+            schedule_interval => INTERVAL '1 minute');`
+        },
+        interval_1h: {
+            createMatView: `
+            CREATE MATERIALIZED VIEW pnl_deltas_1h
+            WITH (timescaledb.continuous) AS
+            SELECT
+                to_account_market as market_id,
+                time_bucket(3600000000000, bucket) as bucket,
+                CASE
+                    WHEN type = 'TRANSFER_TYPE_MTM_LOSS' THEN from_account_owner
+                    WHEN type = 'TRANSFER_TYPE_MTM_WIN' THEN to_account_owner
+                    WHEN type = 'TRANSFER_TYPE_LOSS' THEN from_account_owner
+                    WHEN type = 'TRANSFER_TYPE_WIN' THEN to_account_owner
+                END as party_id,
+                (sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MTM_WIN') - sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MTM_LOSS')) as unrealized_delta,
+                (sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_WIN') - sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_LOSS')) as realized_delta,
+                last(timestamp, timestamp) as last_timestamp
+            FROM ledger_movements
+            GROUP BY market_id, party_id, time_bucket(3600000000000, synth_timestamp);
+            `,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('pnl_deltas_1h',
+            start_offset => '2592000000000000'::bigint,
+            end_offset => '60000000000'::bigint,
+            schedule_interval => INTERVAL '1 minute');`
+        }
     },
     marginAdditions: {
         interval_5m: {
@@ -306,7 +360,7 @@ const continuousAggregates = {
             FROM ledger_movements
             GROUP BY market_id, party_id, asset, time_bucket(300000000000, synth_timestamp);
             `,
-            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('fees_paid_5m',
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('fees_earned_5m',
             start_offset => '2592000000000000'::bigint,
             end_offset => '60000000000'::bigint,
             schedule_interval => INTERVAL '1 minute');`
@@ -448,7 +502,7 @@ const start = () => {
                     pgClient.query(setIntegerNowFunc, (err, res) => {
                         if(!err) {
                             console.log(res);
-                            createContAggs(pgPool, ["feesPaid", "feesEarned"]);
+                            createContAggs(pgPool, ["feesPaid", "feesEarned", "pnlDeltas"]);
                             
                         } else {
                             console.log(err);
@@ -483,7 +537,7 @@ const start = () => {
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "blocks" },{ topic: "transfers" }], { groupId: "transfers-group", fetchMaxBytes: 2 * 1024 * 1024 });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "transfers" }], { groupId: "transfers-group", fetchMaxBytes: 2 * 1024 * 1024 });
     kafkaConsumer.on("message", (msg) => {
 
         // const dateTime = new Date(Date.now()).toISOString();
@@ -491,24 +545,15 @@ const setConsumer = (kafkaConsumer) => {
 
         const evt = JSON.parse(msg.value);
 
-        if (msg.topic == "blocks") {
-            // const evt = JSON.parse(msg.value);
-            // console.log(evt);
-            
-            if (evt.Event.BeginBlock) {
-                evt.Event.BeginBlock["ledger_movement_count"] = 0;
-                recentBlocks.push(evt.Event.BeginBlock);
-            }
-        }
-
         if (msg.topic == "transfers") {
             
             // const evt = JSON.parse(msg.value);
             // console.log(evt);
             // console.dir(evt, { depth: null });
 
-            if (evt.transfer) {
-
+            if (evt.Event.BeginBlock) {
+                evt.Event.BeginBlock["ledger_movement_count"] = 0;
+                recentBlocks.push(evt.Event.BeginBlock);   
             }
 
             if (evt.Event.LedgerMovements) {
