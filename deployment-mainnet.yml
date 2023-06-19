@@ -1,0 +1,377 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: timescaledb-service
+  name: timescaledb-service
+spec:
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    app: timescaledb
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: timescaledb
+  name: timescaledb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: timescaledb
+  template:
+    metadata:
+      labels:
+        app: timescaledb
+    spec:
+      containers:
+      - name: timescaledb
+        # image: timescale/timescaledb:latest-pg14
+        image: timescale/timescaledb-ha:pg14-latest
+        imagePullPolicy: Always 
+        ports:
+        - containerPort: 5432
+        resources:
+          limits:
+            cpu: 1300m
+            memory: 3.5Gi
+          requests:
+            cpu: 1300m
+            memory: 3.5Gi
+        env:
+        - name: POSTGRES_PASSWORD
+          value: ilovetimescaledb
+        args:
+          - '-cmax_connections=75'
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper-service
+  labels:
+    app: zookeeper
+spec:
+  ports:
+  - port: 2181
+  selector:
+    app: zookeeper
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zookeeper-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+    spec:
+      containers:
+      - name: zookeeper
+        image: ubuntu/zookeeper:edge
+        ports:
+        - containerPort: 2181
+          name: zookeeper
+          protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-service
+  labels:
+    app: kafka-pod
+spec:
+  ports:
+    - port: 9092
+      targetPort: 9093
+  selector:
+    app: kafka-pod
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kafka-pod
+  labels:
+    app: kafka-pod
+spec:
+  volumes:
+  - name: kafka-pv-storage
+    persistentVolumeClaim:
+      claimName: kafka-pv-claim
+  restartPolicy: Never
+  containers:
+  - name: kafka
+    image: ubuntu/kafka:latest
+    resources:
+      limits:
+        cpu: 800m
+        memory: 2000Mi
+      requests:
+        cpu: 800m
+        memory: 2000Mi
+    env:
+    - name: ZOOKEEPER_HOST
+      value: zookeeper-service
+    args: [ "/etc/kafka/server.properties", "--override", "advertised.listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://kafka-service:9092", "--override", "listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://0.0.0.0:9093", "--override", "listener.security.protocol.map=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT", "--override", "inter.broker.listener.name=INTERNAL", "--override", "message.max.bytes=2097152" ]
+    ports:
+    - containerPort: 9092
+      name: kafka
+      protocol: TCP
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: kafka-pv-volume
+spec:
+  capacity:
+    storage: 8Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/kafka-data"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kafka-pv-claim
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: trades
+  name: trades
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trades
+  template:
+    metadata:
+      labels:
+        app: trades
+    spec:
+      containers:
+      - name: trades
+        image: data-hub/trades
+        imagePullPolicy: Never
+        env:
+        - name: KAFKA_SERVICE
+          value: kafka-service
+        - name: KAFKA_BROKERS
+          value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+        - name: TIMESCALEDB_HOST
+          value: timescaledb-service
+        - name: TIMESCALEDB_PORT
+          value: "5432"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: api-service
+  name: api-service
+spec:
+  ports:
+    - port: 8080
+      targetPort: 8080
+  selector:
+    app: api
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: api
+  name: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+      - name: api
+        image: data-hub/api
+        imagePullPolicy: Never 
+        ports:
+        - containerPort: 8080
+        env:
+        - name: TIMESCALEDB_HOST
+          value: timescaledb-service
+        - name: TIMESCALEDB_PORT
+          value: "5432"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vega-node-pod
+  labels:
+    app: vega-node-pod
+spec:
+  volumes:
+  - name: vega-node-pv-storage
+    persistentVolumeClaim:
+      claimName: vega-node-pv-claim
+  restartPolicy: Never
+  initContainers:
+  - name: init-vega-node
+    image: data-hub/vega-node
+    imagePullPolicy: Never
+    command: ["/bin/bash", "-c", "id && ls -al /home/ian && ls -al /mnt/vega-data && cp -r /home/ian/. /mnt/vega-data/"]
+    volumeMounts:
+    - name: vega-node-pv-storage
+      mountPath: /mnt/vega-data
+  containers:
+  - name: vega-node
+    image: data-hub/vega-node-mainnet
+    imagePullPolicy: Never
+    resources:
+      limits:
+        cpu: 800m
+      requests:
+        cpu: 800m
+    volumeMounts:
+      - mountPath: /home/ian
+        name: vega-node-pv-storage
+    securityContext:
+      runAsUser: 1000
+    command: [ "/bin/bash" ]
+    args: [ "-c", 'id && pwd && ls -al . && ls -al .. && sed -i ''/Broker\.Socket/,+7{/Broker\.Socket/,+6{b};s/.*/    Address = ''"\"$BROKER_SERVICE_SERVICE_HOST\""''/}'' .config/vega/node/config.toml; /bin/vega start' ]
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: vega-node-pv-volume
+  annotations:
+    pv.beta.kubernetes.io/gid: "1000"
+spec:
+  storageClassName: ""
+  capacity:
+    storage: 40Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/vega-node-data"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vega-node-pv-claim
+spec:
+  storageClassName: ""
+  volumeName: vega-node-pv-volume
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 35Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: broker-service
+  name: broker-service
+spec:
+  ports:
+    - port: 3005
+      targetPort: 3005
+  selector:
+    app: broker-go-pod
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: broker-go-pod
+  labels:
+    app: broker-go-pod
+spec:
+  restartPolicy: Never
+  containers:
+  - name: broker-go
+    image: data-hub/broker-go
+    imagePullPolicy: Never
+    resources:
+      limits:
+        cpu: 600m
+      requests:
+        cpu: 600m
+    env:
+    - name: KAFKA_BROKERS
+      value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: markets-pod
+  labels:
+    app: markets-pod
+spec:
+  restartPolicy: Never
+  containers:
+  - name: markets
+    image: data-hub/markets
+    imagePullPolicy: Never
+    env:
+    - name: KAFKA_BROKERS
+      value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+    - name: TIMESCALEDB_HOST
+      value: timescaledb-service
+    - name: TIMESCALEDB_PORT
+      value: "5432"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: assets-pod
+  labels:
+    app: assets-pod
+spec:
+  restartPolicy: Never
+  containers:
+  - name: assets
+    image: data-hub/assets
+    imagePullPolicy: Never
+    env:
+    - name: KAFKA_BROKERS
+      value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+    - name: TIMESCALEDB_HOST
+      value: timescaledb-service
+    - name: TIMESCALEDB_PORT
+      value: "5432"
+---
+# ---
+# apiVersion: v1
+# kind: Pod
+# metadata:
+#   name: data-access
+# spec:
+#   containers:
+#   - name: alpine
+#     image: alpine:latest
+#     command: ['sleep', 'infinity']
+#     volumeMounts:
+#     - name: vega-node-pv-storage
+#       mountPath: /data
+#   volumes:
+#   - name: vega-node-pv-storage
+#     persistentVolumeClaim:
+#       claimName: vega-node-pv-claim

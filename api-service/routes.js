@@ -522,6 +522,70 @@ const routes = (app, pgPool) => {
 
     */
 
+    app.gate('/decimals', async () => {
+        // Accepts a marketId (optional) and returns the decimal information for that market. If the marketId is
+        // omitted then the decimal information for all markets is returned.
+
+        const result = {
+            markets: [
+                {
+                    marketId: "",
+                    settlementAsset: "",
+                    quoteName: "",
+                    priceDecimals: "",
+                    positionDecimals: ""
+                }
+            ]
+        };
+
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+
+        const marketId = req.query.marketId;
+        
+        switch (true) {
+            
+            case (marketId != undefined): {
+                // Return data for one market
+                const res = await asyncQuery('market-decimals', ...marketQueries.getDecimals(marketId), pgPool);
+
+                result.markets[0].marketId = res[1][0].market_id;
+                result.markets[0].settlementAsset = res[1][0].future_settlement_asset;
+                result.markets[0].quoteName = res[1][0].future_quote_name;
+                result.markets[0].priceDecimals = res[1][0].decimal_places;
+                result.markets[0].positionDecimals = res[1][0].position_decimal_places;
+
+                break;
+            }
+
+            case (marketId == undefined): {
+                // Return data for all markets
+                const res = await asyncQuery('market-decimals', ...marketQueries.getAllDecimals(), pgPool);
+
+                result.markets.shift();
+
+                for (let market of res[1]) {
+                    result.markets.push(
+                        {
+                            marketId: market.market_id,
+                            settlementAsset: market.future_settlement_asset,
+                            quoteName: market.future_quote_name,
+                            priceDecimals: market.decimal_places,
+                            positionDecimals: market.position_decimal_places
+
+                        }
+                    )
+                }
+                
+                break;
+            }
+        }
+
+        res.send(result);
+
+    });
+
     // ---------- TEST AGAIN ---------- //
     app.get('/volume', async (req, res) => {
         // Takes a marketId (optional) and a partyId (optional) and returns the most recent cumulative volume
@@ -732,7 +796,7 @@ const routes = (app, pgPool) => {
         switch (true) {
             case (marketId != undefined && partyId != undefined): {
                 // Get volume for party on market
-                const res = await asyncQuery('historical-volume', ...partyQueries.historicalVolume(partyId, marketId, bucketSize, limit, partyTable), pgPool);
+                const res = await asyncQuery('historicalVolume', ...partyQueries.historicalVolume(partyId, marketId, bucketSize, limit, partyTable), pgPool);
 
                 console.log(res);
 
@@ -759,7 +823,7 @@ const routes = (app, pgPool) => {
 
             case (marketId != undefined && partyId == undefined): {
                 // Get volume for market
-                const res = await asyncQuery('historical-volume', ...marketQueries.historicalVolume(marketId, bucketSize, limit, marketTable), pgPool);
+                const res = await asyncQuery('historicalVolume', ...marketQueries.historicalVolume(marketId, bucketSize, limit, marketTable), pgPool);
 
                 console.log(res);
 
@@ -790,7 +854,15 @@ const routes = (app, pgPool) => {
                 // The above query won't work because postgres GROUP BY treats NULL as a group, this is a problem because
                 // time_bucket_gapfill creates rows that contain NULL values. To rectify this problem we can use the
                 // partyQueries.HistoricalVolume() query instead, but we will have to call it once for each market.
-                const res = await asyncQuery('historical-volume', ...partyQueries.historicalVolume(partyId, marketId, bucketSize, limit, partyTable), pgPool);
+                const marketRes = await asyncQuery('getMarkets', ...marketQueries.getMarkets(), pgPool);
+
+                console.log(marketRes[1]);
+
+                for (let marketId of marketRes[1]) {
+                    
+                }
+
+                const res = await asyncQuery('historicalVolume', ...partyQueries.historicalVolume(partyId, marketId, bucketSize, limit, partyTable), pgPool);
 
                 // if (!res[1][0].market_id || !res[1][0].timestamp || !res[1][0].volume) {
                 //     break;

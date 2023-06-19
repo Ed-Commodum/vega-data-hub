@@ -171,8 +171,9 @@ const setConsumer = (kafkaConsumer) => {
 
 
         if (msg.topic == "markets") {
-            
+        
             const evt = JSON.parse(msg.value);
+            if (evt.Event.BeginBlock) return;
             
             // console.log(evt);
             console.dir(evt, { depth: null });

@@ -44,6 +44,41 @@ const marketQueries = {
 
         return [ query, [ ] ];
     },
+    getDecimals(marketId) {
+        const query = `
+        SELECT
+            id AS market_id,
+            decimal_places,
+            position_decimal_places,
+            future_settlement_asset,
+            future_quote_name
+        FROM markets
+        WHERE
+            id = $1 AND
+            state != 'STATE_PROPOSED' AND
+            state != 'STATE_REJECTED' AND
+            state != 'STATE_CANCELLED';
+        `;
+
+        return [ query, [ marketId ] ];
+    },
+    getAllDecimals() {
+        const query = `
+        SELECT
+            id AS market_id,
+            decimal_places,
+            position_decimal_places,
+            future_settlement_asset,
+            future_quote_name
+        FROM markets
+        WHERE
+            state != 'STATE_PROPOSED' AND
+            state != 'STATE_REJECTED' AND
+            state != 'STATE_CANCELLED';
+        `;
+
+        retun [ query, [ ] ];
+    },
     numTrades(marketId) {
         const query = `
         SELECT sum(num_trades) AS num_trades, max(timestamp) AS timestamp FROM market_data_5m
