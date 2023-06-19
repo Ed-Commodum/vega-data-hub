@@ -2,45 +2,45 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    app: timescaledb-service
-  name: timescaledb-service
+    app: timescaledb-service-mainnet
+  name: timescaledb-service-mainnet
 spec:
   ports:
     - port: 5432
       targetPort: 5432
   selector:
-    app: timescaledb
+    app: timescaledb-mainnet
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
-    app: timescaledb
-  name: timescaledb
+    app: timescaledb-mainnet
+  name: timescaledb-mainnet
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: timescaledb
+      app: timescaledb-mainnet
   template:
     metadata:
       labels:
-        app: timescaledb
+        app: timescaledb-mainnet
     spec:
       containers:
-      - name: timescaledb
+      - name: timescaledb-mainnet
         # image: timescale/timescaledb:latest-pg14
         image: timescale/timescaledb-ha:pg14-latest
-        imagePullPolicy: Always 
+        imagePullPolicy: Always
         ports:
         - containerPort: 5432
         resources:
           limits:
-            cpu: 1300m
-            memory: 3.5Gi
+            cpu: 600m
+            memory: 1.5Gi
           requests:
-            cpu: 1300m
-            memory: 3.5Gi
+            cpu: 600m
+            memory: 1.5Gi
         env:
         - name: POSTGRES_PASSWORD
           value: ilovetimescaledb
@@ -50,75 +50,75 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: zookeeper-service
+  name: zookeeper-service-mainnet
   labels:
-    app: zookeeper
+    app: zookeeper-mainnet
 spec:
   ports:
   - port: 2181
   selector:
-    app: zookeeper
+    app: zookeeper-mainnet
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: zookeeper-deployment
+  name: zookeeper-deployment-mainnet
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: zookeeper
+      app: zookeeper-mainnet
   template:
     metadata:
       labels:
-        app: zookeeper
+        app: zookeeper-mainnet
     spec:
       containers:
-      - name: zookeeper
+      - name: zookeeper-mainnet
         image: ubuntu/zookeeper:edge
         ports:
         - containerPort: 2181
-          name: zookeeper
+          name: zookeeper-mainnet
           protocol: TCP
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: kafka-service
+  name: kafka-service-mainnet
   labels:
-    app: kafka-pod
+    app: kafka-pod-mainnet
 spec:
   ports:
     - port: 9092
       targetPort: 9093
   selector:
-    app: kafka-pod
+    app: kafka-pod-mainnet
 ---
 apiVersion: v1
 kind: Pod
 metadata:
-  name: kafka-pod
+  name: kafka-pod-mainnet
   labels:
-    app: kafka-pod
+    app: kafka-pod-mainnet
 spec:
   volumes:
   - name: kafka-pv-storage
     persistentVolumeClaim:
-      claimName: kafka-pv-claim
+      claimName: kafka-pv-claim-mainnet
   restartPolicy: Never
   containers:
   - name: kafka
     image: ubuntu/kafka:latest
     resources:
       limits:
-        cpu: 800m
-        memory: 2000Mi
+        cpu: 600m
+        memory: 1300Mi
       requests:
-        cpu: 800m
-        memory: 2000Mi
+        cpu: 600m
+        memory: 1300Mi
     env:
     - name: ZOOKEEPER_HOST
-      value: zookeeper-service
+      value: zookeeper-service-mainnet
     args: [ "/etc/kafka/server.properties", "--override", "advertised.listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://kafka-service:9092", "--override", "listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://0.0.0.0:9093", "--override", "listener.security.protocol.map=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT", "--override", "inter.broker.listener.name=INTERNAL", "--override", "message.max.bytes=2097152" ]
     ports:
     - containerPort: 9092
@@ -128,19 +128,19 @@ spec:
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: kafka-pv-volume
+  name: kafka-pv-volume-mainnet
 spec:
   capacity:
     storage: 8Gi
   accessModes:
     - ReadWriteOnce
   hostPath:
-    path: "/mnt/kafka-data"
+    path: "/mnt/kafka-data-mainnet"
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: kafka-pv-claim
+  name: kafka-pv-claim-mainnet
 spec:
   accessModes:
     - ReadWriteOnce
@@ -152,29 +152,29 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
-    app: trades
-  name: trades
+    app: trades-mainnet
+  name: trades-mainnet
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: trades
+      app: trades-mainnet
   template:
     metadata:
       labels:
-        app: trades
+        app: trades-mainnet
     spec:
       containers:
-      - name: trades
-        image: data-hub/trades
+      - name: trades-mainnet
+        image: data-hub/trades-mainnet
         imagePullPolicy: Never
         env:
         - name: KAFKA_SERVICE
-          value: kafka-service
+          value: kafka-service-mainnet
         - name: KAFKA_BROKERS
-          value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+          value: "$(KAFKA_SERVICE_MAINNET_SERVICE_HOST):9092"
         - name: TIMESCALEDB_HOST
-          value: timescaledb-service
+          value: timescaledb-service-mainnet
         - name: TIMESCALEDB_PORT
           value: "5432"
 ---
@@ -182,84 +182,84 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    app: api-service
-  name: api-service
+    app: api-service-mainnet
+  name: api-service-mainnet
 spec:
   ports:
     - port: 8080
       targetPort: 8080
   selector:
-    app: api
+    app: api-mainnet
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
-    app: api
-  name: api
+    app: api-mainnet
+  name: api-mainnet
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: api
+      app: api-mainnet
   template:
     metadata:
       labels:
-        app: api
+        app: api-mainnet
     spec:
       containers:
-      - name: api
-        image: data-hub/api
+      - name: api-mainnet
+        image: data-hub/api-mainnet
         imagePullPolicy: Never 
         ports:
         - containerPort: 8080
         env:
         - name: TIMESCALEDB_HOST
-          value: timescaledb-service
+          value: timescaledb-service-mainnet
         - name: TIMESCALEDB_PORT
           value: "5432"
 ---
 apiVersion: v1
 kind: Pod
 metadata:
-  name: vega-node-pod
+  name: vega-node-pod-mainnet
   labels:
-    app: vega-node-pod
+    app: vega-node-pod-mainnet
 spec:
   volumes:
-  - name: vega-node-pv-storage
+  - name: vega-node-pv-storage-mainnet
     persistentVolumeClaim:
-      claimName: vega-node-pv-claim
+      claimName: vega-node-pv-claim-mainnet
   restartPolicy: Never
   initContainers:
-  - name: init-vega-node
-    image: data-hub/vega-node
+  - name: init-vega-node-mainnet
+    image: data-hub/vega-node-mainnet
     imagePullPolicy: Never
     command: ["/bin/bash", "-c", "id && ls -al /home/ian && ls -al /mnt/vega-data && cp -r /home/ian/. /mnt/vega-data/"]
     volumeMounts:
-    - name: vega-node-pv-storage
-      mountPath: /mnt/vega-data
+    - name: vega-node-pv-storage-mainnet
+      mountPath: /mnt/vega-data-mainnet
   containers:
-  - name: vega-node
+  - name: vega-node-mainnet
     image: data-hub/vega-node-mainnet
     imagePullPolicy: Never
     resources:
       limits:
-        cpu: 800m
+        cpu: 700m
       requests:
-        cpu: 800m
+        cpu: 700m
     volumeMounts:
       - mountPath: /home/ian
-        name: vega-node-pv-storage
+        name: vega-node-pv-storage-mainnet
     securityContext:
       runAsUser: 1000
     command: [ "/bin/bash" ]
-    args: [ "-c", 'id && pwd && ls -al . && ls -al .. && sed -i ''/Broker\.Socket/,+7{/Broker\.Socket/,+6{b};s/.*/    Address = ''"\"$BROKER_SERVICE_SERVICE_HOST\""''/}'' .config/vega/node/config.toml; /bin/vega start' ]
+    args: [ "-c", 'id && pwd && ls -al . && ls -al .. && sed -i ''/Broker\.Socket/,+7{/Broker\.Socket/,+6{b};s/.*/    Address = ''"\"$BROKER_SERVICE_MAINNET_SERVICE_HOST\""''/}'' .config/vega/node/config.toml; /bin/vega start' ]
 ---
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: vega-node-pv-volume
+  name: vega-node-pv-volume-mainnet
   annotations:
     pv.beta.kubernetes.io/gid: "1000"
 spec:
@@ -269,15 +269,15 @@ spec:
   accessModes:
     - ReadWriteOnce
   hostPath:
-    path: "/mnt/vega-node-data"
+    path: "/mnt/vega-node-data-mainnet"
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: vega-node-pv-claim
+  name: vega-node-pv-claim-mainnet
 spec:
   storageClassName: ""
-  volumeName: vega-node-pv-volume
+  volumeName: vega-node-pv-volume-mainnet
   accessModes:
     - ReadWriteOnce
   resources:
@@ -288,73 +288,73 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    app: broker-service
-  name: broker-service
+    app: broker-service-mainnet
+  name: broker-service-mainnet
 spec:
   ports:
     - port: 3005
       targetPort: 3005
   selector:
-    app: broker-go-pod
+    app: broker-go-pod-mainnet
 ---
 apiVersion: v1
 kind: Pod
 metadata:
-  name: broker-go-pod
+  name: broker-go-pod-mainnet
   labels:
-    app: broker-go-pod
+    app: broker-go-pod-mainnet
 spec:
   restartPolicy: Never
   containers:
-  - name: broker-go
-    image: data-hub/broker-go
+  - name: broker-go-mainnet
+    image: data-hub/broker-go-mainnet
     imagePullPolicy: Never
     resources:
       limits:
-        cpu: 600m
+        cpu: 500m
       requests:
-        cpu: 600m
+        cpu: 500m
     env:
     - name: KAFKA_BROKERS
-      value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+      value: "$(KAFKA_SERVICE_MAINNET_SERVICE_HOST):9092"
 ---
 apiVersion: v1
 kind: Pod
 metadata:
-  name: markets-pod
+  name: markets-pod-mainnet
   labels:
-    app: markets-pod
+    app: markets-pod-mainnet
 spec:
   restartPolicy: Never
   containers:
-  - name: markets
-    image: data-hub/markets
+  - name: markets-mainnet
+    image: data-hub/markets-mainnet
     imagePullPolicy: Never
     env:
     - name: KAFKA_BROKERS
-      value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+      value: "$(KAFKA_SERVICE_MAINNET_SERVICE_HOST):9092"
     - name: TIMESCALEDB_HOST
-      value: timescaledb-service
+      value: timescaledb-service-mainnet
     - name: TIMESCALEDB_PORT
       value: "5432"
 ---
 apiVersion: v1
 kind: Pod
 metadata:
-  name: assets-pod
+  name: assets-pod-mainnet
   labels:
-    app: assets-pod
+    app: assets-pod-mainnet
 spec:
   restartPolicy: Never
   containers:
-  - name: assets
-    image: data-hub/assets
+  - name: assets-mainnet
+    image: data-hub/assets-mainnet
     imagePullPolicy: Never
     env:
     - name: KAFKA_BROKERS
-      value: "$(KAFKA_SERVICE_SERVICE_HOST):9092"
+      value: "$(KAFKA_SERVICE_MAINNET_SERVICE_HOST):9092"
     - name: TIMESCALEDB_HOST
-      value: timescaledb-service
+      value: timescaledb-service-mainnet
     - name: TIMESCALEDB_PORT
       value: "5432"
 ---

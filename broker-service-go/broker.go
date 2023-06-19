@@ -157,7 +157,7 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 
 	msgCh := make(chan []kafka.Message)
 	batch := []kafka.Message{}
-	blockCount := -0
+	blockCount := -1
 	batchBytesCount := 0
 	tradeCount := 0
 	orderCount := 0
@@ -186,15 +186,18 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 				jsonEvtBytes = []byte(jsonEvt)
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_ORDER" {
+				continue
 				orderCount += 1
 				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.Order.created_at`, strconv.FormatInt(evt.GetOrder().CreatedAt, 10))
 				jsonEvt, _ = sjson.Set(jsonEvt, `Event.Order.updated_at`, strconv.FormatInt(evt.GetOrder().UpdatedAt, 10))
 				jsonEvtBytes = []byte(jsonEvt)
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_POSITION_STATE" {
+				continue
 				posStateCount += 1
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_MARKET_DATA" {
+				continue
 				marketDataCount += 1
 				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.MarketData.timestamp`, strconv.FormatInt(evt.GetMarketData().Timestamp, 10))
 				jsonEvt, _ = sjson.Set(jsonEvt, `Event.MarketData.next_mark_to_market`, strconv.FormatInt(evt.GetMarketData().NextMarkToMarket, 10))
@@ -207,21 +210,25 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 				marketCount += 1
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_LEDGER_MOVEMENTS" {
+				continue
 				ledgerMovementsCount += 1
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_DEPOSIT" {
+				continue
 				depositWithdrawalCount += 1
 				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.Deposit.created_timestamp`, strconv.FormatInt(evt.GetDeposit().CreatedTimestamp, 10))
 				jsonEvt, _ = sjson.Set(jsonEvt, `Event.Deposit.credited_timestamp`, strconv.FormatInt(evt.GetDeposit().CreditedTimestamp, 10))
 				jsonEvtBytes = []byte(jsonEvt)
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_WITHDRAWAL" {
+				continue
 				depositWithdrawalCount += 1
 				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.Withdrawal.created_timestamp`, strconv.FormatInt(evt.GetWithdrawal().CreatedTimestamp, 10))
 				jsonEvt, _ = sjson.Set(jsonEvt, `Event.Withdrawal.withdrawn_timestamp`, strconv.FormatInt(evt.GetWithdrawal().WithdrawnTimestamp, 10))
 				jsonEvtBytes = []byte(jsonEvt)
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_ACCOUNT" {
+				continue
 				accountCount += 1
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_BEGIN_BLOCK" {
@@ -250,7 +257,7 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 				}
 			}
 
-			if len(batch) >= 1000 { // When batch is a certain size, send it
+			if len(batch) >= 50 { // When batch is a certain size, send it
 				msgCh <- batch
 				batch = nil
 				// fmt.Println(string(jsonEvt))
