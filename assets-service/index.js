@@ -156,12 +156,11 @@ const setConsumer = (kafkaConsumer) => {
 
             if (evt.Event.Asset) {
                 console.dir(evt, {depth: null});
-            };
-
-            if (evt.Event.Asset.details.Source.Erc20) {
+                if (evt.Event.Asset.details.Source.Erc20) {
                 
-                persistAsset(formatAsset(evt.Event.Asset));
-
+                    persistAsset(formatAsset(evt.Event.Asset));
+    
+                };
             };
 
 

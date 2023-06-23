@@ -78,7 +78,7 @@ spec:
         image: ubuntu/zookeeper:edge
         ports:
         - containerPort: 2181
-          name: zookeeper-mainnet
+          name: zookeeper-m
           protocol: TCP
 ---
 apiVersion: v1
@@ -107,7 +107,7 @@ spec:
       claimName: kafka-pv-claim-mainnet
   restartPolicy: Never
   containers:
-  - name: kafka
+  - name: kafka-mainnet
     image: ubuntu/kafka:latest
     resources:
       limits:
@@ -119,10 +119,10 @@ spec:
     env:
     - name: ZOOKEEPER_HOST
       value: zookeeper-service-mainnet
-    args: [ "/etc/kafka/server.properties", "--override", "advertised.listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://kafka-service:9092", "--override", "listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://0.0.0.0:9093", "--override", "listener.security.protocol.map=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT", "--override", "inter.broker.listener.name=INTERNAL", "--override", "message.max.bytes=2097152" ]
+    args: [ "/etc/kafka/server.properties", "--override", "advertised.listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://kafka-service-mainnet:9092", "--override", "listeners=INTERNAL://127.0.0.1:9092,EXTERNAL://0.0.0.0:9093", "--override", "listener.security.protocol.map=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT", "--override", "inter.broker.listener.name=INTERNAL", "--override", "message.max.bytes=2097152" ]
     ports:
     - containerPort: 9092
-      name: kafka
+      name: kafka-mainnet
       protocol: TCP
 ---
 apiVersion: v1
@@ -235,7 +235,7 @@ spec:
   - name: init-vega-node-mainnet
     image: data-hub/vega-node-mainnet
     imagePullPolicy: Never
-    command: ["/bin/bash", "-c", "id && ls -al /home/ian && ls -al /mnt/vega-data && cp -r /home/ian/. /mnt/vega-data/"]
+    command: ["/bin/bash", "-c", "id && ls -al /home/ian && ls -al /mnt/vega-data-mainnet && cp -r /home/ian/. /mnt/vega-data-mainnet/ && ls -al /tmp"]
     volumeMounts:
     - name: vega-node-pv-storage-mainnet
       mountPath: /mnt/vega-data-mainnet
@@ -245,16 +245,16 @@ spec:
     imagePullPolicy: Never
     resources:
       limits:
-        cpu: 700m
+        cpu: 2000m
       requests:
-        cpu: 700m
+        cpu: 2000m
     volumeMounts:
       - mountPath: /home/ian
         name: vega-node-pv-storage-mainnet
     securityContext:
       runAsUser: 1000
     command: [ "/bin/bash" ]
-    args: [ "-c", 'id && pwd && ls -al . && ls -al .. && sed -i ''/Broker\.Socket/,+7{/Broker\.Socket/,+6{b};s/.*/    Address = ''"\"$BROKER_SERVICE_MAINNET_SERVICE_HOST\""''/}'' .config/vega/node/config.toml; /bin/vega start' ]
+    args: [ "-c", 'id && pwd && ls -al . && ls -al .. && sed -i ''/Broker\.Socket/,+7{/Broker\.Socket/,+6{b};s/.*/    Address = ''"\"$BROKER_SERVICE_MAINNET_SERVICE_HOST\""''/}'' .config/vega/node/config.toml; /bin/visor run --home=/home/ian/.visor' ] # /bin/vega start --snapshot.load-from-block-height=1275900' ]
 ---
 apiVersion: v1
 kind: PersistentVolume
@@ -311,9 +311,9 @@ spec:
     imagePullPolicy: Never
     resources:
       limits:
-        cpu: 500m
+        cpu: 1000m
       requests:
-        cpu: 500m
+        cpu: 1000m
     env:
     - name: KAFKA_BROKERS
       value: "$(KAFKA_SERVICE_MAINNET_SERVICE_HOST):9092"

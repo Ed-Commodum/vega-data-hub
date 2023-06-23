@@ -836,6 +836,7 @@ const start = () => {
             };
 
         } else {
+            console.log("Failed to list topics");
             console.error(err);
         };
     });
@@ -878,6 +879,9 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
             trade.aggressor = tradeAggressorMappings[trade.aggressor];
 
             persistTrade(formatTrade(trade));
+        }
+        if (evt.Event.BeginBlock) {
+            console.log(evt);
         }
     });
 };

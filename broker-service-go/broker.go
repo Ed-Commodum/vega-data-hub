@@ -2,13 +2,12 @@ package main
 
 import (
 	"fmt"
-	// "context"
+	"context"
 	"log"
 	// "runtime"
 	"sync"
 	"os"
 	// "strings"
-	"context"
 	"encoding/json"
 	"time"
 	"strconv"
@@ -21,7 +20,8 @@ import (
 	"go.nanomsg.org/mangos/v3/protocol/pair"
 	_ "go.nanomsg.org/mangos/v3/transport/all"
 
-	// "code.vegaprotocol.io/vega/core/events"
+	// "code.vegaprotocol.io/vega/libs/num"
+	"code.vegaprotocol.io/vega/core/events"
 	// "code.vegaprotocol.io/vega/libs/proto"
 	"github.com/golang/protobuf/proto"
 	eventspb "code.vegaprotocol.io/vega/protos/vega/events/v1"
@@ -71,6 +71,7 @@ func newKafkaClient() (*KafkaClient, error) {
 		BatchSize: 1000,
 		BatchTimeout: time.Millisecond * 10,
 		BatchBytes: 2097152,
+		AllowAutoTopicCreation: true,
 	}
 
 	return &KafkaClient{
@@ -108,6 +109,22 @@ func (s SocketServer) listen() (error) {
 	}
 
 	return nil
+
+}
+
+func (s SocketServer) send(evt events.Event) {
+
+	fmt.Println(evt.StreamMessage())
+
+	msg, err := proto.Marshal(evt.StreamMessage())
+	if err != nil {
+		log.Fatal("Failed to marshal bus event, err: %w", err)
+	}
+
+	err = s.sock.Send(msg)
+	if err != nil {
+		log.Fatal("Failed to send event on socket, err: %w", err)
+	}
 
 }
 
@@ -157,7 +174,8 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 
 	msgCh := make(chan []kafka.Message)
 	batch := []kafka.Message{}
-	blockCount := -1
+	height := 0
+	blockCount := 0
 	batchBytesCount := 0
 	tradeCount := 0
 	orderCount := 0
@@ -180,24 +198,34 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 			if err != nil {
 				log.Fatal("Failed to marshal bus event to JSON: %w", err)
 			}
+			if evtType.String() == "BUS_EVENT_TYPE_PROTOCOL_UPGRADE_STARTED" {
+				fmt.Println(evt)
+				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.ProtocolUpgradeStarted`, strconv.FormatInt(int64(evt.GetProtocolUpgradeStarted().LastBlockHeight), 10))
+				jsonEvtBytes = []byte(jsonEvt)
+				// Send msg to core to notify when ready for upgrade
+				ctx := context.TODO()
+				readyEvt := events.NewProtocolUpgradeDataNodeReady(ctx, int64(height))
+				b.ss.send(readyEvt)
+
+			}
 			if evtType.String() == "BUS_EVENT_TYPE_TRADE" {
 				tradeCount += 1
 				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.Trade.timestamp`, strconv.FormatInt(evt.GetTrade().Timestamp, 10))
 				jsonEvtBytes = []byte(jsonEvt)
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_ORDER" {
-				continue
+				continue // Ignore event for now
 				orderCount += 1
 				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.Order.created_at`, strconv.FormatInt(evt.GetOrder().CreatedAt, 10))
 				jsonEvt, _ = sjson.Set(jsonEvt, `Event.Order.updated_at`, strconv.FormatInt(evt.GetOrder().UpdatedAt, 10))
 				jsonEvtBytes = []byte(jsonEvt)
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_POSITION_STATE" {
-				continue
+				continue // Ignore event for now
 				posStateCount += 1
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_MARKET_DATA" {
-				continue
+				continue // Ignore event for now
 				marketDataCount += 1
 				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.MarketData.timestamp`, strconv.FormatInt(evt.GetMarketData().Timestamp, 10))
 				jsonEvt, _ = sjson.Set(jsonEvt, `Event.MarketData.next_mark_to_market`, strconv.FormatInt(evt.GetMarketData().NextMarkToMarket, 10))
@@ -210,31 +238,33 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 				marketCount += 1
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_LEDGER_MOVEMENTS" {
-				continue
+				continue // Ignore event for now
 				ledgerMovementsCount += 1
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_DEPOSIT" {
-				continue
+				continue // Ignore event for now
 				depositWithdrawalCount += 1
 				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.Deposit.created_timestamp`, strconv.FormatInt(evt.GetDeposit().CreatedTimestamp, 10))
 				jsonEvt, _ = sjson.Set(jsonEvt, `Event.Deposit.credited_timestamp`, strconv.FormatInt(evt.GetDeposit().CreditedTimestamp, 10))
 				jsonEvtBytes = []byte(jsonEvt)
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_WITHDRAWAL" {
-				continue
+				continue // Ignore event for now
 				depositWithdrawalCount += 1
 				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.Withdrawal.created_timestamp`, strconv.FormatInt(evt.GetWithdrawal().CreatedTimestamp, 10))
 				jsonEvt, _ = sjson.Set(jsonEvt, `Event.Withdrawal.withdrawn_timestamp`, strconv.FormatInt(evt.GetWithdrawal().WithdrawnTimestamp, 10))
 				jsonEvtBytes = []byte(jsonEvt)
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_ACCOUNT" {
-				continue
+				continue // Ignore event for now
 				accountCount += 1
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_BEGIN_BLOCK" {
 				blockCount += 1
+				height = int(evt.GetBeginBlock().Height)
 				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.BeginBlock.timestamp`, strconv.FormatInt(evt.GetBeginBlock().Timestamp, 10))
 				jsonEvtBytes = []byte(jsonEvt)
+				// Send BeginBlock event to all topics
 				for topic := range topicSet {
 					batch = append(batch, kafka.Message{
 						Topic: topic,
@@ -262,6 +292,7 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 				batch = nil
 				// fmt.Println(string(jsonEvt))
 				fmt.Println(evt.Id)
+				fmt.Println("Height: ", height)
 				fmt.Println("Blocks count: ", blockCount)
 				fmt.Println("Bytes count: ", batchBytesCount)
 				fmt.Println("Trade count: ", tradeCount)
