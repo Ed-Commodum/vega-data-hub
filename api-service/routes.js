@@ -522,7 +522,7 @@ const routes = (app, pgPool) => {
 
     */
 
-    app.get('/decimals', async () => {
+    app.get('/decimals', async (req, res) => {
         // Accepts a marketId (optional) and returns the decimal information for that market. If the marketId is
         // omitted then the decimal information for all markets is returned.
 
