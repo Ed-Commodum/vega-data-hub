@@ -77,7 +77,7 @@ const marketQueries = {
             state != 'STATE_CANCELLED';
         `;
 
-        retun [ query, [ ] ];
+        return [ query, [ ] ];
     },
     numTrades(marketId) {
         const query = `
