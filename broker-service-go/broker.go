@@ -225,7 +225,6 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 				posStateCount += 1
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_MARKET_DATA" {
-				continue // Ignore event for now
 				marketDataCount += 1
 				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.MarketData.timestamp`, strconv.FormatInt(evt.GetMarketData().Timestamp, 10))
 				jsonEvt, _ = sjson.Set(jsonEvt, `Event.MarketData.next_mark_to_market`, strconv.FormatInt(evt.GetMarketData().NextMarkToMarket, 10))
@@ -238,7 +237,6 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 				marketCount += 1
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_LEDGER_MOVEMENTS" {
-				continue // Ignore event for now
 				ledgerMovementsCount += 1
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_DEPOSIT" {

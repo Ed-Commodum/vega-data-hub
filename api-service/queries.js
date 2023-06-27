@@ -26,6 +26,40 @@ const marketData = {
     },
 };
 
+const assetQueries = {
+    getDecimals(assetId) {
+        const query = `
+        SELECT
+            decimals AS asset_decimals
+        FROM assets
+        WHERE id = $1 AND
+        WHERE status = 'STATUS_ENABLED';
+        `;
+
+        return [ query, [ assetId ] ];
+    },
+    getAllDecimals() {
+        const query = `
+        SELECT
+            id,
+            decimals
+        FROM assets
+        WHERE status = 'STATUS_ENABLED';
+        `;
+
+        return [ query, [] ];
+    },
+    getBridgeDiffs(assetId) {
+        const query = `
+        `;
+
+        return [ query, [] ];
+    },
+    getAllBridgeDiffs() {
+
+    }
+};
+
 const marketQueries = {
     checkForMarket(marketId) {
         const query = `
@@ -77,7 +111,7 @@ const marketQueries = {
             state != 'STATE_CANCELLED';
         `;
 
-        return [ query, [ ] ];
+        return [ query, [] ];
     },
     numTrades(marketId) {
         const query = `
@@ -86,6 +120,18 @@ const marketQueries = {
         `;
 
         return [ query, [ marketId ] ];
+    },
+    allNumTrades() {
+        const query = `
+        SELECT
+            market_id,
+            sum(num_trades) AS num_trades,
+            max(timestamp) AS timestamp
+        FROM market_data_5m
+        GROUP BY market_id;
+        `;
+
+        return [ query, [] ];
     },
     totalNumTrades() {
         const query = `
@@ -148,7 +194,8 @@ const marketQueries = {
             market_id,
             bucket,
             last_ts AS timestamp,
-            last AS open_interest
+            last AS open_interest,
+            last_traded_price AS last_traded_price
         FROM open_interest_5m
         WHERE market_id = $1
         ORDER BY bucket DESC
@@ -163,39 +210,64 @@ const marketQueries = {
             market_id,
             last(bucket, bucket) AS bucket,
             last(last_ts, bucket) AS timestamp,
-            last(last, bucket) AS open_interest
+            last(last, bucket) AS open_interest,
+            last(last_traded_price, bucket) AS last_traded_price
         FROM open_interest_5m
         GROUP BY market_id;
         `;
 
         return [ query, [] ];
     },
-    feesGenerated(marketId) {
+    makerLiquidityFeesGenerated(marketId) {
         const query = `
         SELECT
             last(timestamp, bucket) AS timestamp,
             sum(maker_fee_paid) AS maker_fees_generated,
-            sum(liquidity_fee_paid) AS liquidity_fees_generated,
-            sum(infrastructure_fee_paid) AS infrastructure_fees_generated
+            sum(liquidity_fee_paid) AS liquidity_fees_generated
         FROM fees_paid_5m
         WHERE market_id = $1;
         `;
 
-        return [ query, [ marketId ] ]
+        // sum(infrastructure_fee_paid) AS infrastructure_fees_generated
+
+        return [ query, [ marketId ] ];
     },
-    totalFeesGenerated() {
+    infraFeesGenerated(marketId) {
+        const query = `
+        SELECT
+            last(timestamp, bucket) AS timestamp,
+            sum(infrastructure_fee_paid) AS infrastructure_fees_generated
+        FROM infra_fees_by_market_5m
+        WHERE market_id = $1;
+        `;
+
+        return [ query, [ marketId ] ];
+    },
+    allMakerLiquidityFeesGenerated() {
         const query = `
         SELECT
             market_id,
             last(timestamp, bucket) AS timestamp,
             sum(maker_fee_paid) AS maker_fees_generated,
-            sum(liquidity_fee_paid) AS liquidity_fees_generated,
-            sum(infrastructure_fee_paid) AS infrastructure_fees_generated
+            sum(liquidity_fee_paid) AS liquidity_fees_generated
         FROM fees_paid_5m
+        WHERE market_id != 'N/A'
         GROUP BY market_id;
         `;
 
         return [ query, [] ]
+    },
+    allInfraFeesGenerated() {
+        const query = `
+        SELECT
+            market_id,
+            last(timestamp, bucket) AS timestamp,
+            sum(infrastructure_fee_paid) AS infrastructure_fees_generated
+        FROM infra_fees_by_market_5m
+        GROUP BY market_id;
+        `;
+
+        return [ query, [] ];
     },
     returns(marketId, interval) {
 
@@ -438,7 +510,21 @@ const partyQueries = {
 
         return [ query, [ partyId ] ] ;
     },
-    numTrades(partyId) {
+    numTrades(partyId, marketId) {
+        const query = `
+        SELECT
+            market_id,
+            sum(num_trades) AS num_trades,
+            sum(num_self_trades) AS num_self_trades,
+            max(timestamp) AS timestamp
+        FROM party_data_5m
+        WHERE buyer = $1 OR seller = $1 AND market_id = $2
+        GROUP BY market_id;
+        `;
+
+        return [ query, [ partyId, marketId ] ];
+    },
+    allNumTrades(partyId) {
         const query = `
         SELECT
             market_id,
@@ -560,7 +646,7 @@ const partyQueries = {
 
         return [ query, [ partyId ]]; 
     },
-    feesPaidOld(partyId) {
+    feesPaidFromPartyData(partyId, marketId) {
         const query = `
         SELECT
             y.market_id,
@@ -568,10 +654,30 @@ const partyQueries = {
             sum(y.fee) AS fee_combined,
             sum(fee_infrastructure) as fee_infrastructure,
             sum(fee_maker) as fee_maker,
-            sum(fee_liquidity) as fee_liquidity
+            sum(fee_liquidity) as fee_liquidity,
+            max(y.timestamp) as timestamp
         FROM party_data_5m x
-        CROSS JOIN LATERAL ( VALUES (x.market_id, x.buyer, x.buyer_fee, x.buyer_fee_infrastructure, x.buyer_fee_maker, x.buyer_fee_liquidity)
-                                , (x.market_id, x.seller, x.seller_fee, x.seller_fee_infrastructure, x.seller_fee_maker, x.seller_fee_liquidity)) as y(market_id, party, fee, fee_infrastructure, fee_maker, fee_liquidity)
+        CROSS JOIN LATERAL ( VALUES (x.market_id, x.buyer, x.buyer_fee, x.buyer_fee_infrastructure, x.buyer_fee_maker, x.buyer_fee_liquidity, x.timestamp)
+                                , (x.market_id, x.seller, x.seller_fee, x.seller_fee_infrastructure, x.seller_fee_maker, x.seller_fee_liquidity, x.timestamp)) as y(market_id, party, fee, fee_infrastructure, fee_maker, fee_liquidity, timestamp)
+        WHERE party = $1 AND y.market_id = $2
+        GROUP BY y.market_id, party;
+        `;
+
+        return [ query, [ partyId, marketId ] ];
+    },
+    allFeesPaidFromPartyData(partyId) {
+        const query = `
+        SELECT
+            y.market_id,
+            y.party,
+            sum(y.fee) AS fee_combined,
+            sum(fee_infrastructure) as fee_infrastructure,
+            sum(fee_maker) as fee_maker,
+            sum(fee_liquidity) as fee_liquidity,
+            max(y.timestamp) as timestamp
+        FROM party_data_5m x
+        CROSS JOIN LATERAL ( VALUES (x.market_id, x.buyer, x.buyer_fee, x.buyer_fee_infrastructure, x.buyer_fee_maker, x.buyer_fee_liquidity, x.timestamp)
+                                , (x.market_id, x.seller, x.seller_fee, x.seller_fee_infrastructure, x.seller_fee_maker, x.seller_fee_liquidity, x.timestamp)) as y(market_id, party, fee, fee_infrastructure, fee_maker, fee_liquidity, timestamp)
         WHERE party = $1
         GROUP BY y.market_id, party;
         `;
@@ -690,4 +796,4 @@ const asyncQuery = (type, query, values, pgPool) => {
     });
 };
 
-module.exports = { asyncQuery, marketQueries, partyQueries };
+module.exports = { asyncQuery, assetQueries, marketQueries, partyQueries };

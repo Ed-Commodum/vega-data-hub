@@ -41,6 +41,7 @@ RUN touch pass.txt && \
     sed -i '/Snapshot/,+6{/Snapshot/,+5{b};s/.*/  StartHeight = -1/}' .config/vega/node/config.toml && \
     cp node-config/genesis.json .cometbft/config/genesis.json && \
     sed -i "/persistent_peers =/c\persistent_peers = '$PEERS'" .cometbft/config/config.toml && \
+    sed -i "/indexer =/c\indexer = 'null'" .cometbft/config/config.toml && \
     # sed -i "/max_packet_msg_payload_size =/c\max_packet_msg_payload_size = 16384" .tendermint/config/config.toml && \
     vega nodewallet import --output json --chain tendermint --tendermint-home /home/ian/.cometbft --passphrase-file /home/ian/pass.txt --wallet-passphrase-file /home/ian/pass.txt && \
     vega nodewallet generate --output json --chain vega --passphrase-file /home/ian/pass.txt --wallet-passphrase-file /home/ian/pass.txt
@@ -49,9 +50,9 @@ RUN touch pass.txt && \
 RUN visor init --home /home/ian/.visor && \
     sed -i '/maxNumberOfFirst/c\maxNumberOfFirstConnectionRetries = 100' .visor/config.toml && \
     sed -i '/path =/c\    path = "vega"' .visor/genesis/run-config.toml && \
-    # sed -i '/args =/c\    args = [ "start" ]' .visor/genesis/run-config.toml && \
+    sed -i '/args =/c\    args = [ "start" ]' .visor/genesis/run-config.toml && \
     # sed -i '/args =/c\    args = [ "start", "--snapshot.load-from-block-height=1275900" ]' .visor/genesis/run-config.toml && \
-    sed -i '/args =/c\    args = [ "start", "--snapshot.load-from-block-height=-1" ]' .visor/genesis/run-config.toml && \
+    # sed -i '/args =/c\    args = [ "start", "--snapshot.load-from-block-height=-1" ]' .visor/genesis/run-config.toml && \
     sed -i '/socketPath =/c\    socketPath = "/tmp/vega.sock"' .visor/genesis/run-config.toml && \
     sed -i '/httpPath =/c\    httpPath = "/rpc"' .visor/genesis/run-config.toml && \
     cp /bin/vega .visor/genesis/vega

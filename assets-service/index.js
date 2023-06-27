@@ -114,6 +114,15 @@ const start = () => {
                 if (!err) {
                     console.log("Created tables.");
                     console.log(res);
+                    kafkaAdmin.createTopics([{ topic: "assets", partitions: 1, replicationFactor: 1 }], (err, result) => {
+                        if (!err) {
+                            console.log("Topics created successfully");
+                            // Set up consumer
+                            setConsumer(kafkaConsumer);
+                        } else {
+                            console.log(err);
+                        }
+                    });
                 } else {
                     console.log(err);
                 };
@@ -122,55 +131,31 @@ const start = () => {
             console.log(err);
         };
     });
-
-    const topic = [{
-        topic: "assets",
-        partitions: 1,
-        replicationFactor: 1
-    }]
-
-    kafkaAdmin.createTopics(topic, (err, result) => {
-        if (!err) {
-
-            console.log("Topics created successfully");
-            // Set up consumer
-            setConsumer(kafkaConsumer);
-
-        } else {
-            console.log(err);
-        }
-    });
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "assets" }], { groupId: "assets-group" });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "assets-group-5" });
     kafkaConsumer.on("message", (msg) => {
-
         // const dateTime = new Date(Date.now()).toISOString();
         // console.log(`${dateTime}: New message`);
-
-
-        if (msg.topic == "assets") {
-            
+        if (msg.topic == "assets") {    
             const evt = JSON.parse(msg.value);
-
             if (evt.Event.Asset) {
                 console.dir(evt, {depth: null});
                 if (evt.Event.Asset.details.Source.Erc20) {
-                
                     persistAsset(formatAsset(evt.Event.Asset));
-    
                 };
             };
-
-
         };
-
     });
+    kafkaConsumer.addTopics([{ topic: 'assets', offset: 0 }], () => console.log("topic added"));
 };
 
 
 const formatAsset = (evt) => {
+
+    evt.status = assetEnumMappings.status[evt.status];
+    console.log(evt.status);
 
     const row = [
         evt.id, evt.status, evt.details.name, evt.details.symbol, parseInt(evt.details.decimals),

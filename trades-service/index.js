@@ -356,6 +356,45 @@ const continuousAggregates = {
             `
         }
     },
+    infraFeesByMarket: {
+        interval_5m: {
+            createMatView: `CREATE MATERIALIZED VIEW infra_fees_by_market_5m
+            WITH (timescaledb.continuous) AS 
+            SELECT market_id,
+                time_bucket(300000000000, synth_timestamp) AS bucket,
+                max(timestamp) AS timestamp,
+                sum(buyer_fee_infrastructure + seller_fee_infrastructure) as infrastructure_fee_paid
+            FROM trades
+            GROUP BY market_id, time_bucket(300000000000, synth_timestamp);
+            `,
+            addrefreshPolicy: `SELECT add_continuous_aggregate_policy('infra_fees_by_market_5m',
+            start_offset => 2592000000000000,
+            end_offset => 60000000000,
+            schedule_interval => INTERVAL '1 minute');
+            `
+        }
+    },
+    infraFeesByParty: {
+        interval_5m: {
+            createMatView: `CREATE MATERIALIZED VIEW infra_fees_by_party_5m
+            WITH (timescaledb.continuous) AS 
+            SELECT market_id,
+                time_bucket(300000000000, synth_timestamp) AS bucket,
+                max(timestamp) AS timestamp,
+                buyer AS buyer,
+                seller AS seller,
+                sum(buyer_fee_infrastructure) AS buyer_fee_infrastructure,
+                sum(seller_fee_infrastructure) AS seller_fee_infrastructure
+            FROM trades
+            GROUP BY market_id, buyer, seller, time_bucket(300000000000, synth_timestamp);
+            `,
+            addrefreshPolicy: `SELECT add_continuous_aggregate_policy('infra_fees_by_party_5m',
+            start_offset => 2592000000000000,
+            end_offset => 60000000000,
+            schedule_interval => INTERVAL '1 minute');
+            `
+        }
+    },
     feesPaid: {
         interval_5m: {
             createMatView: `CREATE MATERIALIZED VIEW fees_paid_5m
@@ -364,6 +403,12 @@ const continuousAggregates = {
                 time_bucket(300000000000, synth_timestamp) AS bucket,
                 buyer AS buyer,
                 seller AS seller,
+                sum(buyer_fee_maker) AS buyer_fee_maker,
+                sum(buyer_fee_liquidity) AS buyer_fee_liquidity,
+                sum(buyer_fee_infrastructure) AS buyer_fee_infrastructure,
+                sum(seller_fee_maker) AS seller_fee_maker,
+                sum(seller_fee_liquidity) AS seller_fee_liquidity,
+                sum(seller_fee_infrastructure) AS seller_fee_infrastructure,
                 sum(buyer_fee_infrastructure + buyer_fee_maker + buyer_fee_liquidity) AS buyer_fee,
                 sum(seller_fee_infrastructure + seller_fee_maker + seller_fee_liquidity) AS seller_fee
             FROM trades
@@ -774,8 +819,7 @@ const start = () => {
                             pgClient.query(setIntegerNowFunc, (err, res) => {
                                 if(!err) {
                                     console.log(res);
-                                    createContAggs(pgPool, ["candles", "takerData", "marketData", "partyData"]);
-
+                                    createContAggs(pgPool, ["candles", "takerData", "marketData", "partyData", "infraFeesByMarket"]);
                                 } else {
                                     console.log(err);
                                 }
@@ -874,14 +918,22 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
             // console.log("Synthetic Timestamp: ", synthTimestamp);
             trade["synth_timestamp"] = synthTimestamp;
 
+            if (!(trade.aggressor == 1 || trade.aggressor == 2)) {
+                trade.aggressor = 0;
+            }
+
             // convert enum fields to their respective text values
             trade.type = tradeTypeMappings[trade.type];
             trade.aggressor = tradeAggressorMappings[trade.aggressor];
 
+            if (!trade.aggressor && !(trade.aggressor === 0)) {
+                console.log(trade);
+            }
+
             persistTrade(formatTrade(trade));
         }
         if (evt.Event.BeginBlock) {
-            console.log(evt);
+            // console.log(evt);
         }
     });
 };

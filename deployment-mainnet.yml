@@ -27,6 +27,10 @@ spec:
       labels:
         app: timescaledb-mainnet
     spec:
+      volumes:
+      - name: timescaledb-pv-storage-mainnet
+        persistentVolumeClaim:
+          claimName: timescaledb-pv-claim-mainnet
       containers:
       - name: timescaledb-mainnet
         # image: timescale/timescaledb:latest-pg14
@@ -41,11 +45,46 @@ spec:
           requests:
             cpu: 600m
             memory: 1.5Gi
+        volumeMounts:
+          - mountPath: /home/pgdata/
+            name: timescaledb-pv-storage-mainnet
+        securityContext:
+          runAsUser: 1000
         env:
         - name: POSTGRES_PASSWORD
           value: ilovetimescaledb
+        - name: PGDATA
+          value: /home/pgdata
         args:
           - '-cmax_connections=75'
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: timescaledb-pv-volume-mainnet
+  annotations:
+    pv.beta.kubernetes.io/gid: "1000"
+spec:
+  storageClassName: ""
+  capacity:
+    storage: 40Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/timescaledb-data-mainnet"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: timescaledb-pv-claim-mainnet
+spec:
+  storageClassName: ""
+  volumeName: timescaledb-pv-volume-mainnet
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 35Gi
 ---
 apiVersion: v1
 kind: Service
@@ -235,7 +274,7 @@ spec:
   - name: init-vega-node-mainnet
     image: data-hub/vega-node-mainnet
     imagePullPolicy: Never
-    command: ["/bin/bash", "-c", "id && ls -al /home/ian && ls -al /mnt/vega-data-mainnet && cp -r /home/ian/. /mnt/vega-data-mainnet/ && ls -al /tmp"]
+    command: [ "/bin/bash", "-c", "id && ls -al /home/ian && ls -al /mnt/vega-data-mainnet && cp -r /home/ian/. /mnt/vega-data-mainnet/" ]
     volumeMounts:
     - name: vega-node-pv-storage-mainnet
       mountPath: /mnt/vega-data-mainnet
@@ -265,7 +304,7 @@ metadata:
 spec:
   storageClassName: ""
   capacity:
-    storage: 40Gi
+    storage: 80Gi
   accessModes:
     - ReadWriteOnce
   hostPath:
@@ -282,7 +321,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 35Gi
+      storage: 75Gi
 ---
 apiVersion: v1
 kind: Service
@@ -357,6 +396,70 @@ spec:
       value: timescaledb-service-mainnet
     - name: TIMESCALEDB_PORT
       value: "5432"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: transfers-pod-mainnet
+  labels:
+    app: transfers-pod-mainnet
+spec:
+  restartPolicy: Never
+  containers:
+  - name: transfers-mainnet
+    image: data-hub/transfers-mainnet
+    imagePullPolicy: Never
+    env:
+    - name: KAFKA_BROKERS
+      value: "$(KAFKA_SERVICE_MAINNET_SERVICE_HOST):9092"
+    - name: TIMESCALEDB_HOST
+      value: timescaledb-service-mainnet
+    - name: TIMESCALEDB_PORT
+      value: "5432"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: market-data-pod-mainnet
+  labels:
+    app: market-data-pod-mainnet
+spec:
+  restartPolicy: Never
+  containers:
+  - name: market-data-mainnet
+    image: data-hub/market-data-mainnet
+    imagePullPolicy: Never
+    env:
+    - name: KAFKA_BROKERS
+      value: "$(KAFKA_SERVICE_MAINNET_SERVICE_HOST):9092"
+    - name: TIMESCALEDB_HOST
+      value: timescaledb-service-mainnet
+    - name: TIMESCALEDB_PORT
+      value: "5432"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: socials-bots-pod-mainnet
+  labels:
+    app: socials-bots-pod-mainnet
+spec:
+  restartPolicy: Never
+  containers:
+  - name: socials-bots-mainnet
+    image: data-hub/socials-bots-mainnet
+    imagePullPolicy: Never
+    env:
+    - name: DISCORD_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: discord-token
+          key: token
+    - name: DISCORD_TOKENS
+      valueFrom:
+        secretKeyRef:
+          name: discord-tokens
+          key: tokens
 ---
 # ---
 # apiVersion: v1

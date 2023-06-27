@@ -32,7 +32,7 @@ let kafkaConsumer;
 
 const { transferEnumMappings } = require('./transferEnums.js');
 const { RecentBlocks } = require('./ringBuffers.js');
-const recentBlocks = new RecentBlocks(2000);
+const recentBlocks = new RecentBlocks(20000);
 const ledgerMovementsQueue = [];
 const ledgerMovementsToInsert = [];
 const transfersQueue = [];
@@ -208,7 +208,7 @@ const continuousAggregates = {
             WITH (timescaledb.continuous) AS
             SELECT
                 to_account_market as market_id,
-                time_bucket(3600000000000, bucket) as bucket,
+                time_bucket(3600000000000, synth_timestamp) as bucket,
                 CASE
                     WHEN type = 'TRANSFER_TYPE_MTM_LOSS' THEN from_account_owner
                     WHEN type = 'TRANSFER_TYPE_MTM_WIN' THEN to_account_owner
@@ -270,18 +270,19 @@ const continuousAggregates = {
             with (timescaledb.continuous) AS
             SELECT
                 time_bucket(300000000000, synth_timestamp) as bucket,
+                max(timestamp) AS timestamp,
                 CASE
                     WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN to_account_owner
                     WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN from_account_owner
-                END as party_id,
+                END AS party_id,
                 CASE
                     WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN to_account_asset
                     WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN from_account_asset
-                END as asset,
+                END AS asset,
                 sum(CASE
                         WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN amount
                         WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN - amount
-                    END) as diff
+                    END) AS diff
             FROM ledger_movements
             GROUP BY asset, party_id, time_bucket(300000000000, synth_timestamp);
             `,
@@ -316,7 +317,7 @@ const continuousAggregates = {
             WITH (timescaledb.continuous) AS
             SELECT
                 time_bucket(300000000000, synth_timestamp) AS bucket,
-                from_account_market AS market_id,
+                to_account_market AS market_id,
                 from_account_owner AS party_id,
                 last(timestamp, synth_timestamp) AS timestamp,
                 sum(CASE
@@ -344,21 +345,20 @@ const continuousAggregates = {
             WITH (timescaledb.continuous) AS
             SELECT
                 time_bucket(300000000000, synth_timestamp) AS bucket,
-                from_account_market AS market_id,
-                from_account_owner AS party_id,
+                to_account_owner AS party_id,
                 last(timestamp, synth_timestamp) AS timestamp,
                 sum(CASE
                         WHEN type = 'TRANSFER_TYPE_MAKER_FEE_RECEIVE' THEN amount ELSE 0
                     END) as maker_fee_earned,
                 sum(CASE
-                        WHEN type = 'TRANSFER_TYPE_LIQUIDITY_FEE_RECEIVE' THEN amount ELSE 0
+                        WHEN type = 'TRANSFER_TYPE_LIQUIDITY_FEE_DISTRIBUTE' THEN amount ELSE 0
                     END) as liquidity_fee_earned,
                 sum(CASE
-                        WHEN type = 'TRANSFER_TYPE_INFRASTRUCTURE_FEE_RECEIVE' THEN amount ELSE 0
+                        WHEN type = 'TRANSFER_TYPE_INFRASTRUCTURE_FEE_DISTRIBUTE' THEN amount ELSE 0
                     END) as infrastructure_fee_earned,
                 from_account_asset AS asset
             FROM ledger_movements
-            GROUP BY market_id, party_id, asset, time_bucket(300000000000, synth_timestamp);
+            GROUP BY party_id, asset, time_bucket(300000000000, synth_timestamp);
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('fees_earned_5m',
             start_offset => '2592000000000000'::bigint,
@@ -502,7 +502,7 @@ const start = () => {
                     pgClient.query(setIntegerNowFunc, (err, res) => {
                         if(!err) {
                             console.log(res);
-                            createContAggs(pgPool, ["feesPaid", "feesEarned", "pnlDeltas"]);
+                            createContAggs(pgPool, ["feesPaid", "feesEarned", "pnlDeltas", "infraFeesByAsset"]);
                             
                         } else {
                             console.log(err);
@@ -537,7 +537,7 @@ const start = () => {
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "transfers" }], { groupId: "transfers-group", fetchMaxBytes: 2 * 1024 * 1024 });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "transfers-group", fetchMaxBytes: 2 * 1024 * 1024, fromOffset: 'true' });
     kafkaConsumer.on("message", (msg) => {
 
         // const dateTime = new Date(Date.now()).toISOString();
@@ -552,12 +552,15 @@ const setConsumer = (kafkaConsumer) => {
             // console.dir(evt, { depth: null });
 
             if (evt.Event.BeginBlock) {
+                // console.log(msg);
+                // console.log("Begin Block event at offset: ", msg.offset)
                 evt.Event.BeginBlock["ledger_movement_count"] = 0;
                 recentBlocks.push(evt.Event.BeginBlock);   
             }
 
             if (evt.Event.LedgerMovements) {
 
+                // console.log("Ledger Movement at offset: ", msg.offset)
                 // console.dir(evt, { depth: null });
 
                 ledgerMovementsQueue.push(evt);
@@ -567,6 +570,7 @@ const setConsumer = (kafkaConsumer) => {
         }
 
     });
+    kafkaConsumer.addTopics([{ topic: 'transfers', offset: 0 }], () => console.log("topic added"))
 };
 
 const formatLedgerMovements = (evt, block) => { // movements) => {

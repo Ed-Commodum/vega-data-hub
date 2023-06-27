@@ -1,5 +1,6 @@
 const { marketState, marketTradingMode } = require('./market-enums.js');
 const { Client, Pool } = require('pg');
+const format = require('pg-format');
 
 const pgClient = new Client({
     host: process.env.TIMESCALEDB_HOST,
@@ -29,6 +30,12 @@ const kafkaClient = new kafka.KafkaClient({ kafkaHost: kafkaBrokers });
 // const kafkaProducer = new kafka.Producer(kafkaClient);
 // const kafkaAdmin = new kafka.Admin(kafkaClient);
 let kafkaConsumer;
+const formattedBatch = [];
+const flushFormattedBatchInterval = setInterval(() => {
+    if (formattedBatch.length == 0) return;
+    batchPersistMarketData(formattedBatch.slice());
+    formattedBatch.length = 0;
+}, 100);
 
 const createTablesQuery = `
 CREATE TABLE IF NOT EXISTS market_data_updates (
@@ -84,6 +91,20 @@ INSERT INTO market_data_updates (
 ) RETURNING *;
 `;
 
+const fInsertMarketDataUpdates = `
+INSERT INTO market_data_updates (
+    market_id,
+    mark_price,
+    best_bid_price,
+    best_bid_volume,
+    best_ask_price,
+    best_ask_volume,
+    mid_price,
+    timestamp,
+    open_interest,
+    last_traded_price
+) values %L RETURNING *;`
+
 const setIntegerNowFunc = `
 SELECT set_integer_now_func('market_data_updates', 'current_time_ns');
 `;
@@ -98,6 +119,7 @@ const continuousAggregates = {
                 first(open_interest, timestamp) AS first,
                 first(timestamp, timestamp) AS first_ts,
                 last(open_interest, timestamp) AS last,
+                last(last_traded_price, timestamp) AS last_traded_price,
                 last(timestamp, timestamp) AS last_ts,
                 max(timestamp) AS max_ts,
                 max(open_interest) AS high,
@@ -269,7 +291,6 @@ const createContAggs = async (client, types) => {
     while (queryQueue.length) {
         await next(queryQueue.shift());
     };
-
 };
 
 
@@ -298,7 +319,7 @@ const start = () => {
                     pgClient.query(setIntegerNowFunc, (err, res) => {
                         if(!err) {
                             console.log(res);
-                            createContAggs(pgClient, ["openInterest", "bidAskSpread"]);
+                            createContAggs(pgClient, ["openInterest"]); //, "bidAskSpread"]);
                             
                         } else {
                             console.log(err);
@@ -333,21 +354,35 @@ const start = () => {
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "market_data" }], { groupId: "market-data-group" });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: `new-market-data-group`, fromOffset: true }); //groupId: "market-data-group"
+    let counter = 0;
     kafkaConsumer.on("message", (msg) => {
-
         // const dateTime = new Date(Date.now()).toISOString();
         // console.log(`${dateTime}: New message`);
 
+        if (counter < 10) {
+            console.log(msg.offset);
+            counter++
+        };
+
         const evt = JSON.parse(msg.value);
         // console.log(evt);
-
-        // Ignore events from markets with state that is not active or suspended.
-        if (evt.Event.MarketData.market_state == marketState.STATE_ACTIVE || evt.Event.MarketData.market_state == marketState.STATE_SUSPENDED) {
-            persistMarketData(formatMarketData(evt.Event.MarketData));
+        if (evt.Event.MarketData) {
+            // Ignore events from markets with state that is not active or suspended.
+            // if (evt.Event.MarketData.market_state == marketState.STATE_ACTIVE || evt.Event.MarketData.market_state == marketState.STATE_SUSPENDED) {
+            //     persistMarketData(formatMarketData(evt.Event.MarketData));
+            // }
+            if (evt.Event.MarketData.market_state == marketState.STATE_ACTIVE || evt.Event.MarketData.market_state == marketState.STATE_SUSPENDED) {
+                formattedBatch.push(formatMarketData(evt.Event.MarketData));
+                if (formattedBatch.length >= 300) {
+                    batchPersistMarketData(formattedBatch.slice());
+                    formattedBatch.length = 0;
+                }
+            }
         }
         
     });
+    kafkaConsumer.addTopics([{ topic: 'market_data', offset: 0 }], () => console.log("topic added"));
 };
 
 formatMarketData = (item) => {
@@ -362,6 +397,19 @@ formatMarketData = (item) => {
     // console.log(formatted);
 
     return formatted;
+
+}
+
+batchPersistMarketData = (rows) => {
+
+    pgClient.query(format(fInsertMarketDataUpdates, rows), [], (err, res) => {
+        if (!err) {
+            
+        } else {
+            console.log(`Error performing inserts`);
+            console.log(err);
+        }
+    });
 
 }
 
