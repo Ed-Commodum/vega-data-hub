@@ -49,14 +49,29 @@ const assetQueries = {
 
         return [ query, [] ];
     },
-    getBridgeDiffs(assetId) {
+    getBridgeBalance(assetId) {
         const query = `
+        SELECT
+            asset,
+            max(timestamp) AS timestamp,
+            sum(diff) AS balance
+        FROM bridge_diffs_5m
+        WHERE asset = $1;
+        `;
+
+        return [ query, [ assetId ] ];
+    },
+    getAllBridgeBalances() {
+        const query = `
+        SELECT
+            asset,
+            max(timestamp) AS timestamp,
+            sum(diff) AS balance
+        FROM bridge_diffs_5m
+        GROUP BY asset;
         `;
 
         return [ query, [] ];
-    },
-    getAllBridgeDiffs() {
-
     }
 };
 

@@ -805,6 +805,54 @@ const start = () => {
         if (!err) {
             console.log("Connected to postgres...");
             
+            // List kafka topics
+            kafkaAdmin.listTopics((err, res) => {
+                if (!err) {
+                    console.log("Kafka Topics: ", res);
+
+                    // Check for "trades" topic
+                    const topics = [];
+                    for (let i=1; i<res.length; i++) {
+                        topics.push(Object.keys(res[i].metadata)[0]);
+                    }
+
+                    if (topics.includes("trades")) {
+
+                        console.log("Topic already exists.");
+                        // Set up consumer
+                        setConsumer(kafkaConsumer);
+
+                    } else {
+
+                        // Create topics.
+                        const topics = [];
+                        for (let topicName of Object.keys(topicBusEventMappings)) {
+                            topics.push({
+                                topic: topicName,
+                                partitions: 1,
+                                replicationFactor: 1
+                            })
+                        }
+
+                        kafkaAdmin.createTopics(topics, (err, result) => {
+                            if (!err) {
+
+                                console.log("Topics created successfully");
+                                // Set up consumer
+                                setConsumer(kafkaClient, kafkaConsumer);
+
+                            } else {
+                                console.log(err);
+                            }
+                        });
+                    };
+
+                } else {
+                    console.log("Failed to list topics");
+                    console.error(err);
+                };
+            });
+
             // List tables
             pgClient.query('SELECT * FROM information_schema.tables;', (err, res) => {
                 if (!err) {
@@ -837,53 +885,6 @@ const start = () => {
         }
     });
 
-    // List kafka topics
-    kafkaAdmin.listTopics((err, res) => {
-        if (!err) {
-            console.log("Kafka Topics: ", res);
-
-            // Check for "trades" topic
-            const topics = [];
-            for (let i=1; i<res.length; i++) {
-                topics.push(Object.keys(res[i].metadata)[0]);
-            }
-
-            if (topics.includes("trades")) {
-
-                console.log("Topic already exists.");
-                // Set up consumer
-                setConsumer(kafkaConsumer);
-
-            } else {
-
-                // Create topics.
-                const topics = [];
-                for (let topicName of Object.keys(topicBusEventMappings)) {
-                    topics.push({
-                        topic: topicName,
-                        partitions: 1,
-                        replicationFactor: 1
-                    })
-                }
-
-                kafkaAdmin.createTopics(topics, (err, result) => {
-                    if (!err) {
-
-                        console.log("Topics created successfully");
-                        // Set up consumer
-                        setConsumer(kafkaClient, kafkaConsumer);
-
-                    } else {
-                        console.log(err);
-                    }
-                });
-            };
-
-        } else {
-            console.log("Failed to list topics");
-            console.error(err);
-        };
-    });
 };
 
 // let mostRecentBeginBlock;
@@ -896,7 +897,7 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
     //     console.log(evt);
     //     mostRecentBeginBlock = evt.beginBlock;
     // });
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "trades" }], { groupId: "trades-group" });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "trades-group-00" });
     kafkaConsumer.on("message", (msg) => {
         // console.log("New message");
         const evt = JSON.parse(msg.value);
@@ -936,6 +937,7 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
             // console.log(evt);
         }
     });
+    kafkaConsumer.addTopics([{ topic: 'trades', offset: 0 }], () => console.log("topic added"));
 };
 
 const persistTrade = (trade) => {
@@ -945,6 +947,7 @@ const persistTrade = (trade) => {
         if(err) {
             console.log("Error performing insert of trade");
             console.log(err);
+            console.log(trade);
         } else {
             // console.log("Insert successful");
         };

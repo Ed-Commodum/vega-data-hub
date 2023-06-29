@@ -163,7 +163,7 @@ const start = () => {
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [{ topic: "markets" }], { groupId: "markets-group" });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "markets-group-00" });
     kafkaConsumer.on("message", (msg) => {
 
         const dateTime = new Date(Date.now()).toISOString();
@@ -190,6 +190,7 @@ const setConsumer = (kafkaConsumer) => {
         }
 
     });
+    kafkaConsumer.addTopics([{ topic: 'markets', offset: 0 }], () => console.log("topic added"));
 };
 
 

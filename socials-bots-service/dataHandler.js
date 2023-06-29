@@ -1,3 +1,5 @@
+const { SlashCommandRoleOption } = require("discord.js");
+
 class DataHandler {
     constructor(apiAddr) {
         this.apiAddr = apiAddr;
@@ -22,6 +24,10 @@ class DataHandler {
                 assetDecimals: market.assetDecimals,
                 priceDecimals: market.priceDecimals,
                 positionDecimals: market.positionDecimals
+            };
+            this.assetDecimals[market.settlementAsset] = {
+                assetName: market.quoteName,
+                decimals: market.assetDecimals
             };
         }
         // console.log(this.decimals);
@@ -76,10 +82,10 @@ class DataHandler {
                     timestamp: market.timestamp,
                     infraTimestamp: market.infraTimestamp,
                     fees: {
-                        total: this.convertFeeUnits(market.marketId, market.fees.total, 'Total fees'),
-                        maker: this.convertFeeUnits(market.marketId, market.fees.maker, 'Maker fees'),
-                        liquidity: this.convertFeeUnits(market.marketId, market.fees.liquidity, 'Liquidity fees'),
-                        infrastructure: this.convertFeeUnits(market.marketId, market.fees.infrastructure, 'Infrastructure fees')
+                        total: this.convertAssetUnits(this.decimals[market.marketId].settlementAsset, market.fees.total, 'Total fees'),
+                        maker: this.convertAssetUnits(this.decimals[market.marketId].settlementAsset, market.fees.maker, 'Maker fees'),
+                        liquidity: this.convertAssetUnits(this.decimals[market.marketId].settlementAsset, market.fees.liquidity, 'Liquidity fees'),
+                        infrastructure: this.convertAssetUnits(this.decimals[market.marketId].settlementAsset, market.fees.infrastructure, 'Infrastructure fees')
                     }
                 }
             );
@@ -91,7 +97,7 @@ class DataHandler {
         const openInterestJson = await openInterestRes.json();
         this.openInterests.length = 0;
         for (let market of openInterestJson.openInterests) {
-            console.log(market);
+            // console.log(market);
             if (!Object.keys(this.decimals).includes(market.marketId)) continue;
             this.openInterests.push(
                 {
@@ -107,7 +113,19 @@ class DataHandler {
     }
 
     async updateTotalValueLocked() {
-        const tvlRes = await fetch(`${this.apiAddr}/total-value-locked`);
+        const tvlRes = await fetch(`${this.apiAddr}/bridge-balances`);
+        const tvlJson = await tvlRes.json();
+        this.totalValueLocked.length = 0;
+        for (let asset of tvlJson.balances) {
+            if (!Object.keys(this.assetDecimals).includes(asset.assetId)) continue;
+            this.totalValueLocked.push(
+                {
+                    assetId: asset.assetId,
+                    assetName: this.assetDecimals[asset.assetId].assetName,
+                    balance: this.convertAssetUnits(asset.assetId, asset.balance, 'Bridge balance')
+                }
+            );
+        }
     }
 
     convertVolumeUnits(marketId, volume) {
@@ -120,11 +138,11 @@ class DataHandler {
         return converted;
     }
 
-    convertFeeUnits(marketId, fee, type) {
-        const assetName = this.decimals[marketId].assetName;
-        const assetDecimals = this.decimals[marketId].assetDecimals;
-        const converted = BigInt(fee) / 10n**BigInt(assetDecimals);
-        console.log(`${type}: ${fee.toString()} converted to ${converted.toLocaleString()} ${assetName}`);
+    convertAssetUnits(assetId, amount, type) {
+        const assetName = this.assetDecimals[assetId].assetName;
+        const assetDecimals = this.assetDecimals[assetId].decimals;
+        const converted = BigInt(amount) / 10n**BigInt(assetDecimals);
+        console.log(`${type}: ${amount.toString()} converted to ${converted.toLocaleString()} ${assetName}`);
         return converted;
     }
 
@@ -173,7 +191,11 @@ class DataHandler {
     }
 
     getTotalValueLocked() {
-        
+        const result = {};
+        for (let asset of this.totalValueLocked) {
+            result[asset.assetName] = asset.balance;
+        }
+        return result;
     }
 
 }

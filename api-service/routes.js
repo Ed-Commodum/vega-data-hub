@@ -1446,6 +1446,59 @@ const routes = (app, pgPool) => {
 
     });
 
+    app.get('/bridge-balances', async (req, res) => {
+        // Accepts an assetId (optional) and returns the current balance that Vega Core sees in the bridge
+        // for the asset. Omitting the assetId returns the balances for all assets that Vega Core sees in
+        // the bridge.
+
+        const result = {
+            balances: [
+                {
+                    assetId: "",
+                    timestamp: "",
+                    balance: ""
+                }
+            ]
+        };
+
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+
+        const assetId = req.query.assetId;
+
+        switch (true) {
+            case (assetId != undefined): {
+                const res = await asyncQuery('bridge-balance', ...assetQueries.getBridgeBalance(assetId), pgPool);
+                if (!res[1][0]) break;
+                // ----------------------- Temporarily filter out VEGA ----------------------- //
+                if (res[1][0].asset == 'd1984e3d365faa05bcafbe41f50f90e3663ee7c0da22bb1e24b164e9532691b2') break;
+                // Add it again once "TRANSFER_TYPE_CHECKPOINT_BALANCE_RESTORE" is accounted for
+                result.balances[0].assetId = res[1][0].asset;
+                result.balances[0].timestamp = res[1][0].timestamp;
+                result.balances[0].balance = res[1][0].balance;
+                break;
+            }
+            case (assetId == undefined): {
+                const res = await asyncQuery('bridge-balances', ...assetQueries.getAllBridgeBalances(), pgPool);
+                if (!res[1][0]) break;
+                result.length = 0;
+                for (let asset of res[1]) {
+                    // ----------------------- Temporarily filter out VEGA ----------------------- //
+                    if (asset.asset == 'd1984e3d365faa05bcafbe41f50f90e3663ee7c0da22bb1e24b164e9532691b2') continue;
+                    // Add it again once "TRANSFER_TYPE_CHECKPOINT_BALANCE_RESTORE" is accounted for
+                    result.balances.push({
+                        assetId: asset.asset,
+                        timestamp: asset.timestamp,
+                        balance: asset.balance
+                    });
+                }
+                break;
+            }
+        }
+        res.send(result);
+    });
+
     // ---------- UNTESTED ---------- //
     app.get('/simple-moving-average', async (req, res) => {
         // Accepts a marketId, an interval, a windowLength, and a limit and returns the corresponding

@@ -271,6 +271,28 @@ const continuousAggregates = {
             SELECT
                 time_bucket(300000000000, synth_timestamp) as bucket,
                 max(timestamp) AS timestamp,
+                type,
+                to_account_owner AS to_account,
+                to_account_asset AS asset,
+                from_account_owner AS from_account,
+                amount
+            FROM ledger_movements
+            WHERE type = 'TRANSFER_TYPE_DEPOSIT' OR type = 'TRANSFER_TYPE_WITHDRAW'
+            GROUP BY asset, to_account, from_account, type, amount, time_bucket(300000000000, synth_timestamp);
+            `,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('deposits_withdrawals_5m',
+            start_offset => '2592000000000000'::bigint,
+            end_offset => '60000000000'::bigint,
+            schedule_interval => INTERVAL '1 minute');`
+        }
+    },
+    bridgeDiffs: {
+        interval_5m: {
+            createMatView: `CREATE MATERIALIZED VIEW bridge_diffs_5m
+            with (timescaledb.continuous) AS
+            SELECT
+                time_bucket(300000000000, synth_timestamp) as bucket,
+                max(timestamp) AS timestamp,
                 CASE
                     WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN to_account_owner
                     WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN from_account_owner
@@ -281,12 +303,14 @@ const continuousAggregates = {
                 END AS asset,
                 sum(CASE
                         WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN amount
-                        WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN - amount
+                        WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN -amount
+                        ELSE 0
                     END) AS diff
             FROM ledger_movements
+            WHERE type = 'TRANSFER_TYPE_DEPOSIT' OR type = 'TRANSFER_TYPE_WITHDRAW'
             GROUP BY asset, party_id, time_bucket(300000000000, synth_timestamp);
             `,
-            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('deposits_withdrawals_5m',
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('bridge_diffs_5m',
             start_offset => '2592000000000000'::bigint,
             end_offset => '60000000000'::bigint,
             schedule_interval => INTERVAL '1 minute');`
@@ -431,7 +455,7 @@ const flushLedgerMovementsQueue = () => {
             ledgerMovementsToInsert.push(...formatLedgerMovements(evt, block));
         }
 
-        if (ledgerMovementsToInsert.length >= 200) {
+        if (ledgerMovementsToInsert.length >= 300) {
             persistLedgerMovements(ledgerMovementsToInsert);
             while (ledgerMovementsToInsert.length) ledgerMovementsToInsert.shift();
         }
@@ -443,40 +467,11 @@ const flushLedgerMovementsQueue = () => {
         while (ledgerMovementsToInsert.length) ledgerMovementsToInsert.shift();
     }
 
-    ledgerMovementsIntervalId = setInterval(flushLedgerMovementsQueue, 50);
+    ledgerMovementsIntervalId = setInterval(flushLedgerMovementsQueue, 100);
 
 }
 
-ledgerMovementsIntervalId = setInterval(flushLedgerMovementsQueue, 50);
-
-const flushTransferUpdateQueue = () => {
-    
-    clearInterval(intervalId);
-
-    while (posUpdateQueue.length) {
-        
-        const event = posUpdateQueue.shift();
-        const height = event.id.split('-')[0];
-        const eventIndex = event.id.split('-')[1];
-        const block = recentBlocks.get(height);
-
-        if (!block) {
-            posUpdateQueue.unshift(event);
-            break;
-        }
-        
-        event.positionStateEvent["synthTimestamp"] = BigInt(block.timestamp) + BigInt(eventIndex);
-
-        persistPositionStateUpdate(event.positionStateEvent);
-        persistPositionState(event.positionStateEvent);
-
-    }
-
-    intervalId = setInterval(flushPosUpdateQueue, 50);
-
-};
-
-// intervalId = setInterval(flushPosUpdateQueue, 50);
+ledgerMovementsIntervalId = setInterval(flushLedgerMovementsQueue, 100);
 
 const start = () => {
 
@@ -499,11 +494,19 @@ const start = () => {
                     console.log("Created tables.");
                     console.log(res);
                     // Set integer time.
-                    pgClient.query(setIntegerNowFunc, (err, res) => {
+                    pgClient.query(setIntegerNowFunc, async (err, res) => {
                         if(!err) {
                             console.log(res);
-                            createContAggs(pgPool, ["feesPaid", "feesEarned", "pnlDeltas", "infraFeesByAsset"]);
-                            
+                            await createContAggs(pgPool, ["feesPaid", "feesEarned", "pnlDeltas", "infraFeesByAsset", "bridgeDiffs"]);
+                            kafkaAdmin.createTopics([{ topic: "transfers", partitions: 1, replicationFactor: 1 }], (err, result) => {
+                                if (!err) {
+                                    console.log("Topics created successfully");
+                                    // Set up consumer
+                                    setConsumer(kafkaConsumer);
+                                } else {
+                                    console.log(err);
+                                }
+                            });
                         } else {
                             console.log(err);
                         };
@@ -516,28 +519,10 @@ const start = () => {
             console.log(err);
         };
     });
-
-    const topic = [{
-        topic: "transfers",
-        partitions: 1,
-        replicationFactor: 1
-    }]
-
-    kafkaAdmin.createTopics(topic, (err, result) => {
-        if (!err) {
-
-            console.log("Topics created successfully");
-            // Set up consumer
-            setConsumer(kafkaConsumer);
-
-        } else {
-            console.log(err);
-        }
-    });
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "transfers-group", fetchMaxBytes: 2 * 1024 * 1024, fromOffset: 'true' });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "transfers-group-04", fetchMaxBytes: 2 * 1024 * 1024, fromOffset: 'true' });
     kafkaConsumer.on("message", (msg) => {
 
         // const dateTime = new Date(Date.now()).toISOString();
@@ -581,6 +566,7 @@ const formatLedgerMovements = (evt, block) => { // movements) => {
 
     try {
         for (let movement of movements) {
+            if (!movement.entries) continue;
             for (let entry of movement.entries) {
 
                 // Assign synthetic timestamp to ledger movement
@@ -623,7 +609,7 @@ const formatLedgerMovements = (evt, block) => { // movements) => {
         }
     } catch (err) {
         console.log(err);
-        console.log(movements)
+        console.dir(movements, {depth:null});
     }
 
     return rows;
@@ -632,8 +618,7 @@ const formatLedgerMovements = (evt, block) => { // movements) => {
 
 const persistLedgerMovements = (rows) => {
 
-    console.log("Inserting")
-
+    // console.log("Inserting")
     // pgClient.query(format(fInsertLedgerMovements, rows), [], (err, res) => {
     pgPool.query(format(fInsertLedgerMovements, rows), [], (err, res) => {
         if (!err) {

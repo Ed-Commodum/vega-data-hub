@@ -405,46 +405,34 @@ const setConsumer = () => {
     // let msgCount = 0;
 
     kafkaConsumer.on('message', (msg) => {
-
         // msgCount++;
         // if (msgCount % 1000 == 0) {
         //     console.log(`Time to poll 1000 messages: ${performance.now() - startTime}`);
         //     startTime = performance.now();
         // }
-
         const evt = JSON.parse(msg.value);
-
         if (msg.topic == "blocks") {
             // console.log(msg);
             if (evt.Event.BeginBlock) recentBlocks.push(evt.Event.BeginBlock);
         }
-
         if (msg.topic == "orders") {
-
             if (evt.Event.BeginBlock) {
                 recentBlocks.push(evt.Event.BeginBlock);
             }
-
             if (evt.Event.Order) {
                 // console.log(evt);
                 orderQueue.push(evt);
             }
-
             if (evt.Event.ExpiredOrders) {
                 // console.log(evt);
                 orderQueue.push(evt);
             }
-
             if (evt.Event.DistressedOrdersClosed) {
                 console.log(evt);
             }
-
         }
-
     });
-
-
-
+    kafkaConsumer.addTopics([{ topic: 'orders', offset: 0 },{ topic: 'blocks', offset: 0 }], () => console.log("topic added"));
 };
 
 // const setConsumer = (kafkaConsumer) => {
