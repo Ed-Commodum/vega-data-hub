@@ -134,7 +134,7 @@ const start = () => {
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "assets-group-02" });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "assets-group-10" });
     kafkaConsumer.on("message", (msg) => {
         // const dateTime = new Date(Date.now()).toISOString();
         // console.log(`${dateTime}: New message`);

@@ -163,7 +163,7 @@ const start = () => {
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "markets-group-02" });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "markets-group-10" });
     kafkaConsumer.on("message", (msg) => {
 
         const dateTime = new Date(Date.now()).toISOString();

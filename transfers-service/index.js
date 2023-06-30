@@ -522,7 +522,7 @@ const start = () => {
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "transfers-group-03", fetchMaxBytes: 2 * 1024 * 1024, fromOffset: 'true' });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "transfers-group-10", fetchMaxBytes: 2 * 1024 * 1024, fromOffset: 'true' });
     kafkaConsumer.on("message", (msg) => {
 
         // const dateTime = new Date(Date.now()).toISOString();
