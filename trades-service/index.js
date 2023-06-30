@@ -203,7 +203,7 @@ INSERT INTO trades (
     seller_fee_infrastructure,
     seller_fee_liquidity,
     is_first_in_bucket
-) SELECT DISTINCT * FROM ( VALUES %L ) t ON CONFLICT DO NOTHING;
+) SELECT DISTINCT * FROM ( VALUES %s ) t ON CONFLICT DO NOTHING;
 `;
 
 const setIntegerNowFunc = `
@@ -1001,7 +1001,23 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
 };
 
 const batchPersistTrades = (rows) => {
-    pgPool.query(format(fInsertTrades, rows), [], (err, res) => {
+    
+    // Format first row to contain type castings
+    const firstRow = rows[0];
+    const typeCastings = [
+        '::text', '::text', '::bigint', '::bigint', '::text', '::text', '::text', '::text',
+        '::text', '::text', '::bigint', '::text', '::numeric(40)', '::numeric(40)', '::numeric(40)',
+        '::numeric(40)', '::numeric(40)', '::numeric(40)', '::integer'
+    ];
+
+    let template = `(`;
+    for (let elem of rows[0]) {
+        template = template + format(`%L%%s, `, elem);
+    }
+
+    console.log(format(fInsertTrades, format(template.slice(0,-2)+')', ...typeCastings)+', '+format('%L', rows.slice(1))));
+
+    pgPool.query(format(fInsertTrades, format(template.slice(0,-2)+')', ...typeCastings)+', '+format('%L', rows.slice(1))), [], (err, res) => { // format(fInsertTrades, rows)
         if (!err) {
             
         } else {
