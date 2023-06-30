@@ -203,7 +203,7 @@ INSERT INTO trades (
     seller_fee_infrastructure,
     seller_fee_liquidity,
     is_first_in_bucket
-) SELECT DSITINCT * FROM ( VALUES %L ) t ON CONFLICT DO NOTHING;
+) SELECT DISTINCT * FROM ( VALUES %L ) t ON CONFLICT DO NOTHING;
 `;
 
 const setIntegerNowFunc = `
