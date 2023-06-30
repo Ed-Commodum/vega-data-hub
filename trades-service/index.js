@@ -929,7 +929,7 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
     //     console.log(evt);
     //     mostRecentBeginBlock = evt.beginBlock;
     // });
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "trades-group-13" });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "trades-group-14" });
     kafkaConsumer.on("message", (msg) => {
         // console.log("New message");
         const evt = JSON.parse(msg.value);
