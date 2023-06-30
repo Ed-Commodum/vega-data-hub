@@ -7,6 +7,7 @@
 //  - Save trades to db.
 
 const { Client, Pool } = require('pg');
+const format = require('pg-format');
 
 const pgClient = new Client({
     host: process.env.TIMESCALEDB_HOST,
@@ -40,6 +41,13 @@ console.log(process.env);
 
 let kafkaConsumer;
 let kafkaConsumerBlocks;
+
+const formattedBatch = [];
+const flushFormattedBatchInterval = setInterval(() => {
+    if (formattedBatch.length == 0) return;
+    batchPersistTrades(formattedBatch.slice());
+    formattedBatch.length = 0;
+}, 100);
 
 let subQueue = [];
 const intervalMap = {
@@ -149,6 +157,30 @@ INSERT INTO trades (
 ) RETURNING *`
 // ON CONFLICT DO NOTHING
 // RETURNING *`
+
+const fInsertTrades = `
+INSERT INTO trades (
+    id,
+    market_id,
+    price,
+    size,
+    buyer,
+    seller,
+    aggressor,
+    buy_order,
+    sell_order,
+    timestamp,
+    synth_timestamp,
+    type,
+    buyer_fee_maker,
+    buyer_fee_infrastructure,
+    buyer_fee_liquidity,
+    seller_fee_maker,
+    seller_fee_infrastructure,
+    seller_fee_liquidity,
+    is_first_in_bucket
+) values %L RETURNING *;
+`;
 
 const setIntegerNowFunc = `
 CREATE FUNCTION most_recent_trade_time(in market_id TEXT) RETURNS BIGINT
@@ -897,7 +929,7 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
     //     console.log(evt);
     //     mostRecentBeginBlock = evt.beginBlock;
     // });
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "trades-group-10" });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "trades-group-11" });
     kafkaConsumer.on("message", (msg) => {
         // console.log("New message");
         const evt = JSON.parse(msg.value);
@@ -931,6 +963,12 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
                 console.log(trade);
             }
 
+            formattedBatch.push(formatTrade(trade));
+            if (formattedBatch.length >= 300) {
+                batchPersistTrades(formattedBatch.slice());
+                formattedBatch.length = 0;
+            }
+
             persistTrade(formatTrade(trade));
         }
         if (evt.Event.BeginBlock) {
@@ -938,6 +976,17 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
         }
     });
     kafkaConsumer.addTopics([{ topic: 'trades', offset: 0 }], () => console.log("topic added"));
+};
+
+const batchPersistTrades = (rows) => {
+    pgPool.query(format(fInsertTrades, rows), [], (err, res) => {
+        if (!err) {
+            
+        } else {
+            console.log(`Error performing inserts`);
+            console.log(err);
+        }
+    });
 };
 
 const persistTrade = (trade) => {
