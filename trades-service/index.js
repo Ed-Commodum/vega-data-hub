@@ -1002,8 +1002,6 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
 
 const batchPersistTrades = (rows) => {
     
-    // Format first row to contain type castings
-    const firstRow = rows[0];
     const typeCastings = [
         '::text', '::text', '::bigint', '::bigint', '::text', '::text', '::text', '::text',
         '::text', '::text', '::bigint', '::text', '::numeric(40)', '::numeric(40)', '::numeric(40)',
@@ -1015,7 +1013,7 @@ const batchPersistTrades = (rows) => {
         template = template + format(`%L%%s, `, elem);
     }
 
-    console.log(format(fInsertTrades, format(template.slice(0,-2)+')', ...typeCastings)+', '+format('%L', rows.slice(1))));
+    // console.log(format(fInsertTrades, format(template.slice(0,-2)+')', ...typeCastings)+', '+format('%L', rows.slice(1))));
 
     pgPool.query(format(fInsertTrades, format(template.slice(0,-2)+')', ...typeCastings)+', '+format('%L', rows.slice(1))), [], (err, res) => { // format(fInsertTrades, rows)
         if (!err) {

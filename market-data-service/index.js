@@ -402,7 +402,19 @@ const formatMarketData = (item) => {
 
 const batchPersistMarketData = (rows) => {
 
-    pgClient.query(format(fInsertMarketDataUpdates, rows), [], (err, res) => {
+    const typeCastings = [
+        '::text', '::numeric', '::numeric', '::numeric', '::numeric',
+        '::numeric', '::numeric', '::bigint', '::numeric', '::numeric'
+    ];
+
+    let template = `(`;
+    for (let elem of rows[0]) {
+        template = template + format(`%L%%s, `, elem);
+    }
+
+    // console.log(format(fInsertMarketDataUpdates, format(template.slice(0,-2)+')', ...typeCastings)+', '+format('%L', rows.slice(1))));
+
+    pgClient.query(format(fInsertMarketDataUpdates, format(template.slice(0,-2)+')', ...typeCastings)+', '+format('%L', rows.slice(1))), [], (err, res) => {
         if (!err) {
             
         } else {
