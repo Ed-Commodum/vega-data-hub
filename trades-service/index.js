@@ -44,7 +44,7 @@ let kafkaConsumerBlocks;
 
 const formattedBatch = [];
 const flushFormattedBatchInterval = setInterval(() => {
-    if (formattedBatch.length == 0) return;
+    if (formattedBatch.length == 0 || formattedBatch.length == 1) return;
     batchPersistTrades(formattedBatch.slice());
     formattedBatch.length = 0;
 }, 100);
@@ -953,7 +953,7 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
     //     console.log(evt);
     //     mostRecentBeginBlock = evt.beginBlock;
     // });
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "trades-group-21" });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "trades-group-22" });
     kafkaConsumer.on("message", (msg) => {
         // console.log("New message");
         const evt = JSON.parse(msg.value);

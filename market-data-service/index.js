@@ -32,7 +32,7 @@ const kafkaClient = new kafka.KafkaClient({ kafkaHost: kafkaBrokers });
 let kafkaConsumer;
 const formattedBatch = [];
 const flushFormattedBatchInterval = setInterval(() => {
-    if (formattedBatch.length == 0) return;
+    if (formattedBatch.length == 0 || formattedBatch.length == 1) return;
     batchPersistMarketData(formattedBatch.slice());
     formattedBatch.length = 0;
 }, 100);
@@ -354,7 +354,7 @@ const start = () => {
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: `market-data-group-21`, fromOffset: true }); //groupId: "market-data-group"
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: `market-data-group-22`, fromOffset: true }); //groupId: "market-data-group"
     let counter = 0;
     kafkaConsumer.on("message", (msg) => {
         // const dateTime = new Date(Date.now()).toISOString();
