@@ -385,7 +385,7 @@ const setConsumer = (kafkaConsumer) => {
     kafkaConsumer.addTopics([{ topic: 'market_data', offset: 0 }], () => console.log("topic added"));
 };
 
-formatMarketData = (item) => {
+const formatMarketData = (item) => {
 
     // console.log(item);
 
@@ -400,7 +400,7 @@ formatMarketData = (item) => {
 
 }
 
-batchPersistMarketData = (rows) => {
+const batchPersistMarketData = (rows) => {
 
     pgClient.query(format(fInsertMarketDataUpdates, rows), [], (err, res) => {
         if (!err) {
@@ -413,7 +413,7 @@ batchPersistMarketData = (rows) => {
 
 }
 
-persistMarketData = (item) => {
+const persistMarketData = (item) => {
 
     pgClient.query(insertMarketDataUpdate, item, (err, res) => {
         if(!err) {
