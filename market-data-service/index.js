@@ -103,7 +103,7 @@ INSERT INTO market_data_updates (
     timestamp,
     open_interest,
     last_traded_price
-) values %s RETURNING *;`
+) SELECT DISTINCT * FROM ( VALUES %s ) t ON CONFLICT DO NOTHING;`
 
 const setIntegerNowFunc = `
 SELECT set_integer_now_func('market_data_updates', 'current_time_ns');
@@ -354,7 +354,7 @@ const start = () => {
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: `market-data-group-22`, fromOffset: true }); //groupId: "market-data-group"
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: `market-data-group-23`, fromOffset: true }); //groupId: "market-data-group"
     let counter = 0;
     kafkaConsumer.on("message", (msg) => {
         // const dateTime = new Date(Date.now()).toISOString();
