@@ -968,8 +968,6 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
                 batchPersistTrades(formattedBatch.slice());
                 formattedBatch.length = 0;
             }
-
-            persistTrade(formatTrade(trade));
         }
         if (evt.Event.BeginBlock) {
             // console.log(evt);
