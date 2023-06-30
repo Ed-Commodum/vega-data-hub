@@ -158,6 +158,30 @@ INSERT INTO trades (
 // ON CONFLICT DO NOTHING
 // RETURNING *`
 
+// const fInsertTrades = `
+// INSERT INTO trades (
+//     id,
+//     market_id,
+//     price,
+//     size,
+//     buyer,
+//     seller,
+//     aggressor,
+//     buy_order,
+//     sell_order,
+//     timestamp,
+//     synth_timestamp,
+//     type,
+//     buyer_fee_maker,
+//     buyer_fee_infrastructure,
+//     buyer_fee_liquidity,
+//     seller_fee_maker,
+//     seller_fee_infrastructure,
+//     seller_fee_liquidity,
+//     is_first_in_bucket
+// ) values %L RETURNING *;
+// `;
+
 const fInsertTrades = `
 INSERT INTO trades (
     id,
@@ -179,7 +203,7 @@ INSERT INTO trades (
     seller_fee_infrastructure,
     seller_fee_liquidity,
     is_first_in_bucket
-) values %L RETURNING *;
+) SELECT DSITINCT * FROM ( VALUES %L ) t ON CONFLICT DO NOTHING;
 `;
 
 const setIntegerNowFunc = `
@@ -929,7 +953,7 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
     //     console.log(evt);
     //     mostRecentBeginBlock = evt.beginBlock;
     // });
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "trades-group-17" });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "trades-group-18" });
     kafkaConsumer.on("message", (msg) => {
         // console.log("New message");
         const evt = JSON.parse(msg.value);
@@ -983,6 +1007,11 @@ const batchPersistTrades = (rows) => {
         } else {
             console.log(`Error performing inserts`);
             console.log(err);
+            console.log(`Error Code: `, err.code);
+            if (err.code == '23505') { // Duplicate key violates unique constraint
+                // Retry inserts individually
+
+            }
         }
     });
 };

@@ -399,7 +399,7 @@ const setConsumer = () => {
         fetchMaxBytes: 2 * 1024 * 1024
     };
 
-    const kafkaConsumer = new kafka.ConsumerGroup(options, ['orders', 'blocks']);
+    const kafkaConsumer = new kafka.ConsumerGroup(options, []);
 
     // let startTime = performance.now();
     // let msgCount = 0;
