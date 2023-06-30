@@ -41,10 +41,10 @@ spec:
         resources:
           limits:
             cpu: 600m
-            memory: 1.5Gi
+            memory: 2.5Gi
           requests:
             cpu: 600m
-            memory: 1.5Gi
+            memory: 2.5Gi
         volumeMounts:
           - mountPath: /home/pgdata/
             name: timescaledb-pv-storage-mainnet
@@ -151,10 +151,10 @@ spec:
     resources:
       limits:
         cpu: 600m
-        memory: 1300Mi
+        memory: 1500Mi
       requests:
         cpu: 600m
-        memory: 1300Mi
+        memory: 1500Mi
     env:
     - name: ZOOKEEPER_HOST
       value: zookeeper-service-mainnet
