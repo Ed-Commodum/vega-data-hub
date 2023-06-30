@@ -41,7 +41,7 @@ RUN touch pass.txt && \
     sed -i '/Snapshot/,+6{/Snapshot/,+5{b};s/.*/  StartHeight = -1/}' .config/vega/node/config.toml && \
     cp node-config/genesis.json .cometbft/config/genesis.json && \
     sed -i "/persistent_peers =/c\persistent_peers = '$PEERS'" .cometbft/config/config.toml && \
-    sed -i "/indexer =/c\indexer = 'null'" .cometbft/config/config.toml && \
+    # sed -i "/indexer =/c\indexer = 'null'" .cometbft/config/config.toml && \
     # sed -i "/max_packet_msg_payload_size =/c\max_packet_msg_payload_size = 16384" .tendermint/config/config.toml && \
     vega nodewallet import --output json --chain tendermint --tendermint-home /home/ian/.cometbft --passphrase-file /home/ian/pass.txt --wallet-passphrase-file /home/ian/pass.txt && \
     vega nodewallet generate --output json --chain vega --passphrase-file /home/ian/pass.txt --wallet-passphrase-file /home/ian/pass.txt
