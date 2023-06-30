@@ -40,11 +40,11 @@ spec:
         - containerPort: 5432
         resources:
           limits:
-            cpu: 1500m
-            memory: 3.5Gi
+            cpu: 1800m
+            memory: 6Gi
           requests:
-            cpu: 1500m
-            memory: 3.5Gi
+            cpu: 1800m
+            memory: 6Gi
         volumeMounts:
           - mountPath: /home/pgdata/
             name: timescaledb-pv-storage-mainnet
@@ -67,7 +67,7 @@ metadata:
 spec:
   storageClassName: ""
   capacity:
-    storage: 40Gi
+    storage: 60Gi
   accessModes:
     - ReadWriteOnce
   hostPath:
@@ -84,7 +84,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 35Gi
+      storage: 58Gi
 ---
 apiVersion: v1
 kind: Service
@@ -150,11 +150,11 @@ spec:
     image: ubuntu/kafka:latest
     resources:
       limits:
-        cpu: 600m
-        memory: 1500Mi
+        cpu: 700m
+        memory: 1600Mi
       requests:
-        cpu: 600m
-        memory: 1500Mi
+        cpu: 700m
+        memory: 1600Mi
     env:
     - name: ZOOKEEPER_HOST
       value: zookeeper-service-mainnet
