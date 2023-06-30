@@ -103,7 +103,7 @@ INSERT INTO market_data_updates (
     timestamp,
     open_interest,
     last_traded_price
-) values %L RETURNING *;`
+) values %s RETURNING *;`
 
 const setIntegerNowFunc = `
 SELECT set_integer_now_func('market_data_updates', 'current_time_ns');
