@@ -450,11 +450,11 @@ spec:
     image: data-hub/socials-bots-mainnet
     imagePullPolicy: Never
     env:
-    - name: DISCORD_TOKEN
-      valueFrom:
-        secretKeyRef:
-          name: discord-token
-          key: token
+    # - name: DISCORD_TOKEN
+    #   valueFrom:
+    #     secretKeyRef:
+    #       name: discord-token
+    #       key: token
     - name: DISCORD_TOKENS
       valueFrom:
         secretKeyRef:
