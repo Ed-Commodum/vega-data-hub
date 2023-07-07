@@ -225,6 +225,63 @@ AS $$
     LIMIT 1
 $$ LANGUAGE SQL;
 
+CREATE FUNCTION most_recent_party_data_bucket(market_id TEXT, _table TEXT, party_id TEXT)
+RETURNS BIGINT
+LANGUAGE plpgsql
+AS
+$$
+DECLARE
+    retval BIGINT;
+BEGIN
+    EXECUTE format('
+        SELECT bucket
+        FROM %I
+        WHERE market_id = %L AND (buyer = %L OR seller = %L)
+        ORDER BY bucket DESC 
+        LIMIT 1;', _table, market_id, party_id, party_id)
+    INTO retval;
+    RETURN retval;
+END
+$$;
+
+CREATE FUNCTION first_party_data_bucket(market_id TEXT, _table TEXT, party_id TEXT)
+RETURNS BIGINT
+LANGUAGE plpgsql
+AS
+$$
+DECLARE
+    retval BIGINT;
+BEGIN
+    EXECUTE format('
+        SELECT bucket
+        FROM %I
+        WHERE market_id = %L AND (buyer = %L OR seller = %L)
+        ORDER BY bucket
+        LIMIT 1;', _table, market_id, party_id, party_id)
+    INTO retval;
+    RETURN retval;
+END
+$$;
+
+CREATE FUNCTION most_recent_party_data_bucket(in market_id TEXT, in _table TEXT, in party_id TEXT) RETURNS BIGINT
+AS $$
+    EXECUTE format('
+        SELECT bucket
+        FROM %I
+        WHERE market_id = $1 AND (buyer = $3 OR seller = $3)
+        ORDER BY bucket DESC 
+        LIMIT 1 RETURNING', $2)
+$$ LANGUAGE SQL;
+
+CREATE FUNCTION first_party_data_bucket(in market_id TEXT, in _table TEXT, in party_id TEXT) RETURNS BIGINT
+AS $$
+    EXECUTE format('
+        SELECT bucket
+        FROM %I
+        WHERE market_id = $1 AND (buyer = $3 OR seller = $3)
+        ORDER BY bucket 
+        LIMIT 1 RETURNING', $2);
+$$ LANGUAGE SQL;
 
 CREATE FUNCTION current_time_ns() RETURNS BIGINT
 LANGUAGE SQL STABLE AS $$
@@ -233,6 +290,14 @@ $$;
 
 SELECT set_integer_now_func('trades', 'current_time_ns');
 `
+// AS $$
+//     EXECUTE format('
+//         SELECT bucket
+//         FROM %I
+//         WHERE market_id = $1 AND (buyer = $3 OR seller = $3)
+//         ORDER BY bucket 
+//         LIMIT 1', $2)
+// $$ LANGUAGE SQL;
 
 const continuousAggregates = {
     candles: {
@@ -536,7 +601,50 @@ const continuousAggregates = {
             schedule_interval => INTERVAL '1 minute');
             `
         },
-        // interval_1h: {}
+        interval_1h: {
+            createMatView: `CREATE MATERIALIZED VIEW market_data_1h
+            WITH (timescaledb.continuous) AS
+            SELECT market_id,
+                time_bucket(3600000000000, synth_timestamp) AS bucket,
+                count(market_id) AS num_trades,
+                sum(size) AS volume_contracts,
+                sum(size * price) AS volume,
+                sum(buyer_fee_infrastructure + seller_fee_infrastructure) AS fees_paid_infrastructure,
+                sum(buyer_fee_infrastructure + buyer_fee_maker +
+                    buyer_fee_liquidity + seller_fee_infrastructure +
+                    seller_fee_maker + seller_fee_liquidity) AS fees_paid,
+                max(timestamp) as timestamp
+            FROM trades
+            GROUP BY market_id, time_bucket(3600000000000, synth_timestamp);
+            `,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('market_data_1h',
+            start_offset => 2592000000000000,
+            end_offset => 60000000000,
+            schedule_interval => INTERVAL '1 minute');
+            `
+        },
+        interval_1d: {
+            createMatView: `CREATE MATERIALIZED VIEW market_data_1d
+            WITH (timescaledb.continuous) AS
+            SELECT market_id,
+                time_bucket(86400000000000, synth_timestamp) AS bucket,
+                count(market_id) AS num_trades,
+                sum(size) AS volume_contracts,
+                sum(size * price) AS volume,
+                sum(buyer_fee_infrastructure + seller_fee_infrastructure) AS fees_paid_infrastructure,
+                sum(buyer_fee_infrastructure + buyer_fee_maker +
+                    buyer_fee_liquidity + seller_fee_infrastructure +
+                    seller_fee_maker + seller_fee_liquidity) AS fees_paid,
+                max(timestamp) as timestamp
+            FROM trades
+            GROUP BY market_id, time_bucket(86400000000000, synth_timestamp);
+            `,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('market_data_1d',
+            start_offset => 2592000000000000,
+            end_offset => 60000000000,
+            schedule_interval => INTERVAL '1 minute');
+            `
+        }
     },
     partyData: {
         interval_5m: {
@@ -570,7 +678,68 @@ const continuousAggregates = {
             schedule_interval => INTERVAL '1 minute');
             `
         },
-        // interval_1h: {}
+        interval_1h: {
+            createMatView: `CREATE MATERIALIZED VIEW party_data_1h
+            WITH (timescaledb.continuous) AS
+            SELECT market_id,
+                time_bucket(3600000000000, synth_timestamp) AS bucket,
+                buyer AS buyer,
+                seller AS seller,
+                count(buyer) FILTER (WHERE buyer != seller) AS num_trades,
+                count(buyer) FILTER (WHERE buyer = seller) AS num_self_trades,
+                sum(CASE WHEN buyer != seller THEN size ELSE 0 END) AS volume_contracts,
+                sum(CASE WHEN buyer != seller THEN size ELSE 0 END * price) AS volume,
+                sum(CASE WHEN buyer = seller THEN size ELSE 0 END) AS self_volume_contracts,
+                sum(CASE WHEN buyer = seller THEN size ELSE 0 END * price) AS self_volume,
+                sum(buyer_fee_infrastructure + buyer_fee_maker + buyer_fee_liquidity) AS buyer_fee,
+                sum(buyer_fee_infrastructure) as buyer_fee_infrastructure,
+                sum(buyer_fee_maker) as buyer_fee_maker,
+                sum(buyer_fee_liquidity) as buyer_fee_liquidity,
+                sum(seller_fee_infrastructure + seller_fee_maker + seller_fee_liquidity) AS seller_fee,
+                sum(seller_fee_infrastructure) as seller_fee_infrastructure,
+                sum(seller_fee_maker) as seller_fee_maker,
+                sum(seller_fee_liquidity) as seller_fee_liquidity,
+                max(timestamp) as timestamp
+            FROM trades
+            GROUP BY market_id, buyer, seller, time_bucket(3600000000000, synth_timestamp);
+            `,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('party_data_1h',
+            start_offset => 2592000000000000,
+            end_offset => 60000000000,
+            schedule_interval => INTERVAL '1 minute');
+            `
+        },
+        interval_1d: {
+            createMatView: `CREATE MATERIALIZED VIEW party_data_1d
+            WITH (timescaledb.continuous) AS
+            SELECT market_id,
+                time_bucket(86400000000000, synth_timestamp) AS bucket,
+                buyer AS buyer,
+                seller AS seller,
+                count(buyer) FILTER (WHERE buyer != seller) AS num_trades,
+                count(buyer) FILTER (WHERE buyer = seller) AS num_self_trades,
+                sum(CASE WHEN buyer != seller THEN size ELSE 0 END) AS volume_contracts,
+                sum(CASE WHEN buyer != seller THEN size ELSE 0 END * price) AS volume,
+                sum(CASE WHEN buyer = seller THEN size ELSE 0 END) AS self_volume_contracts,
+                sum(CASE WHEN buyer = seller THEN size ELSE 0 END * price) AS self_volume,
+                sum(buyer_fee_infrastructure + buyer_fee_maker + buyer_fee_liquidity) AS buyer_fee,
+                sum(buyer_fee_infrastructure) as buyer_fee_infrastructure,
+                sum(buyer_fee_maker) as buyer_fee_maker,
+                sum(buyer_fee_liquidity) as buyer_fee_liquidity,
+                sum(seller_fee_infrastructure + seller_fee_maker + seller_fee_liquidity) AS seller_fee,
+                sum(seller_fee_infrastructure) as seller_fee_infrastructure,
+                sum(seller_fee_maker) as seller_fee_maker,
+                sum(seller_fee_liquidity) as seller_fee_liquidity,
+                max(timestamp) as timestamp
+            FROM trades
+            GROUP BY market_id, buyer, seller, time_bucket(86400000000000, synth_timestamp);
+            `,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('party_data_1d',
+            start_offset => 2592000000000000,
+            end_offset => 60000000000,
+            schedule_interval => INTERVAL '1 minute');
+            `
+        }
     }
 };
 

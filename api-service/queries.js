@@ -163,7 +163,23 @@ const marketQueries = {
 
         return [ query, [ marketId ] ];
     },
-    historicalVolume(marketId, limit, bucketSize, table) {
+    historicalVolume(marketId, limit, table) {
+        const fQuery = `
+        SELECT
+            bucket,
+            timestamp,
+            volume
+        FROM %I
+        WHERE market_id = $1
+        ORDER BY bucket DESC
+        LIMIT $2;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ marketId, limit ] ];
+    },
+    historicalVolumeGF(marketId, limit, bucketSize, table) {
         const fQuery = `
         SELECT
             time_bucket_gapfill($2::bigint, bucket) as bucket_gf,
@@ -171,15 +187,32 @@ const marketQueries = {
             CASE WHEN volume IS NULL THEN 0 ELSE volume END AS volume_gf
         FROM %I
         WHERE market_id = $1
-            AND bucket > first_trade_time($1)
+            AND bucket > (first_trade_time($1) - $2::bigint)
             AND bucket < most_recent_trade_time($1)
-        ORDER BY bucket_gf
+        ORDER BY bucket_gf DESC
         LIMIT $3;
         `;
 
         const query = format(fQuery, table);
 
         return [ query, [ marketId, bucketSize, limit ] ];
+    },
+    allHistoricalVolumes(limit, bucketSize, table) {
+        const fQuery = `
+        SELECT
+            market_id,
+            bucket,
+            timestamp,
+            volume
+        FROM %I
+        GROUP BY market_id
+        ORDER BY bucket_gf DESC
+        LIMIT $3;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ bucketSize, limit ] ];
     },
     totalVolume() {
         const query = `
@@ -593,23 +626,43 @@ const partyQueries = {
     historicalVolume(partyId, marketId, bucketSize, limit, table) {
         const fQuery = `
         SELECT
-            time_bucket_gapfill($3::bigint, bucket) AS bucket_gf,
-            CASE WHEN timestamp IS NULL THEN '0' ELSE locf(timestamp) AS timestamp_gf,
-            CASE WHEN volume IS NULL THEN 0 ELSE volume AS volume_gf,
-            CASE WHEN self_volume IS NULL THEN 0 ELSE self_volume AS self_volume_gf
+            bucket,
+            max(timestamp) AS timestamp,
+            sum(volume) AS volume,
+            sum(self_volume) AS self_volume
         FROM %I
-        WHERE buyer = $1 OR seller = $1
+        WHERE (buyer = $1 OR seller = $1)
             AND market_id = $2
-            AND bucket > first_trade_time($2) 
-            AND bucket < most_recent_trade_time($2)
-        GROUP BY bucket_gf
-        ORDER BY bucket_gf
+        GROUP BY bucket
+        ORDER BY bucket DESC
         LIMIT $3;
         `;
+        
+        // const fQuery = `
+        // SELECT
+        //     time_bucket_gapfill($3::bigint, bucket) AS bucket_gf,
+        //     locf(max(timestamp)) as timestamp_gf,
+        //     sum(CASE WHEN volume IS NULL THEN 0 ELSE volume END) AS volume_gf,
+        //     sum(CASE WHEN self_volume IS NULL THEN 0 ELSE self_volume END) AS self_volume_gf
+        // FROM %I
+        // WHERE (buyer = $1 OR seller = $1)
+        //     AND market_id = $2
+        //     AND bucket >= first_party_data_bucket($2, $5, $1)
+        //     AND bucket < (most_recent_party_data_bucket($2, $5, $1) + $3::bigint)
+        // GROUP BY bucket_gf
+        // ORDER BY bucket_gf DESC
+        // LIMIT $4;
+        // `;
+
+        // CASE WHEN timestamp IS NULL THEN '0' ELSE timestamp END AS timestamp_gf,
+
+        // AND bucket > (first_trade_time($2) - $3::bigint)
+        // AND bucket < most_recent_trade_time($2)
 
         const query = format(fQuery, table);
 
-        return [ query, [ partyId, marketId, bucketSize, limit ] ];
+        // return [ query, [ partyId, marketId, bucketSize, limit, table ] ];
+        return [ query, [ partyId, marketId, limit ] ];
     },
     allHistoricalVolumes(partyId, bucketSize, limit, table) {
         const fQuery = `

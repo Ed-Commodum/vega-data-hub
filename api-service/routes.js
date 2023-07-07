@@ -739,7 +739,7 @@ const routes = (app, pgPool) => {
     });
 
     // ---------- UNFINISHED ---------- //
-    app.get('/historical-volume', async (res, req) => {
+    app.get('/historical-volume', async (req, res) => {
         // Accepts a partyId (optional), a marketId (optional), and a time interval. Returns a historical time series
         // with data for the requested party and marketId. 
 
@@ -764,7 +764,7 @@ const routes = (app, pgPool) => {
 
         const args = req.query;
         const expectedArgs = ['partyId', 'marketId', 'interval'];
-        const defaultArgs = { partyId: undefined, marketId: undefined, interval: "INTERVAL_1H" };
+        const defaultArgs = { partyId: undefined, marketId: undefined, interval: "INTERVAL_1D" };
 
         for (let arg of expectedArgs) {
             if (!args[arg]) {
@@ -772,13 +772,16 @@ const routes = (app, pgPool) => {
             };
         };
 
-        const [ partyId, marketId, interval, limit ] =  [ args.partyId, args.marketId, args.interval, 500 ]
+        const [ partyId, marketId, interval, limit ] =  [ args.partyId, args.marketId, args.interval, 1000 ]
         // const validIntervals = [ "INTERVAL_5M", "INTERVAL_15M", "INTERVAL_30M", "INTERVAL_1H", "INTERVAL_3H", "INTERVAL_1D" ]
         const validIntervals = [ "INTERVAL_5M", "INTERVAL_1H", "INTERVAL_1D" ];
         const validMarkets = (await asyncQuery('getMarkets', ...marketQueries.getMarkets(), pgPool))[1].map(x => x.id);
+        console.log(validMarkets);
+        console.log(!validMarkets.includes(marketId));
+        console.log(marketId);
         if (!validIntervals.includes(interval)) return res.send(result);
-        if (!validMarkets.includes(marketId)) return res.send(result);
-        if (!partyId) return res.send(result);
+        if (!validMarkets.includes(marketId) && marketId != undefined) return res.send(result);
+        // if (!partyId) return res.send(result);
 
         let partyTable, marketTable, bucketSize; 
         switch (interval) {
@@ -812,16 +815,14 @@ const routes = (app, pgPool) => {
 
                 console.log(res);
 
-                // if (!res[1][0].timestamp || !res[1][0].volume) {
-                //     break;
-                // };
+                if (!res[1][0]) break;
 
                 result.volumes[0].partyId = partyId;
                 result.volumes[0].marketId = marketId;
                 result.volumes[0].interval = interval;
-                result.volumes[0].timestamp = res[1][0][res[1][0].length-1].timestamp;
-                result.volumes[0].data.shift();
-                for (let datum of res[1][0]) {
+                result.volumes[0].timestamp = res[1][0].timestamp;
+                result.volumes[0].data.length = 0;
+                for (let datum of res[1]) {
                     result.volumes[0].data.push(
                         {
                             timeBucket: datum.bucket,
@@ -835,23 +836,22 @@ const routes = (app, pgPool) => {
 
             case (marketId != undefined && partyId == undefined): {
                 // Get volume for market
-                const res = await asyncQuery('historicalVolume', ...marketQueries.historicalVolume(marketId, bucketSize, limit, marketTable), pgPool);
+                const res = await asyncQuery('historicalVolumeGF', ...marketQueries.historicalVolumeGF(marketId, bucketSize, limit, marketTable), pgPool);
 
                 console.log(res);
 
-                // if (!res[1][0].timestamp || !res[1][0].volume) {
-                //     break;
-                // };
+                if (!res[1][0]) break;
 
                 result.volumes[0].marketId = marketId;
                 result.volumes[0].partyId = "*";
                 result.volumes[0].interval = interval;
-                result.volumes[0].data.shift();
-                for (let datum of res[1][0]) {
-                    this.volumes[0].data.push(
+                result.volumes[0].timestamp = res[1][0].timestamp_gf;
+                result.volumes[0].data.length = 0;
+                for (let datum of res[1]) {
+                    result.volumes[0].data.push(
                         {
-                            timeBucket: datum.bucket,
-                            volume: (BigInt(datum.volume) + BigInt(datum.self_volume)).toString()
+                            timeBucket: datum.bucket_gf,
+                            volume: datum.volume_gf
                         }
                     )
                 }
@@ -865,72 +865,31 @@ const routes = (app, pgPool) => {
                 // const res = await asyncQuery('historical-volume', ...partyQueries.allHistoricalVolumes(partyId, bucketSize, limit, partyTable), pgPool);
                 // The above query won't work because postgres GROUP BY treats NULL as a group, this is a problem because
                 // time_bucket_gapfill creates rows that contain NULL values. To rectify this problem we can use the
-                // partyQueries.HistoricalVolume() query instead, but we will have to call it once for each market.
-                const marketRes = await asyncQuery('getMarkets', ...marketQueries.getMarkets(), pgPool);
-
-                console.log(marketRes[1]);
-
-                for (let marketId of marketRes[1]) {
-                    
+                // partyQueries.historicalVolume() query instead, but we will have to call it once for each market.
+                const marketIds = (await asyncQuery('getMarkets', ...marketQueries.getMarkets(), pgPool))[1].map(x => x.id);
+                
+                const responses = [];
+                for (let marketId of marketIds) {
+                    const prom = asyncQuery('historicalVolume', ...partyQueries.historicalVolume(partyId, marketId, bucketSize, limit, partyTable), pgPool);
+                    responses.push({ content: prom, marketId: marketId });
                 }
 
-                const res = await asyncQuery('historicalVolume', ...partyQueries.historicalVolume(partyId, marketId, bucketSize, limit, partyTable), pgPool);
-
-                // if (!res[1][0].market_id || !res[1][0].timestamp || !res[1][0].volume) {
-                //     break;
-                // };
-
-                // These results will usually be very sparse, very few traders will have volume
-                // in every interval on every timeframe. We can either return the sparse data or
-                // we can fill the gaps with zeros, for now we will fill the gaps.
-
-                result.volumes.shift();
-
-                const marketIds = [];
-                const markets = {
-                    marketId: {
-                        partyId: partyId,
-                        marketId: "",
-                        interval: interval,
-                        timestamp: "",
-                        data: [
-                            { timeBucket: "0", volume:"0" }
-                        ]
-                        
-                    }
-                };
-
-                for (let datum of res[1]) {
-
-                    if (!marketIds.includes(datum.market_id)) {
-                        marketIds.push(datum.market_id);
-                        markets.push(
-                            {
-                                partyId: partyId,
-                                marketId: datum.market_id,
-                                interval: interval,
-                                timestamp: "",
-                                data: [
-                                    { timeBucket: "0", volume:"0" }
-                                ]
-                                
-                            }
-                        );
-                    }
-
+                for (let res of responses) {
+                    console.log(res.content);
+                    console.log(res.marketId);
+                    const market = { marketId: res.marketId, res: await res.content };
+                    if (!market.res[1][0]) continue;
                     result.volumes.push(
                         {
                             partyId: partyId,
-                            marketId: market.market_id,
+                            marketId: market.marketId,
                             interval: interval,
-                            timestamp: market.timestamp,
-                            data: [
-                                { timeBucket: "0", volume:"0" }
-                            ]
-                            
+                            timestamp: market.res[1][0].timestamp,
+                            data: market.res[1].map((elem) => ({ timeBucket: elem.bucket, volume: (BigInt(elem.volume) + BigInt(elem.self_volume)).toString() }))
                         }
                     );
                 }
+                result.volumes.shift();
 
                 break;
             };
@@ -938,32 +897,37 @@ const routes = (app, pgPool) => {
             case (marketId == undefined && partyId == undefined): {
                 // Get volumes across all markets
 
+                const marketIds = (await asyncQuery('getMarkets', ...marketQueries.getMarkets(), pgPool))[1].map(x => x.id);
+                
+                const responses = [];
+                for (let marketId of marketIds) {
+                    const prom = asyncQuery('historicalVolume', ...marketQueries.historicalVolume(marketId, limit, marketTable), pgPool);
+                    responses.push({ content: prom, marketId: marketId });
+                }
 
-                const res = await asyncQuery('volume', ...marketQueries.totalVolume(), pgPool);
-
-                // if (!res[1][0].market_id || !res[1][0].timestamp || !res[1][0].volume) {
-                //     break;
-                // };
-
-                result.volumes.shift();
-
-                for (let market of res[1]) {
+                for (let res of responses) {
+                    console.log(res.content);
+                    console.log(res.marketId);
+                    const market = { marketId: res.marketId, res: await res.content };
+                    if (!market.res[1][0]) continue;
                     result.volumes.push(
                         {
-                            marketId: market.market_id,
                             partyId: "*",
-                            timestamp: market.timestamp,
-                            volume: market.volume
+                            marketId: market.marketId,
+                            interval: interval,
+                            timestamp: market.res[1][0].timestamp,
+                            data: market.res[1].map((elem) => ({ timeBucket: elem.bucket, volume: elem.volume }))
                         }
                     );
                 }
+                result.volumes.shift();
 
                 break;
             }
 
         }
 
-
+        res.send(result);
     });
 
     // app.get('/global-historical-volume', async (res, req) => {
