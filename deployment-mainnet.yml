@@ -461,6 +461,32 @@ spec:
           name: discord-tokens
           key: tokens
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: frontend-service-mainnet
+  name: frontend-service-mainnet
+spec:
+  ports:
+    - port: 8888
+      targetPort: 8888
+  selector:
+    app: frontend-pod-mainnet
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: frontend-pod-mainnet
+  labels:
+    app: frontend-pod-mainnet
+spec:
+  restartPolicy: Never
+  containers:
+  - name: frontend-mainnet
+    image: data-hub/frontend-mainnet
+    imagePullPolicy: Never
+---
 # ---
 # apiVersion: v1
 # kind: Pod
