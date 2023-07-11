@@ -555,6 +555,8 @@ const routes = (app, pgPool) => {
 
                 result.decimals[0].marketId = marketRes[1][0].market_id;
                 result.decimals[0].settlementAsset = marketRes[1][0].future_settlement_asset;
+                result.decimals[0].instrumentCode = marketRes[1][0].instrument_code;
+                result.decimals[0].instrumentName = marketRes[1][0].instrument_name;
                 result.decimals[0].assetDecimals = assetRes[1][0]
                 result.decimals[0].quoteName = marketRes[1][0].future_quote_name;
                 result.decimals[0].priceDecimals = marketRes[1][0].decimal_places;
@@ -578,6 +580,8 @@ const routes = (app, pgPool) => {
                         {
                             marketId: market.market_id,
                             settlementAsset: market.future_settlement_asset,
+                            instrumentCode: market.instrument_code,
+                            instrumentName: market.instrument_name,
                             assetDecimals: assetDecimals[market.future_settlement_asset],
                             quoteName: market.future_quote_name,
                             priceDecimals: market.decimal_places,

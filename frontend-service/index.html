@@ -10,25 +10,49 @@
     <div id="test"></div>
     <script>
         const test = document.getElementById('test');
-
-        console.log(proces.env.API_SERVICE_MAINNET_SERVICE);
+        const apiAddr = 'http://65.108.62.30:8080'
+        const data = {};
+        let decimals;
+        const getDecimals = async () => {
+            const res = await fetch(`${apiAddr}/decimals`);
+            const json = await res.json();
+            console.log(json);
+            const decimals = {};
+            for (let market of json.decimals) decimals[market.marketId] = market;
+            return decimals;
+        };
+        (async () => { decimals = await getDecimals() })();
 
         const getXData = async () => {
-            const apiAddr = '';
-            const res = await fetch(apiAddr);
+            const res = await fetch(`${apiAddr}/historical-volume`);
             const json = await res.json();           
 
             console.log(json);
+
+            for (let market of json.volumes) {
+                data[market.marketId] = {
+                    name: decimals[market.marketId].instrumentCode,
+                    type: 'bar',
+                    x: market.data.map((elem) => elem.timeBucket),
+                    y: market.data.map((elem) => (BigInt(elem.volume) / 10n**(BigInt(decimals[market.marketId].priceDecimals) + BigInt(decimals[market.marketId].positionDecimals))).toString())
+                };
+            }
+
+            console.log(data);
+
+            const layout = { barmode: 'stack' };
+
+            Plotly.newPlot( test, Object.values(data), layout );
 
             return [];
         };
 
         getXData();
 
-        Plotly.newPlot( test, [{
-        x: [1, 2, 3, 4, 5],
-        y: [1, 2, 4, 8, 16] }], {
-        margin: { t: 0 } } );
+        // Plotly.newPlot( test, [{
+        // x: [1, 2, 3, 4, 5],
+        // y: [1, 2, 4, 8, 16] }], {
+        // margin: { t: 0 } } );
     </script>
 </body>
 </html>

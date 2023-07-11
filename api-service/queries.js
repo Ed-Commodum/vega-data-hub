@@ -100,7 +100,9 @@ const marketQueries = {
             decimal_places,
             position_decimal_places,
             future_settlement_asset,
-            future_quote_name
+            future_quote_name,
+            instrument_code,
+            instrument_name
         FROM markets
         WHERE
             id = $1 AND
@@ -118,7 +120,9 @@ const marketQueries = {
             decimal_places,
             position_decimal_places,
             future_settlement_asset,
-            future_quote_name
+            future_quote_name,
+            instrument_code,
+            instrument_name
         FROM markets
         WHERE
             state != 'STATE_PROPOSED' AND
