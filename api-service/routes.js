@@ -595,6 +595,13 @@ const routes = (app, pgPool) => {
 
     });
 
+    app.get('/asset-decimals', async (req, res) => {
+        // Accepts an assetId (optional) and returns the decimals for that asset, omitting the assetId
+        // will return the results for all assets on Vega.
+
+        
+    });
+
     // ---------- TEST AGAIN ---------- //
     app.get('/volume', async (req, res) => {
         // Takes a marketId (optional) and a partyId (optional) and returns the most recent cumulative volume
