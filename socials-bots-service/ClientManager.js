@@ -89,6 +89,7 @@ class ClientManager {
                     case 'totalValueLocked':
                         client.guilds.cache.forEach((guild) => {
                             const tvl = this.dh.getTotalValueLocked();
+                            console.log(tvl);
                             guild.members.me.setNickname(`$${(BigInt(tvl.USDT) + BigInt(tvl.USDC)).toLocaleString()} TVL`);
                         });
                     break;
