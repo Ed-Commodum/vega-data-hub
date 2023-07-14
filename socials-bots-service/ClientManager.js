@@ -39,7 +39,7 @@ class ClientManager {
                     client.user.setActivity('open interest', { type: ActivityType.Watching });
                     break;
                 case 'totalValueLocked':
-                    client.user.setActivity('the ERC-20 bridge.', { type: ActivityType.Watching });
+                    client.user.setActivity('deposits and withdrawals.', { type: ActivityType.Watching });
                     break;
             };
             this.numClientsReady++
@@ -88,7 +88,8 @@ class ClientManager {
                         break;
                     case 'totalValueLocked':
                         client.guilds.cache.forEach((guild) => {
-                            guild.members.me.setNickname(`$${BigInt(this.dh.getTotalValueLocked().USDT).toLocaleString()} TVL`);
+                            const tvl = this.dh.getTotalValueLocked();
+                            guild.members.me.setNickname(`$${(BigInt(tvl.USDT) + BigInt(tvl.USDC)).toLocaleString()} TVL`);
                         });
                     break;
                 }
