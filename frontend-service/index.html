@@ -7,11 +7,19 @@
     <script src="https://cdn.plot.ly/plotly-2.24.1.min.js" charset="utf-8"></script>
 </head>
 <body>
-    <div id="test"></div>
+    <div id="test-0"></div>
+    <div id="test-1"></div>
+    <div id="test-2"></div>
+    <div id="test-3"></div>
+    <div id="test-4"></div>
+    <div id="test-5"></div>
     <script>
-        const test = document.getElementById('test');
-        const apiAddr = 'http://65.108.62.30:8080'
-        const data = {};
+
+        const elementIds = [ "test-0", "test-1", "test-2", "test-3", "test-4", "test-5" ]
+        const apiAddr = 'http://65.108.62.30:8080';
+
+
+        let div = document.getElementById('test-0');
         let decimals;
         const getDecimals = async () => {
             const res = await fetch(`${apiAddr}/decimals`);
@@ -23,12 +31,13 @@
         };
         (async () => { decimals = await getDecimals() })();
 
-        const getXData = async () => {
+        const getHistoricalVolumeData = async () => {
             const res = await fetch(`${apiAddr}/historical-volume`);
             const json = await res.json();           
 
             console.log(json);
 
+            const data = {};
             for (let market of json.volumes) {
                 data[market.marketId] = {
                     name: decimals[market.marketId].instrumentCode,
@@ -42,12 +51,46 @@
 
             const layout = { barmode: 'stack' };
 
-            Plotly.newPlot( test, Object.values(data), layout );
+            Plotly.newPlot( div, Object.values(data), layout );
 
             return [];
         };
 
-        getXData();
+        getHistoricalVolumeData();
+
+        div = document.getElementById('test-1');
+        
+        const getHistoricalOpenInterestData = async () => {
+            const res = await fetch(`${apiAddr}/historical-open-interest`);
+            const json = await res.json();
+
+            console.log(json);
+
+            for (let item of json.openInterests) {
+
+            }
+            
+        }
+
+        const getHistoricalUniqueDepositors = () => {
+            
+        }
+
+        const getHistoricalUniqueTraders = () => {
+            
+        }
+
+        const getRewardsByMarket = () => {
+
+        }
+
+        const getRewardsTopEarners = () => {
+
+        }
+
+        const getHistoricalTradesData = () => {
+            
+        }
 
         // Plotly.newPlot( test, [{
         // x: [1, 2, 3, 4, 5],

@@ -58,7 +58,7 @@ class ClientManager {
             await Promise.all([
                 this.dh.updateDecimals(),
                 this.dh.updateMarketVolumes(),
-                this.dh.updateTradesCount(),
+                this.dh.updateTradeCount(),
                 this.dh.updateFeesGenerated(),
                 this.dh.updateOpenInterest(),
                 this.dh.updateTotalValueLocked()
@@ -73,7 +73,7 @@ class ClientManager {
                         break;
                     case 'trades':
                         client.guilds.cache.forEach((guild) => {
-                            guild.members.me.setNickname(`${BigInt(this.dh.getTradesCount().tradesCount).toLocaleString()} trades`);
+                            guild.members.me.setNickname(`${BigInt(this.dh.getTradeCount().tradeCount).toLocaleString()} trades`);
                         });
                         break;
                     case 'fees':

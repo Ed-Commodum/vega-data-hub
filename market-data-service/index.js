@@ -121,12 +121,9 @@ const continuousAggregates = {
                 last(open_interest, timestamp) AS last,
                 last(last_traded_price, timestamp) AS last_traded_price,
                 last(timestamp, timestamp) AS last_ts,
-                max(timestamp) AS max_ts,
                 max(open_interest) AS high,
                 min(open_interest) AS low,
-                last(open_interest, timestamp) - first(open_interest, timestamp) AS diff,
-                avg(open_interest) AS avg,
-                count(timestamp) AS num_updates
+                last(open_interest, timestamp) - first(open_interest, timestamp) AS diff
             FROM market_data_updates
             GROUP BY market_id, time_bucket(300000000000, timestamp);
             `,
@@ -136,22 +133,46 @@ const continuousAggregates = {
             schedule_interval => INTERVAL '1 minute');
             `
         },
+        // interval_5m: {
+        //     createMatView: `CREATE MATERIALIZED VIEW open_interest_5m
+        //     WITH (timescaledb.continuous) AS
+        //     SELECT market_id,
+        //         time_bucket(300000000000, timestamp) AS bucket,
+        //         first(open_interest, timestamp) AS first,
+        //         first(timestamp, timestamp) AS first_ts,
+        //         last(open_interest, timestamp) AS last,
+        //         last(last_traded_price, timestamp) AS last_traded_price,
+        //         last(timestamp, timestamp) AS last_ts,
+        //         max(timestamp) AS max_ts,
+        //         max(open_interest) AS high,
+        //         min(open_interest) AS low,
+        //         last(open_interest, timestamp) - first(open_interest, timestamp) AS diff,
+        //         avg(open_interest) AS avg,
+        //         count(timestamp) AS num_updates
+        //     FROM market_data_updates
+        //     GROUP BY market_id, time_bucket(300000000000, timestamp);
+        //     `,
+        //     addRefreshPolicy: `SELECT add_continuous_aggregate_policy('open_interest_5m',
+        //     start_offset => '2592000000000000'::bigint,
+        //     end_offset => '60000000000'::bigint,
+        //     schedule_interval => INTERVAL '1 minute');
+        //     `
+        // },
         interval_1h: {
             createMatView: `CREATE MATERIALIZED VIEW open_interest_1h
             WITH (timescaledb.continuous) AS
             SELECT market_id,
-                time_bucket(3600000000000, bucket) AS bucket,
-                first(first, bucket) AS first,
-                first(first_ts, bucket) AS first_ts,
-                last(last, bucket) AS last,
-                last(last_ts, bucket) AS last_ts,
-                max(high) AS high,
-                min(low) AS low,
-                last(last, bucket) - first(first, bucket) AS diff,
-                sum(avg * num_updates) / sum(num_updates) AS avg,
-                sum(num_updates) AS num_updates
-            FROM open_interest_5m
-            GROUP BY market_id, time_bucket(3600000000000, bucket);
+                time_bucket(3600000000000, timestamp) AS bucket,
+                first(open_interest, timestamp) AS first,
+                first(timestamp, timestamp) AS first_ts,
+                last(open_interest, timestamp) AS last,
+                last(last_traded_price, timestamp) AS last_traded_price,
+                last(timestamp, timestamp) AS last_ts,
+                max(open_interest) AS high,
+                min(open_interest) AS low,
+                last(open_interest, timestamp) - first(open_interest, timestamp) AS diff
+            FROM market_data_updates
+            GROUP BY market_id, time_bucket(3600000000000, timestamp);
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('open_interest_1h',
             start_offset => '2592000000000000'::bigint,
@@ -159,22 +180,44 @@ const continuousAggregates = {
             schedule_interval => INTERVAL '1 minute');
             `
         },
+        // interval_1h: {
+        //     createMatView: `CREATE MATERIALIZED VIEW open_interest_1h
+        //     WITH (timescaledb.continuous) AS
+        //     SELECT market_id,
+        //         time_bucket(3600000000000, bucket) AS bucket,
+        //         first(first, bucket) AS first,
+        //         first(first_ts, bucket) AS first_ts,
+        //         last(last, bucket) AS last,
+        //         last(last_ts, bucket) AS last_ts,
+        //         max(high) AS high,
+        //         min(low) AS low,
+        //         last(last, bucket) - first(first, bucket) AS diff,
+        //         sum(avg * num_updates) / sum(num_updates) AS avg,
+        //         sum(num_updates) AS num_updates
+        //     FROM open_interest_5m
+        //     GROUP BY market_id, time_bucket(3600000000000, bucket);
+        //     `,
+        //     addRefreshPolicy: `SELECT add_continuous_aggregate_policy('open_interest_1h',
+        //     start_offset => '2592000000000000'::bigint,
+        //     end_offset => '60000000000'::bigint,
+        //     schedule_interval => INTERVAL '1 minute');
+        //     `
+        // },
         interval_1d: {
             createMatView: `CREATE MATERIALIZED VIEW open_interest_1d
             WITH (timescaledb.continuous) AS
             SELECT market_id,
-                time_bucket(86400000000000, bucket) AS bucket,
-                first(first, bucket) AS first,
-                first(first_ts, bucket) AS first_ts,
-                last(last, bucket) AS last,
-                last(last_ts, bucket) AS last_ts,
-                max(high) AS high,
-                min(low) AS low,
-                last(last, bucket) - first(first, bucket) AS diff,
-                sum(avg * num_updates) / sum(num_updates) AS avg,
-                sum(num_updates) num_updates
-            FROM open_interest_1h
-            GROUP BY market_id, time_bucket(86400000000000, bucket);
+                time_bucket(86400000000000, timestamp) AS bucket,
+                first(open_interest, timestamp) AS first,
+                first(timestamp, timestamp) AS first_ts,
+                last(open_interest, timestamp) AS last,
+                last(last_traded_price, timestamp) AS last_traded_price,
+                last(timestamp, timestamp) AS last_ts,
+                max(open_interest) AS high,
+                min(open_interest) AS low,
+                last(open_interest, timestamp) - first(open_interest, timestamp) AS diff
+            FROM market_data_updates
+            GROUP BY market_id, time_bucket(86400000000000, timestamp);
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('open_interest_1d',
             start_offset => '2592000000000000'::bigint,

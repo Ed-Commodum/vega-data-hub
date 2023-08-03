@@ -50,18 +50,18 @@ class DataHandler {
         // console.log(this.volumes);
     }
 
-    async updateTradesCount() {
-        const tradesRes = await fetch(`${this.apiAddr}/trades-count`);
+    async updateTradeCount() {
+        const tradesRes = await fetch(`${this.apiAddr}/trade-count`);
         const tradesJson = await tradesRes.json();
         console.log(tradesJson);
         this.trades.length = 0;
-        for (let market of tradesJson.tradesCounts) {
+        for (let market of tradesJson.tradeCounts) {
             if (!Object.keys(this.decimals).includes(market.marketId)) continue;
             this.trades.push(
                 {
                     marketId: market.marketId,
                     timestamp: market.timestamp,
-                    tradesCount: market.tradesCount
+                    tradeCount: market.tradeCount
                 }
             )
         }
@@ -157,16 +157,16 @@ class DataHandler {
         return result;
     }
 
-    getTradesCount() {
+    getTradeCount() {
         const result = {
-            tradesCount: 0n,
+            tradeCount: 0n,
             timestamp: 0n
         };
         for (let market of this.trades) {
             if (BigInt(market.timestamp) > BigInt(result.timestamp)) result.timestamp = market.timestamp;
-            result.tradesCount += BigInt(market.tradesCount);
+            result.tradeCount += BigInt(market.tradeCount);
         };
-        result.tradesCount = result.tradesCount.toString();
+        result.tradeCount = result.tradeCount.toString();
         return result;
     }
 

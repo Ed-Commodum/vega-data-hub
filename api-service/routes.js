@@ -742,7 +742,7 @@ const routes = (app, pgPool) => {
 
     });
 
-    // ---------- UNFINISHED ---------- //
+    // ---------- UNTESTED ---------- //
     app.get('/historical-volume', async (req, res) => {
         // Accepts a partyId (optional), a marketId (optional), and a time interval. Returns a historical time series
         // with data for the requested party and marketId. 
@@ -934,27 +934,27 @@ const routes = (app, pgPool) => {
         res.send(result);
     });
 
-    // app.get('/global-historical-volume', async (res, req) => {
+    // app.get('/global-historical-volume', async (req, res) => {
     //     // Returns a single time series of the global historical volume on vega.
 
     // });
 
     // ---------- TEST AGAIN ---------- //
-    app.get('/trades-count', async (req, res) => {
+    app.get('/trade-count', async (req, res) => {
         // Takes a marketId (optional) and a partyId (optional) and returns the most recent count of trades for
         // that party/market. If no party or market is specified then the global count of trades is returned.
 
         // const result = {
         //     timestamp: "0",
-        //     tradesCount: "0"
+        //     tradeCount: "0"
         // };
         const result = {
-            tradesCounts: [
+            tradeCounts: [
                 {
                     marketId: "",
                     partyId: "",
                     timestamp: "0",
-                    tradesCount: "0"
+                    tradeCount: "0"
                 }
             ]
         }
@@ -973,7 +973,7 @@ const routes = (app, pgPool) => {
             case (marketId != undefined && partyId != undefined): {
                 // Get count of trades for party on market
                 
-                const res = await asyncQuery('tradesCount', ...partyQueries.numTrades(partyId, marketId), pgPool);
+                const res = await asyncQuery('tradeCount', ...partyQueries.numTrades(partyId, marketId), pgPool);
 
                 console.log(res);
 
@@ -981,10 +981,10 @@ const routes = (app, pgPool) => {
                     break;
                 };
 
-                result.tradesCounts[0].marketId = marketId;
-                result.tradesCounts[0].partyId = partyId;
-                result.tradesCounts[0].timestamp = res[1][0].timestamp;
-                result.tradesCounts[0].tradesCount = (BigInt(res[1][0].num_trades) + BigInt(res[1][0].num_self_trades)).toString();
+                result.tradeCounts[0].marketId = marketId;
+                result.tradeCounts[0].partyId = partyId;
+                result.tradeCounts[0].timestamp = res[1][0].timestamp;
+                result.tradeCounts[0].tradeCount = (BigInt(res[1][0].num_trades) + BigInt(res[1][0].num_self_trades)).toString();
 
                 break;
             };
@@ -992,16 +992,16 @@ const routes = (app, pgPool) => {
             case (marketId != undefined && partyId == undefined): {
                 // Get count of trades for market
 
-                const res = await asyncQuery('tradesCount', ...marketQueries.numTrades(marketId), pgPool);
+                const res = await asyncQuery('tradeCount', ...marketQueries.numTrades(marketId), pgPool);
 
                 if (!res[1][0].timestamp || !res[1][0].num_trades) {
                     break;
                 };
 
-                result.tradesCounts[0].marketId = marketId;
-                result.tradesCounts[0].partyId = "*";
-                result.tradesCounts[0].timestamp = res[1][0].timestamp;
-                result.tradesCounts[0].tradesCount = res[1][0].num_trades;
+                result.tradeCounts[0].marketId = marketId;
+                result.tradeCounts[0].partyId = "*";
+                result.tradeCounts[0].timestamp = res[1][0].timestamp;
+                result.tradeCounts[0].tradeCount = res[1][0].num_trades;
 
                 break;
             };
@@ -1009,19 +1009,19 @@ const routes = (app, pgPool) => {
             case (marketId == undefined && partyId != undefined): {
                 // Get count of trades for party
                 
-                const res = await asyncQuery('tradesCount', ...partyQueries.allNumTrades(partyId), pgPool);
+                const res = await asyncQuery('tradeCount', ...partyQueries.allNumTrades(partyId), pgPool);
 
                 if (!res[1][0].timestamp || !res[1][0].num_trades) {
                     break;
                 };
 
-                result.tradesCounts.length = 0;
+                result.tradeCounts.length = 0;
                 for (let market of res[1][0]) {
-                    result.tradesCounts.push({
+                    result.tradeCounts.push({
                         marketId: market.market_id,
                         partyId: partyId,
                         timestamp: market.timestamp,
-                        tradesCount: (BigInt(market.num_trades) + BigInt(market.num_self_trades)).toString()
+                        tradeCount: (BigInt(market.num_trades) + BigInt(market.num_self_trades)).toString()
                     });
                 };
 
@@ -1031,19 +1031,19 @@ const routes = (app, pgPool) => {
             case (marketId == undefined && partyId == undefined): {
                 // Get global count of trades
 
-                const res = await asyncQuery('tradesCount', ...marketQueries.allNumTrades(), pgPool);
+                const res = await asyncQuery('tradeCount', ...marketQueries.allNumTrades(), pgPool);
 
                 if (!res[1][0].timestamp || !res[1][0].num_trades) {
                     break;
                 };
 
-                result.tradesCounts.length = 0;
+                result.tradeCounts.length = 0;
                 for (let market of res[1]) {
-                    result.tradesCounts.push({
+                    result.tradeCounts.push({
                         marketId: market.market_id,
                         partyId: '*',
                         timestamp: market.timestamp,
-                        tradesCount: market.num_trades
+                        tradeCount: market.num_trades
                     });
                 };
 
@@ -1056,7 +1056,182 @@ const routes = (app, pgPool) => {
 
     });
 
-    app.get('/historical-trades-count', async (res, req) => {
+    // ---------- UNTESTED ---------- //
+    app.get('/historical-trade-count', async (req, res) => {
+        // Accept a partyId (optional) and a marketId (optional), and a time interval. Returns the historical count
+        // of trades for that time interval
+
+        const result = {
+            tradeCounts: [
+                {
+                    marketId: "",
+                    partyId: "",
+                    interval: "",
+                    timestamp: "0",
+                    data: [
+                        { timeBucket: "0", tradeCount: "0" }
+                    ]
+                    
+                }
+            ]
+        };
+
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+
+        const args = req.query;
+        const expectedArgs = ['partyId', 'marketId', 'interval'];
+        const defaultArgs = { partyId: undefined, marketId: undefined, interval: "INTERVAL_1D" };
+
+        for (let arg of expectedArgs) {
+            if (!args[arg]) {
+                args[arg] = defaultArgs[arg];
+            };
+        };
+
+        const [ partyId, marketId, interval, limit ] =  [ args.partyId, args.marketId, args.interval, 1000 ]
+        // const validIntervals = [ "INTERVAL_5M", "INTERVAL_15M", "INTERVAL_30M", "INTERVAL_1H", "INTERVAL_3H", "INTERVAL_1D" ]
+        const validIntervals = [ "INTERVAL_5M", "INTERVAL_1H", "INTERVAL_1D" ];
+
+        let partyTable, marketTable;
+        switch (interval) {
+            case ('INTERVAL_5M') : {
+                partyTable = 'party_data_5m';
+                marketTable = 'market_data_5m';
+                bucketSize = '300000000000';
+                break;
+            };
+            case ('INTERVAL_1H') : {
+                partyTable = 'party_data_1h';
+                marketTable = 'market_data_1h';
+                bucketSize = '3600000000000';
+                break;
+            };
+            case ('INTERVAL_1D') : {
+                partyTable = 'party_data_1d';
+                marketTable = 'market_data_1d';
+                bucketSize = '86400000000000';
+                break;
+            };
+        }
+
+        switch (true) {
+            case (marketId != undefined && partyId != undefined): {
+                // Case where we query for one party on one market
+                const res = await asyncQuery('historicalTradeCount', ...partyQueries.historicalNumTrades(partyId, marketId, limit, partyTable), pgPool);
+
+                console.log(res);
+                if (!res[1][0]) break;
+
+                result.tradeCounts[0].marketId = marketId;
+                result.tradeCounts[0].partyId = partyId;
+                result.tradeCounts[0].interval = interval;
+                result.tradeCounts[0].timestamp = res[1][0].timestamp;
+                result.tradeCounts[0].data.length = 0;
+                for (let datum of res[1]) {
+                    result.tradeCounts[0].data.push(
+                        {
+                            timeBucket: datum.bucket,
+                            tradeCount: datum.num_trades_combined
+                        }
+                    )
+                }
+
+                break;
+            }
+
+            case (marketId != undefined && partyId == undefined): {
+                // Case for when we query one market and all parties
+
+                const res = await asyncQuery('historicalTradeCount', ...marketQueries.historicalNumTrades(marketId, limit, marketTable), pgPool);
+
+                console.log(res);
+                if (!res[1][0]) break;
+
+                result.tradeCounts[0].marketId = marketId;
+                result.tradeCounts[0].partyId = "*";
+                result.tradeCounts[0].interval = interval;
+                result.tradeCounts[0].timestamp = res[1][0].timestamp;
+                result.tradeCounts[0].data.length = 0;
+                for (let datum of res[1]) {
+                    result.tradeCounts[0].data.push(
+                        {
+                            timeBucket: datum.bucket,
+                            tradeCount: datum.num_trades,
+                        }
+                    )
+                }
+
+                break;
+            }
+
+            case (marketId == undefined && partyId != undefined): {
+                // Case for when we query one party across all markets
+
+                const res = await asyncQuery('historicalTradeCount', ...partyQueries.allHistoricalNumTrades(partyId, limit, partyTable), pgPool)
+
+                console.log(res);
+                if (!res[1][0]) break;
+
+                const markets = {};
+
+                for (let row of res[1]) {
+                    if (!Object.keys(markets).includes(row.market_id)) {
+                        markets[row.market_id] = {
+                            marketId: row.market_id,
+                            partyId: partyId,
+                            interval: interval,
+                            timestamp: row.timestamp,
+                            data: [ { timeBucket: row.bucket, tradeCount: row.num_trades_combined } ]
+                        }
+                    } else {
+                        markets[row.marketId].data.push({
+                            timeBucket: row.bucket, tradeCount: row.num_trades_combined
+                        })
+                    }
+                }
+
+                result.tradeCounts.length = 0;
+                for (let item of Object.values(markets)) result.tradeCounts.push(item);
+
+                break;
+            }
+
+            case (marketId == undefined && partyId == undefined): {
+                // Case for when we query all parties accross all markets
+
+                const res = await asyncQuery('allHistoricalTradeCounts', ...marketQueries.allHistoricalNumTrades(limit, marketTable), pgPool)
+
+                console.log(res);
+                if (!res[1][0]) break;
+
+                const markets = {};
+
+                for (let row of res[1]) {
+                    if (!Object.keys(markets).includes(row.market_id)) {
+                        markets[row.market_id] = {
+                            marketId: row.market_id,
+                            partyId: partyId,
+                            interval: interval,
+                            timestamp: row.timestamp,
+                            data: [ { timeBucket: row.bucket, tradeCount: row.num_trades } ]
+                        }
+                    } else {
+                        markets[row.market_id].data.push({
+                            timeBucket: row.bucket, tradeCount: row.num_trades
+                        })
+                    }
+                }
+                
+                result.tradeCounts.length = 0;
+                for (let item of Object.values(markets)) result.tradeCounts.push(item);
+
+                break;
+            }
+        }
+
+        res.send(result);
 
     });
 
@@ -1130,7 +1305,122 @@ const routes = (app, pgPool) => {
 
     });
 
-    app.get('/historical-open-interest', async (res, req) => {
+    // ---------- UNTESTED ---------- //
+    app.get('/historical-open-interest', async (req, res) => {
+        // Accepts a marketId (optional) and and interval, returns a history of the open interest
+        // for that time interval on that market. If the marketId is omitted then the historical open
+        // interest for all markets is returned.
+
+        const result = {
+            openInterests: [
+                {
+                    marketId: "",
+                    interval: "",
+                    timestamp: "0",
+                    data: [
+                        { timeBucket: "0", openInterest: "0" }
+                    ]
+                }
+            ]
+        }
+
+        res.append('Access-Control-Allow-Origin', ['*']);
+        res.append('Access-Control-Allow-Methods', 'GET');
+        res.append('Access-Control-Allow-Headers', 'Content-Type');
+
+        const args = req.query;
+        const expectedArgs = ['marketId', 'interval'];
+        const defaultArgs = { marketId: undefined, interval: "INTERVAL_1D" };
+
+        for (let arg of expectedArgs) {
+            if (!args[arg]) {
+                args[arg] = defaultArgs[arg];
+            };
+        };
+
+        const [ marketId, interval, limit ] =  [ args.marketId, args.interval, 1000 ]
+        // const validIntervals = [ "INTERVAL_5M", "INTERVAL_15M", "INTERVAL_30M", "INTERVAL_1H", "INTERVAL_3H", "INTERVAL_1D" ]
+        const validIntervals = [ "INTERVAL_5M", "INTERVAL_1H", "INTERVAL_1D" ];
+
+        let table;
+        switch (interval) {
+            case ('INTERVAL_5M') : {
+                table = 'open_interest_5m';
+                break;
+            };
+            case ('INTERVAL_1H') : {
+                table = 'open_interest_1h';
+                break;
+            };
+            case ('INTERVAL_1D') : {
+                table = 'open_interest_1d';
+                break;
+            };
+        }
+
+        switch (true) {
+            case (marketId != undefined): {
+                
+                const res = await asyncQuery('historicalOpenInterest', ...marketQueries.historicalOpenInterest(marketId, limit, table), pgPool)
+
+                console.log(res);
+                if (!res[1][0]) break;
+
+                result.openInterests[0].marketId = marketId;
+                result.openInterests[0].interval = interval;
+                result.openInterests[0].timestamp = res[1][0].last_ts;
+                result.openInterests[0].data.length = 0;
+                for (let row of res[1]) {
+                    result.openInterests[0].data.push(
+                        {
+                            timeBucket: row.bucket, lastOpenInterest: row.last_open_iterest,
+                            lastTradedPrice: row.last_traded_price, lastTimestamp: row.last_ts
+                        }
+                    )
+                }
+
+                break;
+            }
+            case (marketId == undefined): {
+
+                const res = await asyncQuery('allHistoricalOpenInterest', ...marketQueries.allHistoricalOpenInterest(limit, table), pgPool)
+
+                console.log(res);
+                if (!res[1][0]) break;
+
+                const markets = {};
+
+                for (let row of res[1]) {
+                    if (!Object.keys(markets).includes(row.market_id)) {
+                        markets[row.market_id] = {
+                            marketId: row.market_id,
+                            interval: interval,
+                            timestamp: row.last_ts,
+                            data: [
+                                {
+                                    timeBucket: row.bucket, lastOpenInterest: row.last_open_interest,
+                                    lastTradedPrice: row.last_traded_price, lastTimestamp: row.last_ts
+                                }
+                            ]
+                        }
+                    } else {
+                        markets[row.market_id].data.push(
+                            {
+                                timeBucket: row.bucket, lastOpenInterest: row.last_open_interest,
+                                lastTradedPrice: row.last_traded_price, lastTimestamp: row.last_ts
+                            }
+                        )
+                    }
+                }
+                
+                result.openInterests.length = 0;
+                for (let item of Object.values(markets)) result.openInterests.push(item);
+
+                break;
+            }
+        }
+
+        res.send(result);
 
     });
 
@@ -1315,7 +1605,7 @@ const routes = (app, pgPool) => {
 
     });
 
-    app.get('/infra-fees-earned', async (req, res) => {
+    app.get('/liquidity-fees-earned', async (req, res) => {
 
     });
 
@@ -1414,6 +1704,7 @@ const routes = (app, pgPool) => {
 
     });
 
+    // ---------- UNTESTED ---------- //
     app.get('/bridge-balances', async (req, res) => {
         // Accepts an assetId (optional) and returns the current balance that Vega Core sees in the bridge
         // for the asset. Omitting the assetId returns the balances for all assets that Vega Core sees in
@@ -1713,11 +2004,11 @@ const routes = (app, pgPool) => {
 
     });
 
-    app.get('/unique-traders', async (res, req) => {
+    app.get('/unique-traders', async (req, res) => {
 
     });
 
-    app.get('/unique-depositors', async (res, req) => {
+    app.get('/unique-depositors', async (req, res) => {
 
     });
 

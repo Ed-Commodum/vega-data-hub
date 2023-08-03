@@ -159,6 +159,39 @@ const marketQueries = {
 
         return [ query, [] ];
     },
+    historicalNumTrades(marketId, limit, table) {
+        const fQuery = `
+        SELECT
+            market_id,
+            bucket,
+            num_trades,
+            timestamp
+        FROM %I
+        WHERE market_id = $1
+        ORDER BY bucket DESC
+        LIMIT $2;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ marketId, limit] ]
+    },
+    allHistoricalNumTrades(limit, table) {
+        const fQuery = `
+        SELECT
+            bucket,
+            market_id,
+            num_trades,
+            timestamp
+        FROM %I
+        ORDER BY bucket DESC
+        LIMIT $1;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ limit ] ]
+    },
     volume(marketId) {
         const query = `
         SELECT sum(volume) AS volume, max(timestamp) AS timestamp FROM market_data_5m
@@ -269,6 +302,41 @@ const marketQueries = {
         `;
 
         return [ query, [] ];
+    },
+    historicalOpenInterest(marketId, limit, table) {
+        const fQuery = `
+        SELECT
+            market_id,
+            bucket,
+            last AS last_open_interest,
+            last_ts,
+            last_traded_price
+        FROM %I
+        WHERE market_id = $1
+        ORDER BY bucket DESC
+        LIMIT $2
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ marketId, limit ] ]
+    },
+    allHistoricalOpenInterest(limit, table) {
+        const fQuery = `
+        SELECT
+            market_id,
+            bucket,
+            last AS last_open_interest,
+            last_ts,
+            last_traded_price
+        FROM %I
+        ORDER BY bucket DESC
+        LIMIT $1
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ limit ] ]
     },
     makerLiquidityFeesGenerated(marketId) {
         const query = `
@@ -601,6 +669,47 @@ const partyQueries = {
         `;
 
         return [ query, [ partyId ] ];
+    },
+    historicalNumTrades(partyId, marketId, limit, table) {
+        const fQuery = `
+        SELECT
+            market_id,
+            bucket,
+            sum(num_trades) AS num_trades,
+            sum(num_self_trades) AS num_self_trades,
+            sum(num_trades + num_self_trades) AS num_trades_combined
+            max(timestamp) AS timestamp
+        FROM %I
+        WHERE (buyer = $1 or seller = $1)
+            AND market_id = $2
+        GROUP BY bucket
+        ORDER BY bucket DESC
+        LIMIT $3;
+        `;
+
+        const query = format(fQuery, table)
+
+        return [ query, [ partyId, marketId, limit] ]
+    },
+    allHistoricalNumTrades(partyId, limit, table) {
+        const fQuery = `
+        SELECT
+            market_id,
+            bucket,
+            sum(num_trades) AS num_trades,
+            sum(num_self_trades) AS num_self_trades,
+            sum(num_trades + num_self_trades) AS num_trades_combined
+            max(timestamp) AS timestamp
+        FROM %I
+        WHERE buyer = $1 or seller = $1
+        GROUP BY market_id
+        ORDER BY bucket DESC
+        LIMIT $3;
+        `;
+
+        const query = format(fQuery, table)
+
+        return [ query, [ partyId, marketId, limit] ]
     },
     volume(partyId, marketId) {
         const query = `
