@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS trades (
     aggressor TEXT NOT NULL,
     buy_order TEXT NOT NULL,
     sell_order TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
+    timestamp BIGINT NOT NULL,
     synth_timestamp BIGINT NOT NULL,
     type TEXT NOT NULL,
     buyer_fee_maker NUMERIC(40),

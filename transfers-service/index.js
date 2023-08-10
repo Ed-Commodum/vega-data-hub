@@ -303,6 +303,14 @@ const continuousAggregates = {
                 END AS asset,
                 sum(CASE
                         WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN amount
+                        ELSE 0
+                    END) AS deposits,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN amount
+                        ELSE 0
+                    END) AS withdrawals,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN amount
                         WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN -amount
                         ELSE 0
                     END) AS diff
@@ -311,6 +319,78 @@ const continuousAggregates = {
             GROUP BY asset, party_id, time_bucket(300000000000, synth_timestamp);
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('bridge_diffs_5m',
+            start_offset => '2592000000000000'::bigint,
+            end_offset => '60000000000'::bigint,
+            schedule_interval => INTERVAL '1 minute');`
+        },
+        interval_5m: {
+            createMatView: `CREATE MATERIALIZED VIEW bridge_diffs_1h
+            with (timescaledb.continuous) AS
+            SELECT
+                time_bucket(3600000000000, synth_timestamp) as bucket,
+                max(timestamp) AS timestamp,
+                CASE
+                    WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN to_account_owner
+                    WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN from_account_owner
+                END AS party_id,
+                CASE
+                    WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN to_account_asset
+                    WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN from_account_asset
+                END AS asset,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN amount
+                        ELSE 0
+                    END) AS deposits,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN amount
+                        ELSE 0
+                    END) AS withdrawals,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN amount
+                        WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN -amount
+                        ELSE 0
+                    END) AS diff
+            FROM ledger_movements
+            WHERE type = 'TRANSFER_TYPE_DEPOSIT' OR type = 'TRANSFER_TYPE_WITHDRAW'
+            GROUP BY asset, party_id, time_bucket(3600000000000, synth_timestamp);
+            `,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('bridge_diffs_1h',
+            start_offset => '2592000000000000'::bigint,
+            end_offset => '60000000000'::bigint,
+            schedule_interval => INTERVAL '1 minute');`
+        },
+        interval_1d: {
+            createMatView: `CREATE MATERIALIZED VIEW bridge_diffs_1d
+            with (timescaledb.continuous) AS
+            SELECT
+                time_bucket(86400000000000, synth_timestamp) as bucket,
+                max(timestamp) AS timestamp,
+                CASE
+                    WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN to_account_owner
+                    WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN from_account_owner
+                END AS party_id,
+                CASE
+                    WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN to_account_asset
+                    WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN from_account_asset
+                END AS asset,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN amount
+                        ELSE 0
+                    END) AS deposits,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN amount
+                        ELSE 0
+                    END) AS withdrawals,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN amount
+                        WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN -amount
+                        ELSE 0
+                    END) AS diff
+            FROM ledger_movements
+            WHERE type = 'TRANSFER_TYPE_DEPOSIT' OR type = 'TRANSFER_TYPE_WITHDRAW'
+            GROUP BY asset, party_id, time_bucket(86400000000000, synth_timestamp);
+            `,
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('bridge_diffs_1d',
             start_offset => '2592000000000000'::bigint,
             end_offset => '60000000000'::bigint,
             schedule_interval => INTERVAL '1 minute');`
@@ -373,13 +453,13 @@ const continuousAggregates = {
                 last(timestamp, synth_timestamp) AS timestamp,
                 sum(CASE
                         WHEN type = 'TRANSFER_TYPE_MAKER_FEE_RECEIVE' THEN amount ELSE 0
-                    END) as maker_fee_earned,
+                    END) AS maker_fee_earned,
                 sum(CASE
                         WHEN type = 'TRANSFER_TYPE_LIQUIDITY_FEE_DISTRIBUTE' THEN amount ELSE 0
-                    END) as liquidity_fee_earned,
+                    END) AS liquidity_fee_earned,
                 sum(CASE
-                        WHEN type = 'TRANSFER_TYPE_INFRASTRUCTURE_FEE_DISTRIBUTE' THEN amount ELSE 0
-                    END) as infrastructure_fee_earned,
+                        WHEN from_account_type = 'ACCOUNT_TYPE_FEES_INFRASTRUCTURE' THEN amount ELSE 0
+                    END) AS infrastructure_fee_earned,
                 from_account_asset AS asset
             FROM ledger_movements
             GROUP BY party_id, asset, time_bucket(300000000000, synth_timestamp);

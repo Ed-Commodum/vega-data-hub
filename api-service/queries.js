@@ -27,9 +27,23 @@ const marketData = {
 };
 
 const assetQueries = {
+    getAssets() {
+        const query = `
+        SELECT 
+            id,
+            name,
+            symbol,
+            decimals
+        FROM assets
+        WHERE status = 'STATUS_ENABLED';
+        `;
+
+        return [ query, [] ]
+    },
     getDecimals(assetId) {
         const query = `
         SELECT
+            symbol AS code,
             decimals AS asset_decimals
         FROM assets
         WHERE id = $1 AND
@@ -42,6 +56,7 @@ const assetQueries = {
         const query = `
         SELECT
             id,
+            symbol as code,
             decimals
         FROM assets
         WHERE status = 'STATUS_ENABLED';
@@ -72,6 +87,190 @@ const assetQueries = {
         `;
 
         return [ query, [] ];
+    },
+    twentyFourHourBridgeNetFlows(assetId) {
+        const query = `
+        SELECT
+            asset,
+            max(timestamp) AS timestamp,
+            sum(diff) AS net_flow
+        FROM bridge_diffs_5m
+        WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+            AND asset = $1;
+        GROUP BY asset;
+        `;
+
+        return [ query, [ assetId ] ];
+    },
+    allTwentyFourHourBridgeNetFlows() {
+        const query = `
+        SELECT
+            asset,
+            max(timestamp) AS timestamp,
+            sum(diff) AS net_flow
+        FROM bridge_diffs_5m
+        WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+        GROUP BY asset;
+        `;
+
+        return [ query, [] ];
+    },
+    historicalBridgeNetFlows(assetId, limit, table) {
+        const fQuery = `
+        SELECT
+            asset,
+            bucket,
+            timestamp,
+            diff AS net_flow
+        FROM %I
+        WHERE asset = $1
+        ORDER BY bucket DESC
+        LIMIT $2;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ assetId, limit ] ]
+    },
+    allHistoricalBridgeNetFlows(limit, table) {
+        const fQuery = `
+        SELECT
+            asset,
+            bucket,
+            timestamp,
+            diff AS net_flow
+        FROM %I
+        ORDER BY bucket DESC
+        LIMIT $1
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ limit ] ]
+    },
+    historicalBridgeDeposits(assetId, limit, table) {
+        const fQuery = `
+        SELECT
+            bucket,
+            timestamp AS timestamp,
+            deposits AS amount
+        FROM %I
+        WHERE asset = $1
+            AND diff > 0
+        ORDER BY bucket DESC
+        LIMIT $2;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ assetId, limit ] ];
+    },
+    allHistoricalBridgeDeposits(limit, table) {
+        const fQuery = `
+        SELECT
+            asset AS asset_id,
+            bucket,
+            timestamp,
+            deposits AS amount
+        FROM %I
+        WHERE diff > 0
+        ORDER BY bucket DESC
+        LIMIT $1;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ limit ] ];
+    },
+    historicalBridgeWithdrawals(assetId, limit, table) {
+        const fQuery = `
+        SELECT
+            bucket,
+            timestamp AS timestamp,
+            withdrawals AS amount
+        FROM %I
+        WHERE asset = $1
+            AND diff < 0
+        ORDER BY bucket DESC
+        LIMIT $2;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ assetId, limit ] ];
+    },
+    allHistoricalBridgeWithdrawals(limit, table) {
+        const fQuery = `
+        SELECT
+            asset AS asset_id,
+            bucket,
+            timestamp,
+            withdrawals AS amount
+        FROM %I
+        WHERE diff < 0
+        ORDER BY bucket DESC
+        LIMIT $1;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ limit ] ];
+    },
+    feesTopEarners(assetId, n) {
+        const query = `
+        SELECT
+            party_id,
+            asset AS asset_id,
+            max(bucket) AS bucket,
+            max(timestamp) AS timestamp,
+            sum(maker_fee_earned) AS maker_fee_earned,
+            sum(liquidity_fee_earned) AS liquidity_fee_earned,
+            sum(infrastructure_fee_earned) AS infrastructure_fee_earned,
+            sum(maker_fee_earned + liquidity_fee_earned + infrastructure_fee_earned) AS total_fee_earned
+        FROM fees_earned_5m
+        WHERE asset = $1
+        GROUP BY party_id, asset_id
+        ORDER BY total_fee_earned DESC
+        LIMIT $2;
+        `;
+
+        /*
+        SELECT
+            party_id,
+            asset AS asset_id,
+            max(bucket) as bucket,
+            max(timestamp) as timestamp,
+            sum(maker_fee_earned) AS maker_fee_earned,
+            sum(liquidity_fee_earned) AS liquidity_fee_earned,
+            sum(infrastructure_fee_earned) AS infrastructure_fee_earned,
+            sum(maker_fee_earned + liquidity_fee_earned + infrastructure_fee_earned) AS total_fee_earned
+        FROM fees_earned_5m
+        WHERE asset = 'bf1e88d19db4b3ca0d1d5bdb73718a01686b18cf731ca26adedf3c8b83802bba'
+        GROUP BY party_id, asset_id
+        ORDER BY total_fee_earned DESC
+        LIMIT 5;
+        */
+
+        return [ query, [ assetId, n ] ];
+    },
+    allFeesTopEarners(n) {
+        const query = `
+        SELECT
+            party_id,
+            asset as asset_id,
+            max(bucket) as bucket,
+            max(timestamp) as timestamp,
+            sum(maker_fee_earned) AS maker_fee_earned,
+            sum(liquidity_fee_earned) AS liquidity_fee_earned,
+            sum(infrastructure_fee_earned) AS infrastructure_fee_earned,
+            sum(maker_fee_earned + liquidity_fee_earned + infrastructure_fee_earned) AS total_fee_earned
+        FROM fees_earned_5m
+        GROUP BY party_id, asset_id
+        ORDER BY total_fee_earned DESC
+        LIMIT $1;
+        `;
+
+        return [ query, [ n ] ]
     }
 };
 
@@ -194,7 +393,10 @@ const marketQueries = {
     },
     volume(marketId) {
         const query = `
-        SELECT sum(volume) AS volume, max(timestamp) AS timestamp FROM market_data_5m
+        SELECT
+            sum(volume) AS volume,
+            max(timestamp) AS timestamp
+        FROM market_data_5m
         WHERE market_id = $1;
         `;
 
@@ -244,7 +446,7 @@ const marketQueries = {
         FROM %I
         GROUP BY market_id
         ORDER BY bucket_gf DESC
-        LIMIT $3;
+        LIMIT $2;
         `;
 
         const query = format(fQuery, table);
@@ -262,6 +464,33 @@ const marketQueries = {
         `;
 
         return [ query, [] ];
+    },
+    twentyFourHourVolume(marketId) {
+        const query = `
+        SELECT
+            market_id,
+            max(timestamp) AS timestamp,
+            sum(volume) AS volume
+        FROM market_data_5m
+        WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+        AND market_id = $1
+        GROUP BY market_id;
+        `;
+
+        return [ query, [ marketId ] ]
+    },
+    allTwentyFourHourVolumes() {
+        const query = `
+        SELECT
+            market_id,
+            max(timestamp) AS timestamp,
+            sum(volume) AS volume
+        FROM market_data_5m
+        WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+        GROUP BY market_id;
+        `;
+
+        return [ query, [] ]
     },
     totalFees(marketId) {
         const query = `
@@ -481,6 +710,139 @@ const marketQueries = {
     },
     expectedShortfall(marketId, interval) {
 
+    },
+    volatility(marketId) {
+        const query = `
+        WITH gf AS (
+            SELECT
+                time_bucket_gapfill('86400000000000'::bigint, bucket) AS bucket_gf,
+                close AS close,
+                locf(close, bucket) AS close_gf,
+                last_timestamp AS timestamp
+            FROM candles_1d
+            WHERE bucket > first_trade_time($1)
+                AND bucket < most_recent_trade_time($1)
+                AND market_id = $1
+            ORDER BY bucket_gf DESC
+            LIMIT 200
+        ), returns AS (
+            SELECT bucket_gf,
+                (close_gf::decimal / lag(close_gf) OVER (ORDER BY bucket_gf)) - 1 AS return,
+                timestamp AS timestamp
+            FROM gf
+            ORDER BY bucket_gf DESC
+        ) SELECT 
+            max(timestamp) AS timestamp,
+            stddev(stats_agg(return)) AS volatilty,
+            stddev(stats_agg(return)) * sqrt(365) AS annualized_volatility
+        FROM returns;
+        `;
+
+        return [ query, [ marketId ] ];
+    },
+    historicalVolatility() {
+        const query = `
+        `;
+
+        return [ query, [] ];
+    },
+    sharpeRatio(marketId) {
+        const query = `
+        WITH gf AS (
+            SELECT
+                time_bucket_gapfill('86400000000000'::bigint, bucket) AS bucket_gf,
+                close AS close,
+                locf(close, bucket) AS close_gf,
+                last_timestamp as timestamp
+            FROM candles_1d
+            WHERE bucket > first_trade_time($1)
+                AND bucket < most_recent_trade_time($1)
+                AND market_id = $1
+            ORDER BY bucket_gf DESC
+            LIMIT 30
+        ), returns AS (
+            SELECT bucket_gf,
+                (close_gf::decimal / lag(close_gf) OVER (ORDER BY bucket_gf)) - 1 AS return,
+                timestamp AS timestamp
+            FROM gf
+            ORDER BY bucket_gf DESC
+        ) SELECT
+            sum(return) AS sum_return,
+            count(return) AS num_return,
+            avg(return) AS average_return,
+            max(timestamp) AS timestamp,
+            stddev(stats_agg(return)) AS stddev_returns,
+            (avg(return) / stddev(stats_agg(return))) * sqrt(365) AS sharpe_ratio
+        FROM returns;
+        `;
+
+        /*
+        `
+        WITH gf AS (
+            SELECT
+                time_bucket_gapfill('86400000000000'::bigint, bucket) AS bucket_gf,
+                close AS close,
+                locf(close, bucket) AS close_gf,
+                last_timestamp as timestamp
+            FROM candles_1d
+            WHERE bucket > first_trade_time('2dca7baa5f7269b08d053668bca03f97f72e9a162327eebd941c54f1f9fb8f80')
+                AND bucket < most_recent_trade_time('2dca7baa5f7269b08d053668bca03f97f72e9a162327eebd941c54f1f9fb8f80')
+                AND market_id = '2dca7baa5f7269b08d053668bca03f97f72e9a162327eebd941c54f1f9fb8f80'
+            ORDER BY bucket_gf DESC
+            LIMIT 30
+        ), returns AS (
+            SELECT bucket_gf,
+                (close_gf::decimal / lag(close_gf) OVER (ORDER BY bucket_gf)) - 1 AS return,
+                timestamp AS timestamp
+            FROM gf
+            ORDER BY bucket_gf DESC
+        ) SELECT
+            sum(return) AS sum_return,
+            count(return) AS num_return,
+            avg(return) AS average_return,
+            max(timestamp) AS timestamp,
+            stddev(stats_agg(return)) AS stddev_returns,
+            (avg(return) / stddev(stats_agg(return))) * sqrt(365) AS sharpe_ratio
+        FROM returns;
+        ` 
+        */
+
+        return [ query, [ marketId ] ]
+    },
+    sortinoRatio(marketId) {
+        const query = `
+        WITH gf AS (
+            SELECT
+                time_bucket_gapfill('86400000000000'::bigint, bucket) AS bucket_gf,
+                close AS close,
+                locf(close, bucket) AS close_gf,
+                last_timestamp as timestamp
+            FROM candles_1d
+            WHERE bucket > first_trade_time($1)
+                AND bucket < most_recent_trade_time($1)
+                AND market_id = $1
+            ORDER BY bucket_gf DESC
+            LIMIT 30
+        ), returns AS (
+            SELECT bucket_gf,
+                (close_gf::decimal / lag(close_gf) OVER (ORDER BY bucket_gf)) - 1 AS return,
+                timestamp AS timestamp
+            FROM gf
+            ORDER BY bucket_gf DESC
+        ) SELECT
+            sum(return) AS sum_return,
+            count(return) AS num_return,
+            avg(return) AS average_return,
+            max(timestamp) AS timestamp,
+            stddev(stats_agg(return)) AS stddev_returns,
+            sqrt(sum(
+                CASE WHEN return < 0 THEN return^2 ELSE 0 END
+            ) / count(return)) AS downside_deviation,
+            (avg(return)/sqrt(sum(CASE WHEN return < 0 THEN return^2 ELSE 0 END)/count(return)))*sqrt(365) AS sortino_ratio
+        FROM returns;
+        `;
+
+        return [ query, [ marketId ] ]
     },
     mostRecentPrice(marketId) {
         const query = `
@@ -940,7 +1302,62 @@ const partyQueries = {
 
         return [ query, [ partyId ]]
     },
-    historicalPnl() {}
+    historicalPnl() {},
+    uniqueDepositors() {
+        const query = `
+        SELECT 
+            count(distinct party_id) as unique_depositors,
+            max(timestamp) as timestamp
+        FROM bridge_diffs_5m
+        WHERE diff > 0;
+        `;
+
+        return [ query, [] ]
+    },
+    historicalUniqueDepositors(limit, table) {
+        const fQuery = `
+        SELECT
+            party_id,
+            min(bucket) as first_bucket,
+            min(timestamp) as first_timestamp
+        FROM %I
+        GROUP BY party_id
+        ORDER BY first_bucket DESC
+        LIMIT $1;
+        `;
+
+        const query = format(fQuery, table)
+
+        return [ query, [ limit ] ]
+    },
+    uniqueTraders() {
+        const query = `
+        SELECT
+            count(distinct y.party_id) as unique_traders,
+            max(timestamp) as timestamp
+        FROM party_data_1d x
+        CROSS JOIN LATERAL ( VALUES (x.buyer), (x.seller)) AS y(party_id);
+        `;
+        
+        return [ query, [] ]
+    },
+    historicalUniqueTraders(limit, table) {
+        const fQuery = `
+        SELECT
+            y.party_id as party_id,
+            min(bucket) as first_bucket,
+            min(timestamp) as first_timestamp
+        FROM %I x
+        CROSS JOIN LATERAL ( VALUES (x.buyer), (x.seller)) AS y(party_id)
+        GROUP BY y.party_id
+        ORDER BY first_bucket DESC
+        LIMIT $1;
+        `;
+        
+        const query = format(fQuery, table);
+
+        return [ query, [ limit ] ]
+    },
 }
 
 const asyncQuery = (type, query, values, pgPool) => {

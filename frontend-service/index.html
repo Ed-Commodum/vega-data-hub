@@ -13,25 +13,89 @@
     <div id="test-3"></div>
     <div id="test-4"></div>
     <div id="test-5"></div>
+    <div id="test-6"></div>
+    <div id="test-7"></div>
+    <div id="test-8"></div>
+    <div id="test-9"></div>
     <script>
 
         const elementIds = [ "test-0", "test-1", "test-2", "test-3", "test-4", "test-5" ]
         const apiAddr = 'http://65.108.62.30:8080';
 
-
-        let div = document.getElementById('test-0');
         let decimals;
+        let assetDecimals;
         const getDecimals = async () => {
             const res = await fetch(`${apiAddr}/decimals`);
             const json = await res.json();
+            const assetRes = await fetch(`${apiAddr}/asset-decimals`);
+            const assetJson = await assetRes.json();
             console.log(json);
+            console.log(assetJson);
             const decimals = {};
             for (let market of json.decimals) decimals[market.marketId] = market;
-            return decimals;
+            const assetDecimals = {};
+            for (let asset of assetJson.assetDecimals) assetDecimals[asset.assetId] = asset;
+            return [ decimals, assetDecimals ];
         };
-        (async () => { decimals = await getDecimals() })();
 
-        const getHistoricalVolumeData = async () => {
+        const unpack = (rows, key) => {
+            const data = [];
+
+            for (let row of rows) {
+                data.push(row[key])
+            };
+
+            return data;
+        };
+
+        const getVolumeData = async (div) => {
+            const res = await fetch(`${apiAddr}/volume`);
+            const json = await res.json();
+
+            console.log(json);
+            console.log(decimals);
+
+            const data = {};
+            for (let market of json.volumes) {
+                if (!Object.keys(data).includes(decimals[market.marketId].assetDecimals.code)) {
+                    data[decimals[market.marketId].settlementAsset] = 0n;
+                    data[decimals[market.marketId].assetDecimals.code] = 0n;
+                }
+                
+                data[decimals[market.marketId].settlementAsset] += (BigInt(market.volume) / 10n**(BigInt(decimals[market.marketId].priceDecimals) + BigInt(decimals[market.marketId].positionDecimals)));
+                data[decimals[market.marketId].assetDecimals.code] += (BigInt(market.volume) / 10n**(BigInt(decimals[market.marketId].priceDecimals) + BigInt(decimals[market.marketId].positionDecimals)));
+            }
+
+            console.log("volume");
+            console.log(data);
+
+            return
+        };
+
+        const get24hVolumeData = async () => {
+            const res = await fetch(`${apiAddr}/24h-volume`);
+            const json = await res.json();
+
+            console.log(json);
+
+            const data = {};
+            for (let market of json.volumes) {
+                if (!Object.keys(data).includes(decimals[market.marketId].assetDecimals.code)) {
+                    data[decimals[market.marketId].assetDecimals.code] = 0n;
+                    data[decimals[market.marketId].settlementAsset] = 0n;
+                }
+
+                data[decimals[market.marketId].settlementAsset] += (BigInt(market.volume) / 10n**(BigInt(decimals[market.marketId].priceDecimals) + BigInt(decimals[market.marketId].positionDecimals)));
+                data[decimals[market.marketId].assetDecimals.code] += (BigInt(market.volume) / 10n**(BigInt(decimals[market.marketId].priceDecimals) + BigInt(decimals[market.marketId].positionDecimals)));
+            };
+
+            console.log("24h-volume");
+            console.log(data);
+
+            return;
+        };
+
+        const getHistoricalVolumeData = async (div) => {
             const res = await fetch(`${apiAddr}/historical-volume`);
             const json = await res.json();           
 
@@ -45,52 +109,397 @@
                     x: market.data.map((elem) => elem.timeBucket),
                     y: market.data.map((elem) => (BigInt(elem.volume) / 10n**(BigInt(decimals[market.marketId].priceDecimals) + BigInt(decimals[market.marketId].positionDecimals))).toString())
                 };
-            }
+            };
 
             console.log(data);
-
             const layout = { barmode: 'stack' };
-
             Plotly.newPlot( div, Object.values(data), layout );
 
-            return [];
+            return;
         };
+    
+        const getOpenInterestData = async (div) => {
+            const res = await fetch(`${apiAddr}/open-interest`);
+            const json = await res.json();
 
-        getHistoricalVolumeData();
+            console.log(json);
 
-        div = document.getElementById('test-1');
-        
-        const getHistoricalOpenInterestData = async () => {
+            const data = {};
+            for (let market of json.openInterests) {
+                if (!Object.keys(data).includes(decimals[market.marketId].assetDecimals.code)) {
+                    data[decimals[market.marketId].assetDecimals.code] = 0n;
+                    data[decimals[market.marketId].settlementAsset] = 0n;
+                }
+
+                data[decimals[market.marketId].settlementAsset] += (BigInt(market.volume) / 10n**(BigInt(decimals[market.marketId].priceDecimals) + BigInt(decimals[market.marketId].positionDecimals)));
+                data[decimals[market.marketId].assetDecimals.code] += (BigInt(market.volume) / 10n**(BigInt(decimals[market.marketId].priceDecimals) + BigInt(decimals[market.marketId].positionDecimals)));
+            }
+
+            console.log('open-interest');
+            console.log(data);
+            
+            return;
+        }
+
+        const getHistoricalOpenInterestData = async (div) => {
             const res = await fetch(`${apiAddr}/historical-open-interest`);
             const json = await res.json();
 
             console.log(json);
 
-            for (let item of json.openInterests) {
-
+            const data = {};
+            for (let market of json.openInterests) {
+                data[market.marketId] = {
+                    name: decimals[market.marketId].instrumentCode,
+                    type: 'bar',
+                    x: market.data.map((elem) => elem.timeBucket),
+                    y: market.data.map((elem) => ((BigInt(elem.lastOpenInterest) * BigInt(elem.lastTradedPrice)) / 10n**(BigInt(decimals[market.marketId].priceDecimals) + BigInt(decimals[market.marketId].positionDecimals))).toString())
+                }
             }
+         
+            console.log(data);
+            const layout = { barmode: 'stack' };
+            Plotly.newPlot( div, Object.values(data), layout );
+
+            return;
+        }
+
+        const getHistoricalTradesData = async (div) => {
+            const res = await fetch(`${apiAddr}/historical-trade-count`);
+            const json = await res.json();
+
+            console.log(json);
+
+            const data = {};
+            for (let market of json.tradeCounts) {
+                data[market.marketId] = {
+                    name: decimals[market.marketId].instrumentCode,
+                    type: 'bar',
+                    x: market.data.map((elem) => elem.timeBucket),
+                    y: market.data.map((elem) => elem.tradeCount),
+                }
+            }
+
+            console.log(data);
+            const layout = { barmode: 'stack' };
+            Plotly.newPlot( div, Object.values(data), layout );
+
+            return;
+        }
+
+        const getUsdtFeesTopEarners = async (div, div2) => {
+            const assetId = 'bf1e88d19db4b3ca0d1d5bdb73718a01686b18cf731ca26adedf3c8b83802bba';
+            const res = await fetch(`${apiAddr}/fees-top-earners-by-asset?assetId=${assetId}&n=15`);
+            const json = await res.json();
+
+            const data = {};
+            console.log("Top earners data: ", json); 
             
+            for (let earner of json.topEarners) {
+                if (!Object.keys(data).includes(earner.assetId)) {
+                    data[earner.assetId] = [];
+                };
+
+                data[earner.assetId].push(
+                    {
+                        partyId: earner.partyId,
+                        timestamp: earner.timestamp,
+                        makerFee: (BigInt(earner.fees.maker) / 10n**BigInt(assetDecimals[earner.assetId].decimals)).toString(),
+                        liquidityFee: (BigInt(earner.fees.liquidity) / 10n**BigInt(assetDecimals[earner.assetId].decimals)).toString(),
+                        infrastructureFee: (BigInt(earner.fees.infrastructure) / 10n**BigInt(assetDecimals[earner.assetId].decimals)).toString(),
+                        totalFee: (BigInt(earner.fees.total) / 10n**BigInt(assetDecimals[earner.assetId].decimals)).toString(),
+                    }
+                );
+            };
+
+            data[assetId].sort((x, y) => {
+                if (BigInt(x.makerFee + x.liquidityFee) > BigInt(y.makerFee + y.liquidityFee)) {
+                    return -1;
+                };
+                if (BigInt(x.makerFee + x.liquidityFee) < BigInt(y.makerFee + y.liquidityFee)) {
+                    return 1;
+                };
+                return 0;
+            })
+
+            const size = unpack(data[assetId].slice(0,10), 'totalFee');
+            const min = Math.min(...size);
+            const relativeSize = size.map(elem => (Math.floor(elem/min) + 5) * 2);
+
+            console.log(relativeSize);
+
+            const trace = {
+                x: unpack(data[assetId].slice(0,10), 'makerFee'),
+                y: unpack(data[assetId].slice(0,10), 'liquidityFee'),
+                z: unpack(data[assetId].slice(0,10), 'infrastructureFee'),
+                mode: 'markers',
+                marker: {
+                    size: relativeSize,
+                    line: {
+                        color: 'rgba(217, 217, 217, 0.14)',
+                        // width: 0.5
+                    },
+                    opactiy: 0.8,
+                },
+                type: 'scatter3d'
+            }
+
+            const trace2 = {
+                x: unpack(data[assetId].slice(0,10), 'makerFee'),
+                y: unpack(data[assetId].slice(0,10), 'liquidityFee'),
+                mode: 'markers',
+                marker: {
+                    size: relativeSize,
+                    line: {
+                        color: 'rgba(217, 217, 217, 0.14)',
+                        // width: 0.5
+                    },
+                    opactiy: 0.8,
+                }
+            }
+
+            console.log(data);
+            const layout = { margin: { l: 0, r: 0, b: 0, t: 0 } };
+            const layout2 = { title: 'LP and Maker Fees Earned', height: 600, width: 600 }
+            Plotly.newPlot( div, [trace], layout );
+            Plotly.newPlot( div2, [trace2], layout2 );
+        
+            return;
         }
 
-        const getHistoricalUniqueDepositors = () => {
-            
+        const getUsdtFeesByMarket = async (div) => {
+            const res = await fetch(`${apiAddr}/fees-generated`);
+            const json = await res.json();
+
+            console.log(json);
+
+            const data = {};
+            for (let market of json.feesGenerated) {
+                data[market.marketId] = {
+                    asset: decimals[market.marketId].settlementAsset,
+                    quoteName: decimals[market.marketId].quoteName,
+                    timestamp: market.timestamp,
+                    infraTimestamp: market.infraTimestamp,
+                    fees: {
+                        maker: (BigInt(market.fees.maker) / 10n**BigInt(assetDecimals[decimals[market.marketId].settlementAsset].decimals)).toString(),
+                        liquidity: (BigInt(market.fees.liquidity) / 10n**BigInt(assetDecimals[decimals[market.marketId].settlementAsset].decimals)).toString(),
+                        infrastructure: (BigInt(market.fees.infrastructure) / 10n**BigInt(assetDecimals[decimals[market.marketId].settlementAsset].decimals)).toString(),
+                        total: (BigInt(market.fees.total) / 10n**BigInt(assetDecimals[decimals[market.marketId].settlementAsset].decimals)).toString()
+                    }
+                };
+            }
+
+            let [ xVals, yVals1, yVals2, yVals3 ] = [ [], [], [], [] ];
+            for (let [key, value] of Object.entries(data)) {
+                xVals.push(key);
+                yVals1.push(value.fees.maker);
+                yVals2.push(value.fees.liquidity);
+                yVals3.push(value.fees.infrastructure);
+            }
+
+            const trace1 = {
+                x: xVals,
+                y: yVals1,
+                name: 'Maker Fee',
+                type: 'bar',
+                text: yVals1.map((val) => String((Number(val)/1000).toFixed(1)) + 'K' ),
+                textPosition: 'auto',
+                hoverInfo: 'name',
+                // opacity: 0.3,
+                marker: {
+                    color: 'rgb(158,202,225)',
+                    line: {
+                        color: 'rgb(8,48,107)',
+                        width: 1.5
+                    }
+                } 
+            }
+
+            const trace2 = {
+                x: xVals,
+                y: yVals2,
+                name: 'Liquiditiy Fee',
+                type: 'bar',
+                text: yVals2.map((val) => String((Number(val)/1000).toFixed(1)) + 'K' ),
+                textPosition: 'auto',
+                hoverInfo: 'name',
+                // opacity: 0.6,
+                marker: {
+                    color: 'rgba(58,200,225,0.65)',
+                    line: {
+                        color: 'rgb(8,48,107)',
+                        width: 1.5
+                    }
+                } 
+            }
+
+            const trace3 = {
+                x: xVals,
+                y: yVals3,
+                name: 'Infrastructure Fee',
+                type: 'bar',
+                text: yVals3.map((val) => String((Number(val)/1000).toFixed(1)) + 'K' ),
+                textPosition: 'auto',
+                hoverInfo: 'name',
+                // opacity: 0.7,
+                marker: {
+                    color: 'rgba(40, 160, 225, 0.8)',
+                    line: {
+                        color: 'rgb(8,48,107)',
+                        width: 1.5
+                    }
+                } 
+            }
+
+            const layout = {
+                title: 'USDT Fees by Market',
+                xaxis: {
+                    title: 'Market',
+                    tickvals: [...Array(Object.keys(data).length).keys()],
+                    ticktext: Object.keys(data).map(elem => elem.slice(0, 6)+'...'),
+                },
+                yaxis: {
+                    title: 'Fees Generated / USDT',
+                }
+            };
+
+            const config = {
+                responsive: true
+            };
+
+            Plotly.newPlot(div, [ trace1, trace2, trace3 ], layout, config);
+
         }
 
-        const getHistoricalUniqueTraders = () => {
-            
-        }
-
-        const getRewardsByMarket = () => {
+        const getRewardsData = async (div) => {
 
         }
 
-        const getRewardsTopEarners = () => {
+        const getRewardsTopEarners = async (div) => {
 
         }
 
-        const getHistoricalTradesData = () => {
-            
+        const getUniqueDepositors = async (div) => {
+            const res = await fetch(`${apiAddr}/unique-depositors`);
+            const json = await res.json();
+
+            console.log(json);
+
+            const data = {};
+            data['uniqueDepositors'] = json.uniqueDepositors;
+
+            return;
         }
+
+        const getHistoricalUniqueDepositors = async (div) => {
+            const res = await fetch(`${apiAddr}/historical-unique-depositors`);
+            const json = await res.json();
+
+            console.log(json);
+
+            const data = json.data;
+
+            const xData = unpack(data, 'timeBucket');
+            const yData = unpack(data, 'uniqueDepositors');
+
+            let yPrev = 0;
+            for (let i=yData.length-1; i>=0; i--) {
+                yData[i] += yPrev;
+                yPrev = yData[i].valueOf();
+            }
+
+            const trace = {
+                x: xData,
+                y: yData,
+                mode: 'lines',
+                type: 'scatter'
+            };
+
+            const layout = {
+                title: 'Unique Depositors',
+                xaxis: {
+                    title: 'Timestamp',
+                    // We could put logic here to caluculate the date from the timestamp and add it to the x axis.
+                    // tickvals: [...Array(Object.keys(data).length).keys()],
+                    // ticktext: Object.keys(data).map(elem => elem.slice(0, 6)+'...'),
+                },
+                yaxis: {
+                    title: 'Cumulative Unique Depositors',
+                }
+            };
+
+            Plotly.newPlot(div, [trace], layout);
+
+            return;
+        }
+
+        const getUniqueTraders = async (div) => {
+            const res = await fetch(`${apiAddr}/unique-traders`);
+            const json = await res.json();
+
+            console.log(json);
+
+            const data = {};
+            data['uniqueTraders'] = json.uniqueTraders;
+
+            return;
+        }
+
+        const getHistoricalUniqueTraders = async (div) => {
+            const res = await fetch(`${apiAddr}/historical-unique-traders`);
+            const json = await res.json();
+
+            console.log(json);
+
+            const data = json.data;
+
+            const xData = unpack(data, 'timeBucket');
+            const yData = unpack(data, 'uniqueTraders');
+
+            let yPrev = 0;
+            for (let i=yData.length-1; i>=0; i--) {
+                yData[i] += yPrev;
+                yPrev = yData[i].valueOf();
+            }
+
+            const trace = {
+                x: xData,
+                y: yData,
+                mode: 'lines',
+                type: 'scatter'
+            };
+
+            const layout = {
+                title: 'Unique Traders',
+                xaxis: {
+                    title: 'Timestamp',
+                },
+                yaxis: {
+                    title: 'Cumulative Unique Traders',
+                }
+            };
+
+            Plotly.newPlot(div, [trace], layout);
+
+            return;
+        }
+
+
+        (async () => {
+            [ decimals, assetDecimals ] = await getDecimals()
+            getHistoricalVolumeData(document.getElementById('test-0'));
+            getHistoricalOpenInterestData(document.getElementById('test-1'));
+            getHistoricalTradesData(document.getElementById('test-2'));
+            getUsdtFeesTopEarners(document.getElementById('test-3'), document.getElementById('test-4'));
+            getUsdtFeesByMarket(document.getElementById('test-5'));
+            getUniqueDepositors();
+            getUniqueTraders();
+            getHistoricalUniqueDepositors(document.getElementById('test-6'));
+            getHistoricalUniqueTraders(document.getElementById('test-7'));
+
+        })();
+
+
 
         // Plotly.newPlot( test, [{
         // x: [1, 2, 3, 4, 5],
