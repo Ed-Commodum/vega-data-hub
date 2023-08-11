@@ -108,7 +108,7 @@ class DataHandler {
                     assetName: this.decimals[market.marketId].assetName,
                     openInterestContracts: market.openInterest,
                     lastTradedPrice: market.lastTradedPrice,
-                    openInterest: this.convertVolumeUnits(market.marketId, (BigInt(market.openInterest) * BigInt(market.lastTradedPrice)))
+                    openInterest: this.convertVolumeUnits(market.marketId, (BigInt(market.openInterest ? market.openInterest : 0) * BigInt(market.lastTradedPrice)))
                 }
             );
         }
