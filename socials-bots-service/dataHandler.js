@@ -96,10 +96,11 @@ class DataHandler {
         const openInterestRes = await fetch(`${this.apiAddr}/open-interest`);
         const openInterestJson = await openInterestRes.json();
         this.openInterests.length = 0;
+        console.log(openInterestJson);
         for (let market of openInterestJson.openInterests) {
-            // console.log(market);
-            if (!Object.keys(this.decimals).includes(market.marketId)) continue;
             console.log(market);
+            if (!Object.keys(this.decimals).includes(market.marketId)) continue;
+            // console.log(market);
             this.openInterests.push(
                 {
                     marketId: market.marketId,
