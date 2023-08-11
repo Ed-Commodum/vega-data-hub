@@ -587,6 +587,7 @@ const continuousAggregates = {
                 count(market_id) AS num_trades,
                 sum(size) AS volume_contracts,
                 sum(size * price) AS volume,
+                avg()
                 sum(buyer_fee_infrastructure + seller_fee_infrastructure) AS fees_paid_infrastructure,
                 sum(buyer_fee_infrastructure + buyer_fee_maker +
                     buyer_fee_liquidity + seller_fee_infrastructure +

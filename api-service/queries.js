@@ -287,10 +287,31 @@ const marketQueries = {
         const query = `
         SELECT
             DISTINCT id
-        FROM markets;
+        FROM markets
+        WHERE state = 'STATE_ACTIVE'
+            OR state = 'STATE_SUSPENDED'
+            OR state = 'STATE_CLOSED'
+            OR state = 'STATE_TRADING_TERMINATED'
+            OR state = 'STATE_SETTLED';
         `;
 
         return [ query, [ ] ];
+    },
+    activeMarkets() {
+        const query = `
+        SELECT
+            id,
+            instrument_code,
+            instrument_name,
+            future_settlement_asset,
+            decimal_places,
+            position_decimal_places
+        FROM markets
+        WHERE state = 'STATE_ACTIVE'
+            OR state = 'STATE_SUSPENDED';
+        `;
+
+        return [ query, [] ];
     },
     getDecimals(marketId) {
         const query = `
@@ -386,10 +407,145 @@ const marketQueries = {
         ORDER BY bucket DESC
         LIMIT $1;
         `;
-
+        
         const query = format(fQuery, table);
 
         return [ query, [ limit ] ]
+    },
+    twentyFourHourAverageTradeSize(marketId) {
+        const query = `
+        WITH x AS (
+            SELECT
+                sum(num_trades)
+            FROM market_data_5m
+            WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+            AND market_id = $1
+        )
+        SELECT
+            market_id,
+            last(timestamp, timestamp),
+            sum(
+                (volume/num_trades) * (num_trades/x.sum)
+            ) as avg_trade_size
+        FROM market_data_5m CROSS JOIN x
+        WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+        AND market_id = $1
+        GROUP BY market_id;
+        `;
+        
+        /* `
+        WITH x AS (
+            SELECT sum(num_trades)
+            FROM market_data_5m
+            WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+            AND market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
+        )
+        SELECT
+            market_id,
+            last(timestamp, timestamp),
+            sum(
+                (volume/num_trades) * (num_trades/x.sum)
+            ) as avg_trade_size
+        FROM market_data_5m CROSS JOIN x
+        WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+        AND market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
+        GROUP BY market_id;
+        ` */ 
+
+        return [ query, [ marketId ] ];
+    },
+    allTwentyFourHourAverageTradeSize() {
+        const query = `
+        WITH x AS (
+            SELECT
+                market_id,
+                sum(num_trades)
+            FROM market_data_5m
+            WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+            GROUP BY market_id
+        )
+        SELECT
+            y.market_id,
+            last(timestamp, timestamp) as timestamp,
+            sum(
+                (volume/num_trades) * (num_trades/x.sum)
+            ) as avg_trade_size
+        FROM market_data_5m y INNER JOIN x ON y.market_id = x.market_id
+        WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+        GROUP BY y.market_id;
+        `;
+
+        return [ query, [] ];
+    },
+    rollingAverageTradeSize(marketId, timeWindow, table) {
+        const fQuery = `
+        WITH x AS (
+            SELECT
+                sum(num_trades)
+            FROM %I
+            WHERE timestamp::bigint > (current_time_ns() - $2::bigint)
+                AND market_id = $1
+        )
+        SELECT
+            market_id,
+            last(timestamp, timestamp) as timestamp,
+            sum(
+                (volume/num_trades) * (num_trades/x.sum)
+            ) as avg_trade_size
+        FROM %I CROSS JOIN x
+        WHERE timestamp::bigint > (current_time_ns() - $2::bigint)
+            AND market_id = $1
+        GROUP BY market_id;
+        `;
+
+        /*`
+        WITH x AS (
+            SELECT
+                sum(num_trades)
+            FROM market_data_5m
+            WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+                AND market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
+        )
+        SELECT
+            market_id,
+            last(timestamp, timestamp) as timestamp,
+            sum(
+                (volume/num_trades) * (num_trades/x.sum)
+            ) as avg_trade_size
+        FROM market_data_5m CROSS JOIN x
+        WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+            AND market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
+        GROUP BY market_id;
+        ` */
+
+        const query = format(fQuery, table, table);
+
+        return [ query, [ marketId, timeWindow ] ];
+    },
+    allRollingAverageTradeSize(timeWindow, table) {
+        const fQuery = `
+        WITH x AS (
+            SELECT
+                market_id,
+                sum(num_trades)
+            FROM %I
+            WHERE timestamp::bigint > (current_time_ns() - $1::bigint)
+            GROUP BY market_id
+        )
+        SELECT
+            y.market_id,
+            last(timestamp, timestamp) as timestamp,
+            sum(
+                (volume/num_trades) * (num_trades/x.sum)
+            ) as avg_trade_size
+        FROM %I y INNER JOIN x ON y.market_id = x.market_id
+        WHERE timestamp::bigint > (current_time_ns() - $1::bigint)
+        GROUP BY y.market_id;
+        `;
+
+        const query = format(fQuery, table, table);
+        
+        return [ query, [ timeWindow ] ];
     },
     volume(marketId) {
         const query = `

@@ -654,6 +654,47 @@ const routes = (app, pgPool) => {
 
     });
 
+    app.get('/active-markets', async (req, res) => {
+        // Accepts no parameters. Returns a list of all active markets.
+
+        const result = {
+            activeMarkets: [
+                {
+                    marketId: "",
+                    instrumentCode: "",
+                    settlementAsset: "",
+                    quoteName: "",
+                    priceDecimals: "",
+                    positionDecimals: ""
+                }
+            ]
+        };
+
+        res = applyHeaders(res);
+
+        const queryRes = await asyncQuery('activeMarkets', ...marketQueries.activeMarkets(), pgPool);
+
+        if (!queryRes[1][0]) {
+            return res.send(result);
+        }
+
+        result.activeMarkets.length = 0;
+        for (let market of queryRes[1]) {
+            result.activeMarkets.push(
+                {
+                    marketId: market.id,
+                    instrumentCode: market.instrument_code,
+                    settlementAsset: market.future_settlement_asset,
+                    quoteName: market.future_quote_name,
+                    priceDecimals: market.decimal_places,
+                    positionDecimals: market.position_decimal_places
+                }
+            );
+        }
+
+        res.send(result);
+    });
+
     // ---------- TEST AGAIN ---------- //
     app.get('/volume', async (req, res) => {
         // Takes a marketId (optional) and a partyId (optional) and returns the most recent cumulative volume
@@ -1327,6 +1368,183 @@ const routes = (app, pgPool) => {
         }
 
         res.send(result);
+
+    });
+
+    app.get('/24h-average-trade-size', async (req, res) => {
+        // Accepts a marketId (optional) and returns the average trade size for that market in the past
+        // 24 hours. Omitting the marketId will return results for all active markets.
+
+        const result = {
+            averageTradeSizes: [
+                {
+                    marketId: "",
+                    timestamp: "0",
+                    averageTradeSize: ""
+                }
+            ]
+        };
+
+        res = applyHeaders(res);
+
+        const marketId = req.query.marketId;
+
+        switch (true) {
+            case (marketId != undefined): {
+                const res = await asyncQuery('rollingAverageTradeSize', ...marketQueries.twentyFourHourAverageTradeSize(marketId), pgPool);
+
+                if (!res[1][0]) {
+                    break;
+                }
+
+                result.averageTradeSizes[0].marketId = marketId;
+                result.averageTradeSizes[0].timestamp = res[1][0].timestamp;
+                result.averageTradeSizes[0].averageTradeSize = res[1][0].avg_trade_size;
+
+                break;
+            };
+            case (marketId == undefined): {
+                const res = await asyncQuery('rollingAverageTradeSize', ...marketQueries.allTwentyFourHourAverageTradeSize(), pgPool);
+
+                if (!res[1][0]) {
+                    break;
+                }
+
+                result.averageTradeSizes.length = 0;
+
+                for (let market of res[1][0]) {
+                    result.averageTradeSizes.push(
+                        {
+                            marketId: market.market_id,
+                            tiemstamp: market.timestamp,
+                            averageTradeSize: market.avg_trade_size
+                        }
+                    )
+                }
+
+                break;
+            };
+        }
+
+        res.send(result);
+    });
+
+    app.get('/rolling-average-trade-size', async (req, res) => {
+        // Accepts a marketId (optional) and a rolling time interval, returns the average trade size for
+        // that market over the time interval. Omitting the marketId will return results for all active markets.
+
+        const result = {
+            averageTradeSizes: [
+                {
+                    marketId: "",
+                    interval: "",
+                    timestamp: "0",
+                    averageTradeSize: ""
+                }
+            ]
+        };
+
+        res = applyHeaders(res);
+
+        const args = req.query;
+        const expectedArgs = [ 'marketId', 'interval' ];
+        const defaultArgs = { marketId: undefined, interval: 'INTERVAL_ROLLING_1D' };
+        
+        for (let arg of expectedArgs) {
+            if (!args[arg]) {
+                args[arg] = defaultArgs[arg];
+            };
+        };
+
+        let table, timeWindow;
+        switch (interval) {
+            case ('INTERVAL_ROLLING_1H'): {
+                table = 'market_data_5m';
+                timeWindow = '3600000000000';
+                break;
+            }
+            case ('INTERVAL_ROLLING_1D'): {
+                table = 'market_data_5m';
+                timeWindow = '86400000000000'
+                break;
+            }
+            case ('INTERVAL_ROLLING_1W'): {
+                table = 'market_data_1h';
+                timeWindow = '604800000000000';
+                break;
+            }
+            case ('INTERVAL_ROLLING_1M'): {
+                table = 'market_data_1h';
+                timeWindow = '2629800000000000';
+                break;
+            }
+            default: {
+                return res.send(result);
+            }
+        }
+
+        switch (true) {
+            case (marketId != undefined): {
+                const res = await asyncQuery('rollingAverageTradeSize', ...marketQueries.twentyFourHourAverageTradeSize(marketId, timeWindow, table), pgPool);
+
+                if (!res[1][0]) {
+                    break;
+                }
+
+                result.averageTradeSizes[0].marketId = args.marketId;
+                result.averageTradeSizes[0].interval = args.interval;
+                result.averageTradeSizes[0].timestamp = res[1][0].timestamp;
+                result.averageTradeSizes[0].averageTradeSize = res[1][0].avg_trade_size;
+
+                break;
+            };
+            case (marketId == undefined): {
+                const res = await asyncQuery('rollingAverageTradeSize', ...marketQueries.allTwentyFourHourAverageTradeSize(timeWindow, table), pgPool);
+
+                if (!res[1][0]) {
+                    break;
+                }
+
+                result.averageTradeSizes.length = 0;
+                for (let market of res[1][0]) {
+                    result.averageTradeSizes.push(
+                        {
+                            marketId: market.market_id,
+                            interval: args.interval,
+                            timestamp: market.timestamp,
+                            averageTradeSize: market.avg_trade_size
+                        }
+                    );
+                }
+
+                break;
+            };
+        }
+
+        res.send(result);
+    });
+
+    app.get('/historical-average-trade-size', async (req, res) => {
+        // Accepts a marketId (optional) and a time interval, returns the historical average trade size for that
+        // time interval. Omitting the marketId will return results for all active markets.
+
+        const result = {
+            averageTradeSizes: [
+                {
+                    marketId: "",
+                    interval: "",
+                    timestamp: "0",
+                    data: [
+                        { timeBucket: "0", averageTradeSize: "" }
+                    ]
+                }
+            ]
+        };
+
+        res = applyHeaders(res);
+
+        const args = req.query;
+        
 
     });
 
@@ -2317,6 +2535,12 @@ const routes = (app, pgPool) => {
         res.send(result);
     });
 
+    app.get('/bridge-capital-efficiency', async (req, res) => {
+        // Figure out something like bridge balances vs margin account balances, maybe some metrics comparing
+        // bridge balances to OI and trade volume...
+
+    })
+
     // ---------- UNTESTED ---------- //
     app.get('/simple-moving-average', async (req, res) => {
         // Accepts a marketId, an interval, a windowLength, and a limit and returns the corresponding
@@ -2487,6 +2711,36 @@ const routes = (app, pgPool) => {
 
     });
 
+    app.get('/pnl-leaderboard', async (req, res) => {
+        // Accepts an assetId (optional), a rolling time window, and a sorting mode. Returns the top 10 parties sorted
+        // by PnL in either absolute or percentage terms depending on the sorting mode. Omitting the assetId returns a
+        // pnl leaderboard for each active market.
+
+
+    });
+
+    app.get('/pnl-loserboard', async (req, res) => {
+        // Accepts an assetId (optional), a rolling time window, and a sorting mode. Returns the 10 worst parties sorted
+        // by PnL in either absolute or percentage terms depending on the sorting mode. Omitting the assetId returns a
+        // pnl loserboard for each active market.
+
+
+    });
+
+    app.get('/rolling-market-return', async (req, res) => {
+        // Accepts a marketId (optional), and a rolling time interval, returns the return for that market over the
+        // rolling time interval. Omitting a marketId will return results for all active markets.
+
+
+    });
+
+    app.get('/historical-market-returns', async (req, res) => {
+        // Accepts a marketId (optional), and a time interval, returns the returns for that market over the time
+        // interval. Omitting a marketId will return results for all active markets.
+
+
+    });
+
     // ---------- UNTESTED ---------- //
     app.get('/volatility', async (req, res) => {
         // Accepts a marketId (optional), returns the computed value of volatility for those parameters.
@@ -2524,6 +2778,7 @@ const routes = (app, pgPool) => {
 
     });
 
+    // ---------- UNFINISHED ---------- //
     app.get('/historical-volatility', async (req, res) => {
         // Accepts a marketId, an interval, and a window size. Returns a series of historical volatility data
         // points for the specified market. Omitting the marketId or providing an invalid parameter will 
@@ -2873,6 +3128,26 @@ const routes = (app, pgPool) => {
 
     });
 
+    app.get('/taker-data', async (req, res) => {
+        // Accepts a markteId (optional), and returns the taker data for the market, omitting the
+        // marketId will return results for all active markets.
+
+
+    });
+
+    app.get('/rolling-taker-data', async (req, res) => {
+        // Accepts a markteId (optional) and a rolling time interval, returns the taker data for the market over the
+        // rolling time interval. Omitting the marketId will return results for all active markets.
+
+
+    });
+
+    app.get('/historical-taker-data', async (req, res) => {
+        // Accepts a markteId (optional) and a time interval, returns the taker data for the market over the time
+        // interval. Omitting the marketId will return results for all active markets.
+
+
+    });
 
 };
 
