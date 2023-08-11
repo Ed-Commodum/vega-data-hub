@@ -99,6 +99,7 @@ class DataHandler {
         for (let market of openInterestJson.openInterests) {
             // console.log(market);
             if (!Object.keys(this.decimals).includes(market.marketId)) continue;
+            console.log(market);
             this.openInterests.push(
                 {
                     marketId: market.marketId,
