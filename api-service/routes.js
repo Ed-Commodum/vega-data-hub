@@ -531,6 +531,9 @@ const routes = (app, pgPool) => {
                 {
                     marketId: "",
                     settlementAsset: "",
+                    instrumentCode: "",
+                    instrumentName: "",
+                    assetDecimals: { assetId: "", code: "", decimals: "" },
                     quoteName: "",
                     priceDecimals: "",
                     positionDecimals: ""
@@ -693,6 +696,37 @@ const routes = (app, pgPool) => {
         }
 
         res.send(result);
+    });
+
+    // ---------- UNFINISHED ----------//
+    app.get('/vega-token', async (req, res) => {
+        // Accepts no prarmeters, returns the distribution of Vega tokens between staked, free float, and
+        // deposited in the ERC-20 bridge.
+
+        const result = {
+            timestamp: "",
+            staked: "",
+            bridged: "",
+            freeFloat: ""
+        };
+
+        res = applyHeaders(res);
+
+        const queryRes = await asyncQuery('vegaToken', ...assetQueries.vegaToken(), pgPool);
+
+        // Add call to external API to get total token supply.
+        const vegaTotalSupplyRes = await fetch();
+
+        if (!queryRes[1][0]) {
+            return res.send(result);
+        }
+
+        result.timestamp = queryRes[1][0].timestamp;
+        result.staked = queryRes[1][0].staked;
+        result.bridged = queryRes[1][0].bridged;
+        // result.freeFloat = 
+
+        
     });
 
     // ---------- TEST AGAIN ---------- //
@@ -1061,6 +1095,7 @@ const routes = (app, pgPool) => {
                 console.log(res)
                 if (!res[1][0]) break;
                 
+                result.volumes.shift();
                 for (let vol of res[1]) {
                     result.volumes.push(
                         {
@@ -1439,7 +1474,7 @@ const routes = (app, pgPool) => {
                     marketId: "",
                     interval: "",
                     timestamp: "0",
-                    averageTradeSize: ""
+                    averageTradeSize: "0"
                 }
             ]
         };
@@ -1617,6 +1652,7 @@ const routes = (app, pgPool) => {
     });
 
     // ---------- UNTESTED ---------- //
+    // ----- Change default to active markets ----- //
     app.get('/historical-open-interest', async (req, res) => {
         // Accepts a marketId (optional) and and interval, returns a history of the open interest
         // for that time interval on that market. If the marketId is omitted then the historical open
@@ -2022,6 +2058,8 @@ const routes = (app, pgPool) => {
 
     });
 
+    // CALL refresh_continuous_aggregate('stake_linking_diffs_1h', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('stake_linking_diffs_5m', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('taker_data_5m', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('taker_data_1h', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('taker_data_1d', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('candles_5m', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('candles_1h', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('candles_1d', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('fees_earned_5m', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('fees_paid_5m', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('infra_fees_by_asset_5m', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('market_data_1d', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('market_data_1h', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('market_data_5m', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('open_interest_1d', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('open_interest_1h', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('open_interest_5m', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('party_data_1d', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('party_data_1h', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('party_data_5m', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('pnl_deltas_5m', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('pnl_deltas_1h', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('stake_linking_diffs_1d', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('bridge_diffs_5m', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('bridge_diffs_1h', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('bridge_diffs_1d', NULL, 1692034141644862679); CALL refresh_continuous_aggregate('infra_fees_by_market_5m', NULL, 1692034141644862679);
+
     // ---------- UNTESTED ---------- //
     app.get('/fees-generated', async (req, res) => {
         // Accepts a marketId (optional) and returns a summary of all the fees that have been generated by
@@ -2077,7 +2115,7 @@ const routes = (app, pgPool) => {
                 if (!makerLiqRes[1][0] || !infraRes[1][0]) {
                     break
                 };
-                
+
                 for (let market of infraRes[1]) {
                     const elem = makerLiqRes[1].find(elem => elem.market_id == market.market_id);
                     elem['infra_fee_timestamp'] = market.timestamp;
@@ -2093,10 +2131,10 @@ const routes = (app, pgPool) => {
                             timestamp: market.timestamp,
                             infraFeeTimestamp: market.infra_fee_timestamp,
                             fees: {
-                                total: (BigInt(market.maker_fees_generated) + BigInt(market.liquidity_fees_generated) + BigInt(market.infrastructure_fees_generated)).toString(),
-                                maker: market.maker_fees_generated,
-                                liquidity: market.liquidity_fees_generated,
-                                infrastructure: market.infrastructure_fees_generated
+                                total: (BigInt(market.maker_fees_generated ? market.maker_fees_generated : 0) + BigInt(market.liquidity_fees_generated ? market.liquidity_fees_generated : 0) + BigInt(market.infrastructure_fees_generated ? market.infrastructure_fees_generated : 0)).toString(),
+                                maker: market.maker_fees_generated ? market.maker_fees_generated : "0",
+                                liquidity: market.liquidity_fees_generated ? market.liquidity_fees_generated : "0",
+                                infrastructure: market.infrastructure_fees_generated ? market.infrastructure_fees_generated : "0"
                             }
                         }
                     );
@@ -2111,6 +2149,7 @@ const routes = (app, pgPool) => {
 
     });
 
+    // ---------- UNFINISHED ---------- //
     app.get('/rewards-distributed', async (req, res) => {
         // Accepts a marketId (optional) and returns the sum of rewards distributed across the lifetime
         // of that market. Omitting the marketId will return a sum of rewards for each market.
@@ -2120,12 +2159,14 @@ const routes = (app, pgPool) => {
 
     });
 
+    // ---------- UNFINISHED ---------- //
     app.get('/rewards-earned', async (req, res) => {
         // Accepts a partyId (mandatory) and returns the sum of rewards earned by that party across all markets.
         // Omitting a partyId will return an empty result. 
 
     });
 
+    // ---------- UNFINISHED ---------- //
     app.get('/rewards-top-earners-by-asset', async (req, res) => {
         // Accepts an assetId (optional) and a number of records to return, n. Returns the top n reward earners for
         // the specified asset. If no asset is specified then the results are returned for all assets.
@@ -2185,6 +2226,7 @@ const routes = (app, pgPool) => {
         res.send(result);
     });
 
+    // ---------- UNTESTED ---------- //
     app.get('/24h-bridge-net-flows', async (req, res) => {
         // Accepts an assetId (optional) and returns the 24h net flow for the asset on the ERC-20 bridge,
         // omitting the assetId will return results for all assets in the bridge.
@@ -2242,6 +2284,7 @@ const routes = (app, pgPool) => {
         res.send(result);
     });
 
+    // ---------- UNTESTED ---------- //
     app.get('/historical-bridge-net-flows', async (req, res) => {
         // Accepts an assetId (optional), an interval, and a limit, returns the historical net flows for the asset on
         // the ERC-20 bridge. Omitting the assetId will return results for all assets in the bridge.
@@ -2258,6 +2301,8 @@ const routes = (app, pgPool) => {
                 }
             ]
         };
+
+        res = applyHeaders(res);
 
         const args = req.query;
         const expectedArgs = [ 'assetId', 'interval', 'limit' ];
@@ -2334,6 +2379,7 @@ const routes = (app, pgPool) => {
         res.send(result);
     });
 
+    // ---------- UNTESTED ---------- //
     app.get('/historical-deposits', async (req, res) => {
         // Accepts an assetId (optional), an interval, and a limit, returns all historical deposits for that asset. Omitting the
         // assetId will return results for all assets.
@@ -2535,11 +2581,35 @@ const routes = (app, pgPool) => {
         res.send(result);
     });
 
+    // ---------- UNFINISHED ---------- //
     app.get('/bridge-capital-efficiency', async (req, res) => {
         // Figure out something like bridge balances vs margin account balances, maybe some metrics comparing
         // bridge balances to OI and trade volume...
 
+        // Ratios between bridge balances and volume, order book volume, OI, etc
+
     })
+
+    app.get('/party-capital-efficiency', async (req, res) => {
+        // Accepts a partyId (mandatory) and an assetId (optional), returns the capital efficiency
+        // for that asset on that party. Omitting the partyId will return an empty result, omitting
+        // the assetId will return the capital efficiency for each asset that the party has deposited.
+
+        // Asset PnL / Sum(deposits)  for each asset
+
+        const result = {
+            capitalEfficiencies: [
+                {
+                    partyId: "",
+                    assetId: "",
+                    capitalEfficiency: ""
+                }
+            ]
+        }
+
+
+
+    });
 
     // ---------- UNTESTED ---------- //
     app.get('/simple-moving-average', async (req, res) => {
@@ -2703,6 +2773,7 @@ const routes = (app, pgPool) => {
         res.send(result);
     });
 
+    // ---------- UNFINISHED ---------- //
     app.get('/historical-pnl', async (req, res) => {
         // Accepts a partyId (mandatory), a marketId (optional), and a time interval (optional) and returns
         // the pnl history for the corresponding party, market, and time interval. If marketId is omitted
@@ -2711,6 +2782,7 @@ const routes = (app, pgPool) => {
 
     });
 
+    // ---------- UNFINISHED ---------- //
     app.get('/pnl-leaderboard', async (req, res) => {
         // Accepts an assetId (optional), a rolling time window, and a sorting mode. Returns the top 10 parties sorted
         // by PnL in either absolute or percentage terms depending on the sorting mode. Omitting the assetId returns a
@@ -2719,6 +2791,7 @@ const routes = (app, pgPool) => {
 
     });
 
+    // ---------- UNFINISHED ---------- //
     app.get('/pnl-loserboard', async (req, res) => {
         // Accepts an assetId (optional), a rolling time window, and a sorting mode. Returns the 10 worst parties sorted
         // by PnL in either absolute or percentage terms depending on the sorting mode. Omitting the assetId returns a
@@ -2727,18 +2800,123 @@ const routes = (app, pgPool) => {
 
     });
 
+    // ---------- UNFINISHED ---------- //
     app.get('/rolling-market-return', async (req, res) => {
         // Accepts a marketId (optional), and a rolling time interval, returns the return for that market over the
         // rolling time interval. Omitting a marketId will return results for all active markets.
 
 
     });
-
+    
+    // ---------- UNTESTED ---------- //
     app.get('/historical-market-returns', async (req, res) => {
         // Accepts a marketId (optional), and a time interval, returns the returns for that market over the time
         // interval. Omitting a marketId will return results for all active markets.
 
+        const result = {
+            marketReturns: [
+                {
+                    marketId: "",
+                    interval: "",
+                    timestamp: "",
+                    data: [
+                        { timeBucket: "", return: "" }
+                    ]
+                }
+            ]
+        };
 
+        res = applyHeaders(res);
+
+        const args = req.query;
+        const defaultArgs = { marketId: undefined, interval: "INTERVAL_1D"};
+
+        for (let [arg, value] of Object.entries(defaultArgs)) {
+            if (!args[arg]) {
+                args[arg] = value;
+            }
+        }
+
+        let table, intervalSize;
+        switch (args.interval) {
+            case ('INTERVAL_5M'): {
+                table = 'candles_5m';
+                intervalSize = '300000000000';
+                break;
+            };
+            case ('INTERVAL_1H'): {
+                table = 'candles_1h';
+                intervalSize = '3600000000000';
+                break;
+            };
+            case ('INTERVAL_1D'): {
+                table = 'candles_1d';
+                intervalSize = '86400000000000';
+                break;
+            };
+            default: {
+                return res.send(result);
+            }
+        }
+
+        switch (true) {
+            case (args.marketId != undefined): {
+                const res = await asyncQuery('historicalMarketReturns', ...marketQueries.historicalReturns(marketId, intervalSize, table) , pgPool);
+
+                if (!res[1][0]) {
+                    break;
+                }
+
+                result.marketReturns[0].marketId = row.market_id;
+                result.marketReturns[0].interval = args.interval;
+                result.marketReturns[0].timestamp = res[1][0].timestamp;
+                result.marketReturns[0].data.length = 0;
+                for (let row of res[1]) {
+                    result.marketReturns[0].data.push(
+                        {
+                            timeBucket: row.bucket_gf,
+                            return: row.return
+                        }
+                    )
+                }
+
+                break;
+            }
+            case (args.marketId == undefined): {
+                const res = await asyncQuery('historicalMarketReturns', ...marketQueries.allHistoricalReturns(intervalSize, table), pgPool);
+
+                if (!res[1][0]) {
+                    break;
+                }
+
+                console.log(res);
+                console.log(res[1].length);
+                console.log(res[1]);
+
+                const markets = {};
+                for (let row of res[1]) {
+                    console.log(row.market_id)
+                    if (!Object.keys(markets).includes(row.market_id)) {
+                        markets[row.market_id] = { marketId: row.market_id, interval: args.interval, timestamp: row.timestamp, data: [] }
+                    }
+                    markets[row.market_id].data.push(
+                        {
+                            timeBucket: row.bucket_gf, return: row.return
+                        }
+                    )
+                }
+
+                result.marketReturns.length = 0;
+
+                for (let value of Object.values(markets)) {
+                    result.marketReturns.push(value);
+                }
+
+                break;
+            }
+        }
+
+        res.send(result);
     });
 
     // ---------- UNTESTED ---------- //
@@ -2750,8 +2928,10 @@ const routes = (app, pgPool) => {
             marketId: "",
             timestamp: "0",
             interval: "",
+            simpleVolatility: "0",
+            simpleVolatilityAnnualized: "0",
             volatilityDaily: "0",
-            volatilityAnnualized: ""
+            volatilityAnnualized: "0"
         };
 
         res = applyHeaders(res);
@@ -2771,31 +2951,38 @@ const routes = (app, pgPool) => {
 
         result.marketId = marketId;
         result.timestamp = queryRes[1][0].timestamp;
-        result.volatilityDaily = queryRes[1][0].volatilty;
-        result.volatilityAnnualized = queryRes[1][0].annualized_volatility;
+        result.simpleVolatilityDaily = queryRes[1][0].simple_volatilty_relative;
+        result.simpleVolatilityAnnualized = queryRes[1][0].simple_annualized_volatility_relative;
+        result.volatilityDaily = queryRes[1][0].volatilty_relative;
+        result.volatilityAnnualized = queryRes[1][0].annualized_volatility_relative;
 
         res.send(result);
 
     });
 
-    // ---------- UNFINISHED ---------- //
+    // ---------- UNTESTED ---------- //
     app.get('/historical-volatility', async (req, res) => {
         // Accepts a marketId, an interval, and a window size. Returns a series of historical volatility data
-        // points for the specified market. Omitting the marketId or providing an invalid parameter will 
-        // return an empty result.
+        // points for the specified market. Providing an invalid parameter will return an empty result while
+        // omitting the marketId will return values for all active markets.
 
         const result = {
-            marketId: "",
-            interval: "",
-            windowLength: "",
-            data: []
+            volatilities: [
+                {
+                    marketId: "",
+                    timestamp: "",
+                    interval: "",
+                    windowSize: "",
+                    data: [ { timeBucket: "", volatility: "", volatilityAnnualized: "" } ]
+                }
+            ]
         };
 
         res = applyHeaders(res);
 
         const args = req.query;
         const expectedArgs = ['marketId', 'interval', 'windowSize'];
-        const defaultArgs = { marketId: undefined, interval: "INTERVAL_1D", confidenceInterval: 30 }
+        const defaultArgs = { marketId: undefined, interval: "INTERVAL_1D", windowSize: 30 };
 
         for (let arg of expectedArgs) { 
             if (!args[arg]) {
@@ -2803,22 +2990,24 @@ const routes = (app, pgPool) => {
             };
         };
 
-        if (!args.marketId) {
-            return res.send(result);
-        };
-
-        let table;
+        let table, intervalSize, annualizer;
         switch (args.interval) {
             case ('INTERVAL_5M'): {
-
+                table = 'candles_5m';
+                intervalSize = '300000000000';
+                annualizer = 105120;
                 break;
             }
             case ('INTERVAL_1H'): {
-
+                table = 'candles_1h';
+                intervalSize = '3600000000000';
+                annualizer = 8760;
                 break;
             }
-            case ('INTERVAL_1d'): {
-
+            case ('INTERVAL_1D'): {
+                table = 'candles_1d';
+                intervalSize = '86400000000000';
+                annualizer = 365;
                 break;
             }
             default: {
@@ -2826,9 +3015,69 @@ const routes = (app, pgPool) => {
             }
         }
 
-        const queryRes = await asyncQuery('historicalVolatility', ...marketQueries.historicalVolatility(marketId, interval, windowLength), pgPool)
+        switch (true) {
+            case (args.marketId != undefined): {
+                const res = await asyncQuery('historicalVolatility', ...marketQueries.historicalVolatility(marketId, intervalSize, args.windowSize, annualizer, table), pgPool)
 
+                if (!res[1][0]) {
+                    return res.send(result);
+                }
 
+                result.volatilities[0].marketId = args.marketId;
+                result.volatilities[0].timestamp = res[1][0].timestamp;
+                result.volatilities[0].interval = args.interval;
+                result.volatilities[0].windowSize = args.windowSize;
+                for (let row of res[1]) {
+                    result.volatilities[0].data.push(
+                        {
+                            timeBucket: row.bucket_gf, volatility: "", volatilityAnnualized: ""
+                        }
+                    );
+                }
+
+                break;
+            }
+            case (args.marketId == undefined): {
+                const  res = await asyncQuery('historicalVolatility', ...marketQueries.allHistoricalVolatilities(intervalSize, args.windowSize, annualizer, table), pgPool)
+
+                if (!res[1][0]) {
+                    return res.send(result);
+                }
+
+                console.log(res);
+
+                const markets = {};
+                for (let row of res[1]) {
+                    if (!Object.keys(markets).includes(row.market_id)) {
+                        markets[row.market_id] = {
+                            marketId: row.market_id,
+                            timestamp: row.timestamp,
+                            interval: args.interval,
+                            windowSize: args.windowSize,
+                            data: []
+                        }
+                    }
+
+                    markets[row.market_id].data.push(
+                        {
+                            timeBucket: row.bucket_gf,
+                            volatility: row.volatility_relative,
+                            volatilityAnnualized: row.annualized_volatility_relative
+                        }
+                    );
+                }
+
+                result.volatilities.length = 0;
+
+                for (let market of Object.values(markets)) {
+                    result.volatilities.push(market);
+                }
+
+                break;
+            }
+        }
+
+        res.send(result);
     });
 
     // ---------- UNTESTED ---------- //
@@ -2848,11 +3097,11 @@ const routes = (app, pgPool) => {
             valueAtRiskDiscrete: "0"
         };
 
-        res = applyHeaders(res) 
+        res = applyHeaders(res);
 
         const args = req.query;
         const expectedArgs = ['marketId', 'interval', 'confidenceInterval'];
-        const defaultArgs = { marketId: undefined, interval: "INTERVAL_1D", confidenceInterval: 95 }
+        const defaultArgs = { marketId: undefined, interval: "INTERVAL_1D", confidenceInterval: 95 };
 
         for (let arg of expectedArgs) { 
             if (!args[arg]) {
@@ -2889,6 +3138,7 @@ const routes = (app, pgPool) => {
 
     });
 
+    // ---------- UNFINISHED ---------- //
     app.get('/expected-shortfall', async (req, res) => {
 
     });
@@ -3128,25 +3378,210 @@ const routes = (app, pgPool) => {
 
     });
 
-    app.get('/taker-data', async (req, res) => {
-        // Accepts a markteId (optional), and returns the taker data for the market, omitting the
-        // marketId will return results for all active markets.
-
-
-    });
-
-    app.get('/rolling-taker-data', async (req, res) => {
+    // ---------- UNTESTED ---------- //
+    app.get('/rolling-taker-volume', async (req, res) => {
         // Accepts a markteId (optional) and a rolling time interval, returns the taker data for the market over the
         // rolling time interval. Omitting the marketId will return results for all active markets.
 
+        const result = {
+            takerVolumes: [
+                {
+                    marketId: "",
+                    interval: "",
+                    timestamp: "",
+                    longVolume: "",
+                    shortVolume: ""
+                }
+            ]
+        };
 
+        res = applyHeaders(res);
+
+        const args = req.query;
+        const expectedArgs = [ 'marketId', 'interval' ];
+        const defaultArgs = { marketId: undefined, interval: 'INTERVAL_ROLLING_1D' };
+
+        for (let arg of expectedArgs) {
+            if (!args[arg]) {
+                args[arg] = defaultArgs[arg];
+            };
+        };
+
+        let table, windowSize;
+        switch (args.interval) {
+            case ('INTERVAL_ROLLING_1H'): {
+                table = 'taker_data_5m';
+                windowSize = '3600000000000';
+                break;
+            }
+            case ('INTERVAL_ROLLING_1D'): {
+                table = 'taker_data_5m';
+                windowSize = '86400000000000'
+                break;
+            }
+            case ('INTERVAL_ROLLING_1W'): {
+                table = 'taker_data_1h';
+                windowSize = '604800000000000';
+                break;
+            }
+            case ('INTERVAL_ROLLING_1M'): {
+                table = 'taker_data_1h';
+                windowSize = '2629800000000000';
+                break;
+            }
+            default: {
+                return res.send(result);
+            }
+        }
+
+        switch (true) {
+            case (args.marketId != undefined): {
+                const res = await asyncQuery('rollingTakerVolume', ...marketQueries.rollingTakerVolume(marketId, windowSize, table) , pgPool);
+
+                if (!res[1][0]) {
+                    break;
+                }
+
+                result.takerVolumes[0].marketId = args.marketId;
+                result.takerVolumes[0].interval = args.interval;
+                result.takerVolumes[0].timestamp = res[1][0].timestamp;
+                result.takerVolumes[0].longVolume = res[1][0].volume_long;
+                result.takerVolumes[0].shortVolume = res[1][0].volume_short;
+
+                break;
+            }
+            case (args.marketId == undefined): {
+                const res = await asyncQuery('rollingTakerVolume', ...marketQueries.allRollingTakerVolume(windowSize, table), pgPool)
+
+                console.log(res);
+
+                if (!res[1][0]) {
+                    break;
+                }
+
+                result.takerVolumes.length = 0;
+                for (let market of res[1]) {
+                    result.takerVolumes.push(
+                        {
+                            marketId: market.market_id,
+                            interval: args.interval,
+                            timestamp: market.timestamp,
+                            longVolume: market.volume_long,
+                            shortVolume: market.volume_short
+                        }
+                    )
+                }
+
+                break;
+            }
+        }
+
+        res.send(result);
     });
 
-    app.get('/historical-taker-data', async (req, res) => {
+    // ---------- UNTESTED ---------- //
+    app.get('/historical-taker-volume', async (req, res) => {
         // Accepts a markteId (optional) and a time interval, returns the taker data for the market over the time
         // interval. Omitting the marketId will return results for all active markets.
 
+        const result = {
+            takerVolumes: [
+                {
+                    marketId: "",
+                    interval: "",
+                    timestamp: "",
+                    data: [
+                        { timeBucket: "", longVolume: "", shortVolume: "" }
+                    ]
+                }
+            ]
+        };
 
+        res = applyHeaders(res);
+
+        const args = req.query;
+        const expectedArgs = [ 'marketId', 'interval' ];
+        const defaultArgs = { marketId: undefined, interval: 'INTERVAL_1D' };
+        const limit = 1000;
+
+        for (let arg of expectedArgs) {
+            if (!args[arg]) {
+                args[arg] = defaultArgs[arg];
+            }
+        }
+
+        let table;
+        switch (args.interval) {
+            case ('INTERVAL_5M'): {
+                table = 'taker_data_5m';
+                break;
+            };
+            case ('INTERVAL_1H'): {
+                table = 'taker_data_1h';
+                break;
+            };
+            case ('INTERVAL_1D'): {
+                table = 'taker_data_1d';
+                break;
+            };
+            default: {
+                return res.send(result);
+            }
+        }
+
+
+        switch (true) {
+            case (args.marketId != undefined): {
+                const res = await asyncQuery('historicalTakerVolume', ...marketQueries.historicalTakerVolume(args.marketId, limit, table), pgPool);
+
+                if (!res[1][0]) {
+                    break;
+                }
+
+                result.takerVolumes.marketId = args.marketId;
+                result.takerVolumes.interval = args.interval;
+                result.takerVolumes.timestamp = res[1][0].timestamp;
+                for (let datum of res[1]) {
+                    result.takerVolumes.data.push(
+                        {
+                            timeBucket: datum.bucket, longVolume: datum.volume_long, shortVolume: datum.volume_short
+                        }
+                    );
+                }
+
+                break;
+            }
+            case (args.marketId == undefined): {
+                const res = await asyncQuery('historicalTakerVolume', ...marketQueries.allHistoricalTakerVolume(limit, table), pgPool)
+
+                if (!res[1][0]) {
+                    break;
+                }
+
+                const markets = {};
+
+                for (let item of res[1]) {
+                    if (!markets[item.market_id]) {
+                        markets[item.market_id] = { marketId: item.market_id, interval: args.interval, timestamp: item.timestamp, data: [] };
+                    }
+                    markets[item.market_id].data.push(
+                        {
+                            timeBucket: item.bucket, longVolume: item.volume_long, shortVolume: item.volume_short
+                        }
+                    )
+                }
+
+                result.takerVolumes.length = 0;
+
+                for (let market of Object.keys(markets)) {
+                    result.takerVolumes.push(markets[market]);
+                }
+
+                break;
+            }
+        }
+
+        res.send(result);
     });
 
 };

@@ -7,7 +7,7 @@
     <script src="https://cdn.plot.ly/plotly-2.24.1.min.js" charset="utf-8"></script>
 </head>
 <body>
-    <div id="test-0"></div>
+    <!-- <div id="test-0"></div>
     <div id="test-1"></div>
     <div id="test-2"></div>
     <div id="test-3"></div>
@@ -16,11 +16,22 @@
     <div id="test-6"></div>
     <div id="test-7"></div>
     <div id="test-8"></div>
-    <div id="test-9"></div>
+    <div id="test-9"></div> -->
     <script>
 
-        const elementIds = [ "test-0", "test-1", "test-2", "test-3", "test-4", "test-5" ]
+        // const elementIds = [ "test-0", "test-1", "test-2", "test-3", "test-4", "test-5" ];
+        const elementIds = [];
+        const divs = [];
         const apiAddr = 'http://65.108.62.30:8080';
+
+        const numDivs = 40;
+        for (let i=0; i<numDivs; i++) {
+            const div = document.createElement('div');
+            div.id = `test-${i}`;
+            elementIds.push(`test-${i}`);
+            divs.push(div);
+            document.body.appendChild(div);
+        }
 
         let decimals;
         let assetDecimals;
@@ -35,6 +46,7 @@
             for (let market of json.decimals) decimals[market.marketId] = market;
             const assetDecimals = {};
             for (let asset of assetJson.assetDecimals) assetDecimals[asset.assetId] = asset;
+            console.log(decimals);
             return [ decimals, assetDecimals ];
         };
 
@@ -46,6 +58,12 @@
             };
 
             return data;
+        };
+
+        const convertNanosToDayMonth = (nanos) => {
+            const millis = Number(BigInt(nanos)/BigInt(10**6));
+            const date = new Date(millis);
+            return `${date.getUTCDate()}/${date.getUTCMonth()}`
         };
 
         const getVolumeData = async (div) => {
@@ -92,7 +110,7 @@
             console.log("24h-volume");
             console.log(data);
 
-            return;
+            return data;
         };
 
         const getHistoricalVolumeData = async (div) => {
@@ -141,7 +159,7 @@
             return;
         }
 
-        const getHistoricalOpenInterestData = async (div) => {
+        const getHistoricalOpenInterestData = async (div, div2) => {
             const res = await fetch(`${apiAddr}/historical-open-interest`);
             const json = await res.json();
 
@@ -151,16 +169,38 @@
             for (let market of json.openInterests) {
                 data[market.marketId] = {
                     name: decimals[market.marketId].instrumentCode,
-                    type: 'bar',
+                    // type: 'bar',
+                    type: 'scatter',
+                    mode: 'lines',
                     x: market.data.map((elem) => elem.timeBucket),
                     y: market.data.map((elem) => ((BigInt(elem.lastOpenInterest) * BigInt(elem.lastTradedPrice)) / 10n**(BigInt(decimals[market.marketId].priceDecimals) + BigInt(decimals[market.marketId].positionDecimals))).toString())
                 }
             }
          
             console.log(data);
-            const layout = { barmode: 'stack' };
-            Plotly.newPlot( div, Object.values(data), layout );
+            const layout = { title: 'Historical Open Interest' } //, barmode: 'stack' };
+            Plotly.newPlot( div, Object.values(data), layout);
 
+            const traces = [];
+            for (let market of json.openInterests) {
+                traces.push(
+                    {   
+                        name: decimals[market.marketId].instrumentCode,
+                        x: market.data.map((elem) => elem.timeBucket),
+                        y: market.data.map((elem) => ((BigInt(elem.lastOpenInterest) * BigInt(elem.lastTradedPrice)) / 10n**(BigInt(decimals[market.marketId].priceDecimals) + BigInt(decimals[market.marketId].positionDecimals))).toString()),
+                        fill: 'tonexty',
+                        type: 'scatter',
+                        mode: 'none',
+                        stackgroup: 'one'
+                    }
+                )
+            }
+
+            const layout2 = {
+                title: 'Daily Close Open Interest'
+            };
+
+            Plotly.newPlot(div2, traces, layout2);
             return;
         }
 
@@ -181,7 +221,7 @@
             }
 
             console.log(data);
-            const layout = { barmode: 'stack' };
+            const layout = { title: 'Daily Trades', barmode: 'stack' };
             Plotly.newPlot( div, Object.values(data), layout );
 
             return;
@@ -260,8 +300,11 @@
 
             console.log(data);
             const layout = { margin: { l: 0, r: 0, b: 0, t: 0 } };
-            const layout2 = { title: 'LP and Maker Fees Earned', height: 600, width: 600 }
-            Plotly.newPlot( div, [trace], layout );
+            const layout2 = {
+                title: 'LP and Maker Fees Earned', height: 600, width: 600,
+                xaxis: { title: 'Liquidity Fees' }, yaxis: { title: 'Maker Fees' }
+            } 
+            // Plotly.newPlot( div, [trace], layout );
             Plotly.newPlot( div2, [trace2], layout2 );
         
             return;
@@ -379,6 +422,57 @@
 
         }
 
+        const getUniqueTraders = async (div) => {
+            const res = await fetch(`${apiAddr}/unique-traders`);
+            const json = await res.json();
+
+            console.log(json);
+
+            const data = {};
+            data['uniqueTraders'] = json.uniqueTraders;
+
+            return;
+        }
+
+        const getHistoricalUniqueTraders = async (div) => {
+            const res = await fetch(`${apiAddr}/historical-unique-traders`);
+            const json = await res.json();
+
+            console.log(json);
+
+            const data = json.data;
+
+            const xData = unpack(data, 'timeBucket');
+            const yData = unpack(data, 'uniqueTraders');
+
+            let yPrev = 0;
+            for (let i=yData.length-1; i>=0; i--) {
+                yData[i] += yPrev;
+                yPrev = yData[i].valueOf();
+            }
+
+            const trace = {
+                x: xData,
+                y: yData,
+                mode: 'lines',
+                type: 'scatter'
+            };
+
+            const layout = {
+                title: 'Unique Traders',
+                xaxis: {
+                    title: 'Timestamp',
+                },
+                yaxis: {
+                    title: 'Cumulative Unique Traders',
+                }
+            };
+
+            Plotly.newPlot(div, [trace], layout);
+
+            return;
+        }
+
         const getUniqueDepositors = async (div) => {
             const res = await fetch(`${apiAddr}/unique-depositors`);
             const json = await res.json();
@@ -433,69 +527,292 @@
             return;
         }
 
-        const getUniqueTraders = async (div) => {
-            const res = await fetch(`${apiAddr}/unique-traders`);
+        const getHistoricalBridgeFlows = async (divs) => {
+
+            const data = {};
+
+            // Histroical bridge net flows
+            const netRes = await fetch(`${apiAddr}/historical-bridge-net-flows`);
+            const netJson = await netRes.json();
+
+            console.log(netJson);
+
+            data['netFlows'] = {};
+            for (let asset of netJson.bridgeNetFlows) {
+                data.netFlows[asset.assetId] = asset;
+
+                const xData = asset.data.map((elem) => elem.timeBucket);
+                const yData = asset.data.map((elem) => Number((BigInt(elem.netFlow) / 10n**BigInt(assetDecimals[asset.assetId].decimals))));
+
+                const trace = {
+                    name: `${assetDecimals[asset.assetId].code}`,
+                    type: 'bar',
+                    x: xData,
+                    y: yData
+                }
+
+                const layout = {
+                    title: `${decimals[market.marketId].instrumentCode} Bridge Net Flows`,
+                    xaxis: {
+                        title: "Day/Month",
+                        tickvals: xData,
+                        ticktext: xData.map((timeBucket) => convertNanosToDayMonth(timeBucket))
+                    },
+                    yaxis: {
+                        title: `${assetDecimals[asset.assetId].code}`
+                    }
+                }
+
+                Plotly.plot(divs.shift(), [trace], layout);
+
+            }
+
+
+            // Historical deposits
+
+
+
+            // Historical withdrawals
+
+
+
+        };
+
+        const getTakerVolumeData = async (divs) => {
+            
+            const endpoints = [
+                fetch(`${apiAddr}/rolling-taker-volume?interval=INTERVAL_ROLLING_1H`),
+                fetch(`${apiAddr}/rolling-taker-volume?interval=INTERVAL_ROLLING_1D`),
+                fetch(`${apiAddr}/rolling-taker-volume?interval=INTERVAL_ROLLING_1W`),
+                fetch(`${apiAddr}/historical-taker-volume`)
+            ];
+            const responses = await Promise.all(endpoints);
+            const json = {
+                rolling: {
+                    hour: await responses[0].json(),
+                    day: await responses[1].json(),
+                    week: await responses[2].json()
+                },
+                historical: await responses[3].json()
+            };
+
+            const data = { rolling: {}, historical: {} };
+            
+            console.log(json);
+
+            // Rolling
+            for (let [ interval, response ] of Object.entries(json.rolling)) {
+                for (let market of json.rolling[interval].takerVolumes) {
+                    const longVolume = Number(BigInt(market.longVolume) / 10n**BigInt(decimals[market.marketId].positionDecimals + decimals[market.marketId].priceDecimals));
+                    const shortVolume = Number(BigInt(market.shortVolume) / 10n**BigInt(decimals[market.marketId].positionDecimals + decimals[market.marketId].priceDecimals));
+
+                    const traces = [ 
+                        {
+                            values: [ longVolume, shortVolume ],
+                            labels: [ 'Long', 'Short' ],
+                            marker: { colors: [ 'green', 'red' ] },
+                            name: "Taker Volume",
+                            hoverinfo: 'label+value+name',
+                            hole: 0.6,
+                            type: 'pie',
+                            // text: `${longVolume + shortVolume}`,
+                            text: `Long: ${longVolume.toLocaleString()} ${decimals[market.marketId].quoteName}\nShort: ${shortVolume.toLocaleString()} ${decimals[market.marketId].quoteName}\nNet: ${(longVolume - shortVolume).toLocaleString()} ${decimals[market.marketId].quoteName}`,
+                            textposition: 'inside'
+                        }
+                    ];
+
+                    const layout = {
+                        title: `${decimals[market.marketId].instrumentCode} One ${interval.charAt(0).toUpperCase()+interval.slice(1)} Rolling Taker Volume`,
+                        height: 500,
+                        width: 500,
+                        annotations: [ { font: { size: 16 }, text: `Total:<br>${(longVolume+shortVolume).toLocaleString()} ${decimals[market.marketId].quoteName}<br>Net:<br>${(longVolume - shortVolume).toLocaleString()} ${decimals[market.marketId].quoteName}`, showarrow: false } ]
+                    }
+
+                    Plotly.newPlot(divs.shift(), traces, layout);
+                }
+            }
+
+            // Historical
+            for (let market of json.historical.takerVolumes) {
+                const xData = market.data.map((elem) => elem.timeBucket);
+                const yDataLong = market.data.map((elem) => Number(BigInt(elem.longVolume) / 10n**BigInt(decimals[market.marketId].positionDecimals + decimals[market.marketId].priceDecimals)));
+                const yDataShort = market.data.map((elem) => Number(BigInt(elem.shortVolume) / 10n**BigInt(decimals[market.marketId].positionDecimals + decimals[market.marketId].priceDecimals)));
+                const yDataDiff = market.data.map((elem) => {
+                    return Number((BigInt(elem.longVolume) / 10n**BigInt(decimals[market.marketId].positionDecimals + decimals[market.marketId].priceDecimals)) - (BigInt(elem.shortVolume) / 10n**BigInt(decimals[market.marketId].positionDecimals + decimals[market.marketId].priceDecimals)))
+                });
+
+
+                data.historical[market.marketId] = {
+                    long: {
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Long Volume',
+                        x: xData,
+                        y: yDataLong
+                    },
+                    short: {
+                        type: 'scatter',                        
+                        mode: 'lines',
+                        name: 'Short Volume',
+                        x: xData,
+                        y: yDataShort
+                    },
+                    diff: {
+                        type: 'bar',
+                        name: 'Net Volume',
+                        x: xData,
+                        y: yDataDiff
+                    }
+
+                }
+
+                const layout = {
+                    title: `${decimals[market.marketId].instrumentCode} Taker Volume`,
+                    xaxis: {
+                        title: 'Day/Month',
+                        tickvals: xData,
+                        ticktext: xData.map((timeBucket) => convertNanosToDayMonth(timeBucket))
+                    },
+                    yaxis: {
+                        title: `${decimals[market.marketId].quoteName}`
+                    }
+                }
+
+                Plotly.newPlot(divs.shift(), [ data.historical[market.marketId].long, data.historical[market.marketId].short ], layout);
+
+                const diffLayout = {
+                    title: `${decimals[market.marketId].instrumentCode} Net Taker Volume`,
+                    xaxis: {
+                        title: "Day/Month",
+                        tickvals: xData,
+                        ticktext: xData.map((timeBucket) => convertNanosToDayMonth(timeBucket))
+                    },
+                    yaxis: {
+                        title: `${decimals[market.marketId].quoteName}`
+                    }
+                }
+
+                Plotly.newPlot(divs.shift(), [ data.historical[market.marketId].diff ], diffLayout);
+            }            
+
+        };
+
+
+        const getHistoricalMarketReturns = async (divs) => {
+            const res = await fetch(`${apiAddr}/historical-market-returns`);
             const json = await res.json();
 
             console.log(json);
 
             const data = {};
-            data['uniqueTraders'] = json.uniqueTraders;
+            for (let market of json.marketReturns) {
 
-            return;
-        }
+                const xData = market.data.map((elem) => elem.timeBucket);
+                const yData = market.data.map((elem) => elem.return ? elem.return : 0 );
 
-        const getHistoricalUniqueTraders = async (div) => {
-            const res = await fetch(`${apiAddr}/historical-unique-traders`);
+                data[market.marketId] = {
+                    name: decimals[market.marketId].quoteName,
+                    // type: 'histogram',
+                    type: 'bar',
+                    // type: 'scatter',
+                    // mode: 'lines',
+                    x: xData,
+                    y: yData,
+                    marker: { color: market.data.map((elem) => elem.return < 0 ? 'red' : 'green' ) }
+                }
+                
+                const layout = {
+                    title: `${decimals[market.marketId].instrumentCode} Daily Returns`,
+                    xaxis: {
+                        title: "Day/Month",
+                        tickvals: xData,
+                        ticktext: xData.map((timeBucket) => convertNanosToDayMonth(timeBucket))
+                    }
+                }
+
+                const div = divs.shift();
+
+                Plotly.newPlot(div, [data[market.marketId]], layout);
+            }
+
+        };
+
+        const getMarketVolatilties = async (divs) => {
+
+        };
+
+        const getHistoricalMarketVolatilities = async (divs) => {
+            const res = await fetch(`${apiAddr}/historical-volatility?windowSize=10`);
             const json = await res.json();
 
             console.log(json);
 
-            const data = json.data;
+            const data = {};
+            for (let market of json.volatilities) {
+                const xData = market.data.map((elem) => elem.timeBucket);
+                const yData = market.data.map((elem) => elem.volatilityAnnualized);
 
-            const xData = unpack(data, 'timeBucket');
-            const yData = unpack(data, 'uniqueTraders');
-
-            let yPrev = 0;
-            for (let i=yData.length-1; i>=0; i--) {
-                yData[i] += yPrev;
-                yPrev = yData[i].valueOf();
-            }
-
-            const trace = {
-                x: xData,
-                y: yData,
-                mode: 'lines',
-                type: 'scatter'
-            };
-
-            const layout = {
-                title: 'Unique Traders',
-                xaxis: {
-                    title: 'Timestamp',
-                },
-                yaxis: {
-                    title: 'Cumulative Unique Traders',
+                if (!Object.keys(data).includes(market.marketId)) {
+                    data[market.marketId] = {
+                        name: "",
+                        type: "scatter",
+                        mode: "lines",
+                        x: xData,
+                        y: yData
+                    }
                 }
+            
+                const layout = {
+                    title: `${decimals[market.marketId].instrumentCode} 10 day annualized volatility.`,
+                    xaxis: {
+                        title: "Day/Month",
+                        tickvals: xData,
+                        ticktext: xData.map((timeBucket) => convertNanosToDayMonth(timeBucket))
+                    }
+                }
+
+                const div = divs.shift();
+
+                Plotly.newPlot(div, [data[market.marketId]], layout);
             };
 
-            Plotly.newPlot(div, [trace], layout);
+        };
 
-            return;
+        const getMarketMetrics = async (divs) => {
+
+            // Volume, Volatility, Sharpe and Sortino Ratios, VaR, Expected Shortfall
+            const endpoints = [
+                fetch(`${apiAddr}/volume`), // ?marketId=`),
+                fetch(`${apiAddr}/volatility`), // ?marketId=`),
+                fetch(`${apiAddr}/sharpe-ratio`), // ?marketId=`),
+                fetch(`${apiAddr}/sortino-ratio`), // ?marketId=`),
+                fetch(`${apiAddr}/value-at-risk`) // ?marketId=`),
+                // fetch(`${apiAddr}/expected-shortfall`), // ?marketId=`)
+            ];
+
+            const responses = await Promise.all(endpoints);
+
+
         }
 
-
         (async () => {
-            [ decimals, assetDecimals ] = await getDecimals()
+            [ decimals, assetDecimals ] = await getDecimals();
             getHistoricalVolumeData(document.getElementById('test-0'));
-            getHistoricalOpenInterestData(document.getElementById('test-1'));
-            getHistoricalTradesData(document.getElementById('test-2'));
-            getUsdtFeesTopEarners(document.getElementById('test-3'), document.getElementById('test-4'));
-            getUsdtFeesByMarket(document.getElementById('test-5'));
+            getHistoricalOpenInterestData(document.getElementById('test-1'), document.getElementById('test-2'));
+            getHistoricalTradesData(document.getElementById('test-3'));
+            getUsdtFeesTopEarners(document.getElementById('test-4'), document.getElementById('test-5'));
+            getUsdtFeesByMarket(document.getElementById('test-6'));
             getUniqueDepositors();
             getUniqueTraders();
-            getHistoricalUniqueDepositors(document.getElementById('test-6'));
-            getHistoricalUniqueTraders(document.getElementById('test-7'));
+            getHistoricalUniqueDepositors(document.getElementById('test-7'));
+            getHistoricalUniqueTraders(document.getElementById('test-8'));
+
+            for (let i=0; i<9; i++) divs.shift();
+
+            getHistoricalMarketReturns(divs);
+            getHistoricalMarketVolatilities(divs);
+            getTakerVolumeData(divs);
+            getHistoricalBridgeFlows(divs);
 
         })();
 

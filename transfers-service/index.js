@@ -300,6 +300,7 @@ const continuousAggregates = {
                 CASE
                     WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN to_account_asset
                     WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN from_account_asset
+                    WHEN type = 'TRANSFER_TYPE_CHECKPOINT_BALANCE_RESTORE' THEN to_account_asset
                 END AS asset,
                 sum(CASE
                         WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN amount
@@ -313,9 +314,13 @@ const continuousAggregates = {
                         WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN amount
                         WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN -amount
                         ELSE 0
-                    END) AS diff
+                    END) AS diff,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_CHECKPOINT_BALANCE_RESTORE' THEN amount
+                        ELSE 0
+                    END) AS restored
             FROM ledger_movements
-            WHERE type = 'TRANSFER_TYPE_DEPOSIT' OR type = 'TRANSFER_TYPE_WITHDRAW'
+            WHERE type = 'TRANSFER_TYPE_DEPOSIT' OR type = 'TRANSFER_TYPE_WITHDRAW' OR type = 'TRANSFER_TYPE_CHECKPOINT_BALANCE_RESTORE'
             GROUP BY asset, party_id, time_bucket(300000000000, synth_timestamp);
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('bridge_diffs_5m',
@@ -323,7 +328,7 @@ const continuousAggregates = {
             end_offset => '60000000000'::bigint,
             schedule_interval => INTERVAL '1 minute');`
         },
-        interval_5m: {
+        interval_1h: {
             createMatView: `CREATE MATERIALIZED VIEW bridge_diffs_1h
             with (timescaledb.continuous) AS
             SELECT
@@ -336,6 +341,7 @@ const continuousAggregates = {
                 CASE
                     WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN to_account_asset
                     WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN from_account_asset
+                    WHEN type = 'TRANSFER_TYPE_CHECKPOINT_BALANCE_RESTORE' THEN to_account_asset
                 END AS asset,
                 sum(CASE
                         WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN amount
@@ -349,9 +355,13 @@ const continuousAggregates = {
                         WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN amount
                         WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN -amount
                         ELSE 0
-                    END) AS diff
+                    END) AS diff,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_CHECKPOINT_BALANCE_RESTORE' THEN amount
+                        ELSE 0
+                    END) AS restored
             FROM ledger_movements
-            WHERE type = 'TRANSFER_TYPE_DEPOSIT' OR type = 'TRANSFER_TYPE_WITHDRAW'
+            WHERE type = 'TRANSFER_TYPE_DEPOSIT' OR type = 'TRANSFER_TYPE_WITHDRAW' OR type = 'TRANSFER_TYPE_CHECKPOINT_BALANCE_RESTORE'
             GROUP BY asset, party_id, time_bucket(3600000000000, synth_timestamp);
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('bridge_diffs_1h',
@@ -372,6 +382,7 @@ const continuousAggregates = {
                 CASE
                     WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN to_account_asset
                     WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN from_account_asset
+                    WHEN type = 'TRANSFER_TYPE_CHECKPOINT_BALANCE_RESTORE' THEN to_account_asset
                 END AS asset,
                 sum(CASE
                         WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN amount
@@ -385,9 +396,13 @@ const continuousAggregates = {
                         WHEN type = 'TRANSFER_TYPE_DEPOSIT' THEN amount
                         WHEN type = 'TRANSFER_TYPE_WITHDRAW' THEN -amount
                         ELSE 0
-                    END) AS diff
+                    END) AS diff,
+                sum(CASE
+                        WHEN type = 'TRANSFER_TYPE_CHECKPOINT_BALANCE_RESTORE' THEN amount
+                        ELSE 0
+                    END) AS restored
             FROM ledger_movements
-            WHERE type = 'TRANSFER_TYPE_DEPOSIT' OR type = 'TRANSFER_TYPE_WITHDRAW'
+            WHERE type = 'TRANSFER_TYPE_DEPOSIT' OR type = 'TRANSFER_TYPE_WITHDRAW' OR type = 'TRANSFER_TYPE_CHECKPOINT_BALANCE_RESTORE'
             GROUP BY asset, party_id, time_bucket(86400000000000, synth_timestamp);
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('bridge_diffs_1d',
@@ -602,7 +617,7 @@ const start = () => {
 };
 
 const setConsumer = (kafkaConsumer) => {
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "transfers-group-23", fetchMaxBytes: 2 * 1024 * 1024, fromOffset: 'true' });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "transfers-group-25", fetchMaxBytes: 2 * 1024 * 1024, fromOffset: 'true' });
     kafkaConsumer.on("message", (msg) => {
 
         // const dateTime = new Date(Date.now()).toISOString();

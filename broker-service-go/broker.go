@@ -1,16 +1,16 @@
 package main
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 	"log"
 	// "runtime"
-	"sync"
 	"os"
+	"sync"
 	// "strings"
 	"encoding/json"
-	"time"
 	"strconv"
+	"time"
 
 	"github.com/tidwall/sjson"
 
@@ -23,8 +23,8 @@ import (
 	// "code.vegaprotocol.io/vega/libs/num"
 	"code.vegaprotocol.io/vega/core/events"
 	// "code.vegaprotocol.io/vega/libs/proto"
-	"github.com/golang/protobuf/proto"
 	eventspb "code.vegaprotocol.io/vega/protos/vega/events/v1"
+	"github.com/golang/protobuf/proto"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -44,6 +44,7 @@ type KafkaClient struct {
 }
 
 type void struct{}
+
 var member void
 
 func newSocketServer(addr string) (*SocketServer, error) {
@@ -65,12 +66,12 @@ func newKafkaClient() (*KafkaClient, error) {
 	kafkaBrokers := os.Getenv("KAFKA_BROKERS")
 
 	w := &kafka.Writer{
-		Addr: kafka.TCP(kafkaBrokers),
-		Balancer: &kafka.LeastBytes{},
-		RequiredAcks: kafka.RequireOne,
-		BatchSize: 1000,
-		BatchTimeout: time.Millisecond * 10,
-		BatchBytes: 2097152,
+		Addr:                   kafka.TCP(kafkaBrokers),
+		Balancer:               &kafka.LeastBytes{},
+		RequiredAcks:           kafka.RequireOne,
+		BatchSize:              1000,
+		BatchTimeout:           time.Millisecond * 10,
+		BatchBytes:             2097152,
 		AllowAutoTopicCreation: true,
 	}
 
@@ -101,7 +102,7 @@ func newBroker() *Broker {
 
 }
 
-func (s SocketServer) listen() (error) {
+func (s SocketServer) listen() error {
 
 	err := s.sock.Listen(s.addr)
 	if err != nil {
@@ -146,10 +147,9 @@ func (s SocketServer) recieve(wg *sync.WaitGroup) chan []byte {
 
 	return inCh
 
-
 }
 
-func (b Broker) decode(wg *sync.WaitGroup, inCh chan[]byte) chan *eventspb.BusEvent {
+func (b Broker) decode(wg *sync.WaitGroup, inCh chan []byte) chan *eventspb.BusEvent {
 
 	deCh := make(chan *eventspb.BusEvent)
 
@@ -186,6 +186,7 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 	ledgerMovementsCount := 0
 	depositWithdrawalCount := 0
 	accountCount := 0
+	stakeLinkingCount := 0
 
 	go func() {
 		defer close(msgCh)
@@ -193,7 +194,7 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 		for evt := range deCh {
 			// fmt.Printf("%+v\n", evt)
 			// fmt.Printf("%v\n", evt.Id)
-			evtType := evt.Type // Get type of evt
+			evtType := evt.Type                    // Get type of evt
 			jsonEvtBytes, err := json.Marshal(evt) // Convert each event into JSON
 			if err != nil {
 				log.Fatal("Failed to marshal bus event to JSON: %w", err)
@@ -233,7 +234,7 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 			if evtType.String() == "BUS_EVENT_TYPE_ASSET" {
 				assetCount += 1
 			}
-			if ( evtType.String() == "BUS_EVENT_TYPE_MARKET_CREATED" || evtType.String() == "BUS_EVENT_TYPE_MARKET_UPDATED" ) {
+			if evtType.String() == "BUS_EVENT_TYPE_MARKET_CREATED" || evtType.String() == "BUS_EVENT_TYPE_MARKET_UPDATED" {
 				marketCount += 1
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_LEDGER_MOVEMENTS" {
@@ -257,6 +258,12 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 				continue // Ignore event for now
 				accountCount += 1
 			}
+			if evtType.String() == "BUS_EVENT_TYPE_STAKE_LINKING" {
+				stakeLinkingCount += 1
+				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), ``, strconv.FormatInt(evt.GetStakeLinking().Ts, 10))
+				jsonEvt, _ = sjson.Set(jsonEvt, ``, strconv.FormatInt(evt.GetStakeLinking().FinalizedAt, 10))
+				jsonEvtBytes = []byte(jsonEvt)
+			}
 			if evtType.String() == "BUS_EVENT_TYPE_BEGIN_BLOCK" {
 				blockCount += 1
 				height = int(evt.GetBeginBlock().Height)
@@ -273,7 +280,7 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 			} else {
 				if topic, ok := busEventTopicMap[evtType.String()]; ok {
 					batch = append(batch, kafka.Message{ // Batch messages
-						Topic: topic, // Get the topic based on the evtType
+						Topic: topic,        // Get the topic based on the evtType
 						Value: jsonEvtBytes, // Add JSON bytes to value field of kafka.Message.
 					})
 					batchBytesCount += len(jsonEvtBytes)
@@ -282,6 +289,12 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 					}
 				} else {
 					// Topic not found for event
+					if evtType.String() == "BUS_EVENT_TYPE_STAKE_LINKING" {
+						fmt.Printf("%v\n", topic)
+						fmt.Printf("%v\n", evtType.String())
+						log.Fatalf("Topic not Found for event!")
+					}
+
 				}
 			}
 
@@ -302,6 +315,7 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 				fmt.Println("Legder movements count: ", ledgerMovementsCount)
 				fmt.Println("Deposit withdrawal count: ", depositWithdrawalCount)
 				fmt.Println("Account count: ", accountCount)
+				fmt.Println("Stake Linking count: ", stakeLinkingCount)
 				batchBytesCount = 0
 			}
 		}
@@ -333,7 +347,9 @@ func (b Broker) start() {
 	busEventTopicMap := GetBusEventTopicMap()
 	topicSet := make(map[string]void)
 	for _, v := range busEventTopicMap {
-		if v == "blocks" { continue }
+		if v == "blocks" {
+			continue
+		}
 		topicSet[v] = member
 	}
 
@@ -348,14 +364,13 @@ func (b Broker) start() {
 	}
 
 	inCh := b.ss.recieve(wg)
-	
+
 	deCh := b.decode(wg, inCh)
 
 	// msgCh := b.format(wg, deCh)
 	msgCh := b.format(wg, busEventTopicMap, topicSet, deCh)
 
 	b.kc.send(wg, msgCh)
-
 
 	wg.Wait()
 
@@ -369,18 +384,16 @@ func (b Broker) start() {
 	// Push batch to msgBatchCh
 	// Get batch and send using kafka.Writer
 
-
 }
 
 func main() {
 
-	time.Sleep(time.Second * 35)
+	time.Sleep(time.Second * 40)
 
 	broker := newBroker()
 	broker.start()
 
 }
-
 
 // // Create a socket server and listen at the broker port and IP
 // func createSocketServer(ch chan []byte) {
@@ -424,7 +437,6 @@ func main() {
 
 // }
 
-
 // // Unmarshal raw events into bus events
 // func decode(msg []byte) (*eventspb.BusEvent, error) {
 // 	busEvent := &eventspb.BusEvent{}
@@ -435,7 +447,6 @@ func main() {
 
 // 	return busEvent, nil
 // }
-
 
 // func main() {
 

@@ -37,10 +37,12 @@ RUN touch pass.txt && \
     vega tendermint init full --home /home/ian/.cometbft && \
     sed -i '/Broker\.Socket/,+9{/Broker\.Socket/,+8{b};s/.*/    Enabled = true/}' .config/vega/node/config.toml && \
     sed -i '/Broker\.Socket/,+7{/Broker\.Socket/,+6{b};s/.*/    Address = "broker_address"/}' .config/vega/node/config.toml && \
-    sed -i '/Broker\.Socket/,+5{/Broker\.Socket/,+4{b};s/.*/    SocketChannelBufferSize = 10000/}' .config/vega/node/config.toml && \
+    sed -i '/Broker\.Socket/,+5{/Broker\.Socket/,+4{b};s/.*/    SocketChannelBufferSize = 100000/}' .config/vega/node/config.toml && \
     sed -i '/Snapshot/,+6{/Snapshot/,+5{b};s/.*/  StartHeight = -1/}' .config/vega/node/config.toml && \
     cp node-config/genesis.json .cometbft/config/genesis.json && \
     sed -i "/persistent_peers =/c\persistent_peers = '$PEERS'" .cometbft/config/config.toml && \
+    sed -i "/max_num_outbound_peers =/c\max_num_outbound_peers = 30" .cometbft/config/config.toml && \
+    sed -i "/indexer =/c\indexer = 'null'" .cometbft/config/config.toml && \
     # sed -i "/indexer =/c\indexer = 'null'" .cometbft/config/config.toml && \
     # sed -i "/max_packet_msg_payload_size =/c\max_packet_msg_payload_size = 16384" .tendermint/config/config.toml && \
     vega nodewallet import --output json --chain tendermint --tendermint-home /home/ian/.cometbft --passphrase-file /home/ian/pass.txt --wallet-passphrase-file /home/ian/pass.txt && \

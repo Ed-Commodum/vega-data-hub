@@ -64,6 +64,44 @@ const assetQueries = {
 
         return [ query, [] ];
     },
+    vegaToken() {
+        const query = `
+        WITH bridged AS (
+            SELECT
+                max(timestamp) AS timestamp,
+                sum(diff) AS balance,
+                sum(restored) AS restored
+            FROM bridge_diffs_5m
+            WHERE asset = 'd1984e3d365faa05bcafbe41f50f90e3663ee7c0da22bb1e24b164e9532691b2'
+        ), staked AS (
+            SELECT
+                max(ts) AS ts,
+                sum(diff) AS balance
+            FROM stake_linking_diffs_5m
+        ), d as (
+            SELECT
+                decimals
+            FROM assets
+            WHERE id = 'd1984e3d365faa05bcafbe41f50f90e3663ee7c0da22bb1e24b164e9532691b2'
+        ) SELECT
+            timestamp,
+            (bridged.balance + bridged.restored) / 10 ^ d.decimals AS bridged,
+            staked.balance / 10 ^ d.decimals AS staked
+        FROM bridged, staked, d;
+        `;
+
+        /* `
+        , restored as (
+            SELECT
+                sum(amount) AS balance
+            FROM ledger_movements
+            WHERE type = 'TRANSFER_TYPE_CHECKPOINT_BALANCE_RESTORE'
+                AND to_account_asset = 'd1984e3d365faa05bcafbe41f50f90e3663ee7c0da22bb1e24b164e9532691b2'
+        )
+        ` */
+
+        return [ query, [] ];
+    },
     getBridgeBalance(assetId) {
         const query = `
         SELECT
@@ -418,7 +456,7 @@ const marketQueries = {
             SELECT
                 sum(num_trades)
             FROM market_data_5m
-            WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+            WHERE bucket::bigint > (current_time_ns() - 86400000000000::bigint)
             AND market_id = $1
         )
         SELECT
@@ -428,7 +466,7 @@ const marketQueries = {
                 (volume/num_trades) * (num_trades/x.sum)
             ) as avg_trade_size
         FROM market_data_5m CROSS JOIN x
-        WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+        WHERE bucket::bigint > (current_time_ns() - 86400000000000::bigint)
         AND market_id = $1
         GROUP BY market_id;
         `;
@@ -437,7 +475,7 @@ const marketQueries = {
         WITH x AS (
             SELECT sum(num_trades)
             FROM market_data_5m
-            WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+            WHERE bucket::bigint > (current_time_ns() - 86400000000000::bigint)
             AND market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
         )
         SELECT
@@ -447,7 +485,7 @@ const marketQueries = {
                 (volume/num_trades) * (num_trades/x.sum)
             ) as avg_trade_size
         FROM market_data_5m CROSS JOIN x
-        WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+        WHERE bucket::bigint > (current_time_ns() - 86400000000000::bigint)
         AND market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
         GROUP BY market_id;
         ` */ 
@@ -461,7 +499,7 @@ const marketQueries = {
                 market_id,
                 sum(num_trades)
             FROM market_data_5m
-            WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+            WHERE bucket::bigint > (current_time_ns() - 86400000000000::bigint)
             GROUP BY market_id
         )
         SELECT
@@ -471,7 +509,7 @@ const marketQueries = {
                 (volume/num_trades) * (num_trades/x.sum)
             ) as avg_trade_size
         FROM market_data_5m y INNER JOIN x ON y.market_id = x.market_id
-        WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+        WHERE bucket::bigint > (current_time_ns() - 86400000000000::bigint)
         GROUP BY y.market_id;
         `;
 
@@ -483,7 +521,7 @@ const marketQueries = {
             SELECT
                 sum(num_trades)
             FROM %I
-            WHERE timestamp::bigint > (current_time_ns() - $2::bigint)
+            WHERE bucket::bigint > (current_time_ns() - $2::bigint)
                 AND market_id = $1
         )
         SELECT
@@ -493,7 +531,7 @@ const marketQueries = {
                 (volume/num_trades) * (num_trades/x.sum)
             ) as avg_trade_size
         FROM %I CROSS JOIN x
-        WHERE timestamp::bigint > (current_time_ns() - $2::bigint)
+        WHERE bucket::bigint > (current_time_ns() - $2::bigint)
             AND market_id = $1
         GROUP BY market_id;
         `;
@@ -503,7 +541,7 @@ const marketQueries = {
             SELECT
                 sum(num_trades)
             FROM market_data_5m
-            WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+            WHERE bucket::bigint > (current_time_ns() - 86400000000000::bigint)
                 AND market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
         )
         SELECT
@@ -513,7 +551,7 @@ const marketQueries = {
                 (volume/num_trades) * (num_trades/x.sum)
             ) as avg_trade_size
         FROM market_data_5m CROSS JOIN x
-        WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+        WHERE bucket::bigint > (current_time_ns() - 86400000000000::bigint)
             AND market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
         GROUP BY market_id;
         ` */
@@ -529,7 +567,7 @@ const marketQueries = {
                 market_id,
                 sum(num_trades)
             FROM %I
-            WHERE timestamp::bigint > (current_time_ns() - $1::bigint)
+            WHERE bucket::bigint > (current_time_ns() - $1::bigint)
             GROUP BY market_id
         )
         SELECT
@@ -539,7 +577,7 @@ const marketQueries = {
                 (volume/num_trades) * (num_trades/x.sum)
             ) as avg_trade_size
         FROM %I y INNER JOIN x ON y.market_id = x.market_id
-        WHERE timestamp::bigint > (current_time_ns() - $1::bigint)
+        WHERE bucket::bigint > (current_time_ns() - $1::bigint)
         GROUP BY y.market_id;
         `;
 
@@ -628,7 +666,7 @@ const marketQueries = {
             max(timestamp) AS timestamp,
             sum(volume) AS volume
         FROM market_data_5m
-        WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+        WHERE bucket::bigint > ((select timestamp from trades order by synth_timestamp desc limit 1) - 86400000000000::bigint)
         AND market_id = $1
         GROUP BY market_id;
         `;
@@ -642,7 +680,7 @@ const marketQueries = {
             max(timestamp) AS timestamp,
             sum(volume) AS volume
         FROM market_data_5m
-        WHERE timestamp::bigint > (current_time_ns() - 86400000000000::bigint)
+        WHERE bucket::bigint > ((select timestamp from trades order by synth_timestamp desc limit 1) - 86400000000000::bigint)
         GROUP BY market_id;
         `;
 
@@ -774,11 +812,111 @@ const marketQueries = {
 
         return [ query, [] ];
     },
-    returns(marketId, interval) {
+    historicalReturns(marketId, intervalSize, table) {
+        const fQuery = `
+        WITH gf AS (
+            SELECT
+                time_bucket_gapfill($2::bigint, bucket) AS bucket_gf,
+                close AS close,
+                locf(close, bucket) AS close_gf,
+                last_timestamp as timestamp
+            FROM %I
+            WHERE bucket >= first_trade_time($1) - $2
+                AND bucket <= most_recent_trade_time($1)
+                AND market_id = $1
+            ORDER BY bucket_gf DESC
+        )
+        SELECT 
+            bucket_gf,
+            (close_gf::decimal / lag(close_gf) OVER (ORDER BY bucket_gf)) - 1 AS return,
+            timestamp AS timestamp
+        FROM gf
+        ORDER BY bucket_gf DESC;
+        `;
 
+        /* `
+        WITH gf AS (
+            SELECT
+                time_bucket_gapfill('86400000000000'::bigint, bucket) AS bucket_gf,
+                close AS close,
+                locf(close, bucket) AS close_gf,
+                last_timestamp as timestamp
+            FROM candles_1d
+            WHERE bucket >= first_trade_time('2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5') - 86400000000000
+                AND bucket <= most_recent_trade_time('2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5')
+                AND market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
+            ORDER BY bucket_gf DESC
+        )
+        SELECT 
+            bucket_gf,
+            (close_gf::decimal / lag(close_gf) OVER (ORDER BY bucket_gf)) - 1 AS return,
+            timestamp AS timestamp
+        FROM gf
+        ORDER BY bucket_gf DESC;
+        ` */
+
+        const query = format(fQuery, table);
+
+        return [ query, [ marketId, intervalSize ] ];
     },
-    variance(marketId, interval) {
+    allHistoricalReturns(intervalSize, table) {
+        const fQuery = `
+        WITH gf AS (
+            SELECT
+                market_id,
+                time_bucket_gapfill($1::bigint, bucket) AS bucket_gf,
+                close AS close,
+                locf(close, bucket) AS close_gf,
+                last_timestamp as timestamp
+            FROM %I
+            ORDER BY bucket_gf DESC
+        )
+        SELECT 
+            x.id AS market_id, x.state, x.instrument_name,
+            y.bucket_gf, y.timestamp, y.return
+        FROM markets x JOIN LATERAL (
+            SELECT 
+                bucket_gf,
+                (close_gf::decimal / lag(close_gf) OVER (ORDER BY bucket_gf)) - 1 AS return,
+                timestamp AS timestamp
+            FROM gf
+            WHERE market_id = x.id
+            ORDER BY bucket_gf DESC
+        ) y ON TRUE
+        WHERE (x.state = 'STATE_ACTIVE' OR x.state = 'STATE_SUSPENDED')
+        ORDER BY y.bucket_gf DESC;
+        `;
 
+        /* `
+        WITH gf AS (
+            SELECT
+                market_id,
+                time_bucket_gapfill('86400000000000'::bigint, bucket) AS bucket_gf,
+                close AS close,
+                locf(close, bucket) AS close_gf,
+                last_timestamp as timestamp
+            FROM candles_1d
+            ORDER BY bucket_gf DESC
+        )
+        SELECT 
+            x.id, x.state, x.instrument_name,
+            y.bucket_gf, y.timestamp, y.return
+        FROM markets x JOIN LATERAL (
+            SELECT 
+                bucket_gf,
+                (close_gf::decimal / lag(close_gf) OVER (ORDER BY bucket_gf)) - 1 AS return,
+                timestamp AS timestamp
+            FROM gf
+            WHERE market_id = x.id
+            ORDER BY bucket_gf DESC
+        ) y ON TRUE
+        WHERE (x.state = 'STATE_ACTIVE' OR x.state = 'STATE_SUSPENDED')
+        ORDER BY y.bucket_gf DESC;
+        ` */
+
+        const query = format(fQuery, table);
+
+        return [ query, [ intervalSize ] ];
     },
     valueAtRisk(marketId, interval, confidenceInterval) {
         
@@ -879,28 +1017,322 @@ const marketQueries = {
             WHERE bucket > first_trade_time($1)
                 AND bucket < most_recent_trade_time($1)
                 AND market_id = $1
-            ORDER BY bucket_gf DESC
             LIMIT 200
         ), returns AS (
             SELECT bucket_gf,
+                close_gf,
                 (close_gf::decimal / lag(close_gf) OVER (ORDER BY bucket_gf)) - 1 AS return,
                 timestamp AS timestamp
             FROM gf
             ORDER BY bucket_gf DESC
+        ), avg AS (
+            SELECT
+                avg(close_gf) AS avg_close
+            FROM gf
+        ), d as (
+            SELECT
+                decimal_places
+            FROM markets
+            WHERE id = $1
+        ) SELECT
+            max(timestamp) AS timestamp,
+            stddev(stats_agg(return)) AS simple_volatilty_relative,
+            stddev(stats_agg(return)) * sqrt(365) AS simple_annualized_volatility_relative,
+            sum(((close_gf / 10^d.decimal_places) - (avg.avg_close / 10^d.decimal_places))^2) / count(close_gf) AS variance_usd,
+            sqrt(sum(((close_gf / 10^d.decimal_places) - (avg.avg_close / 10^d.decimal_places))^2) / count(close_gf)) AS volatility_abs,
+            (sqrt(sum(((close_gf / 10^d.decimal_places) - (avg.avg_close / 10^d.decimal_places))^2) / count(close_gf)) / min(avg.avg_close/10^d.decimal_places)) AS volatility_relative,
+            sqrt(sum(((close_gf / 10^d.decimal_places) - (avg.avg_close / 10^d.decimal_places))^2) / count(close_gf)) * sqrt(365) AS annualized_volatility_abs,
+            (sqrt(sum(((close_gf / 10^d.decimal_places) - (avg.avg_close / 10^d.decimal_places))^2) / count(close_gf)) * sqrt(365) / min(avg.avg_close/10^d.decimal_places)) AS annualized_volatility_relative
+        FROM returns CROSS JOIN d, avg;
+        `;
+        
+        /* `
+        WITH gf AS (
+            SELECT
+                time_bucket_gapfill('86400000000000'::bigint, bucket) AS bucket_gf,
+                close AS close,
+                locf(close, bucket) AS close_gf,
+                last_timestamp AS timestamp
+            FROM candles_1d
+            WHERE bucket > first_trade_time($1)
+                AND bucket < most_recent_trade_time($1)
+                AND market_id = $1
+            ORDER BY bucket_gf DESC
+            LIMIT 200
+        ), returns AS (
+            SELECT bucket_gf,
+                close_gf,
+                (close_gf::decimal / lag(close_gf) OVER (ORDER BY bucket_gf)) - 1 AS return,
+                timestamp AS timestamp
+            FROM gf
+            ORDER BY bucket_gf DESC
+        ), avg AS (
+            SELECT
+                avg(close_gf) AS avg_close
+            FROM gf
         ) SELECT 
             max(timestamp) AS timestamp,
-            stddev(stats_agg(return)) AS volatilty,
-            stddev(stats_agg(return)) * sqrt(365) AS annualized_volatility
-        FROM returns;
-        `;
+            stddev(stats_agg(return)) AS simple_volatilty,
+            stddev(stats_agg(return)) * sqrt(365) AS simple_annualized_volatility,
+            sqrt(sum((close_gf - avg.avg_close)^2) / count(return)) AS volatiltiy,
+            sqrt(sum((close_gf - avg.avg_close)^2) / count(return)) * sqrt(365) AS annualized_volatility
+        FROM returns CROSS JOIN avg;
+        `; */
+
+
+        /* `
+        
+        WITH gf AS (
+            SELECT
+                time_bucket_gapfill('86400000000000'::bigint, bucket) AS bucket_gf,
+                close AS close,
+                locf(close, bucket) AS close_gf,
+                last_timestamp AS timestamp
+            FROM candles_1d
+            WHERE bucket > first_trade_time('5b05109662e7434fea498c4a1c91d3179b80e9b8950d6106cec60e1f342fc604')
+                AND bucket < most_recent_trade_time('5b05109662e7434fea498c4a1c91d3179b80e9b8950d6106cec60e1f342fc604')
+                AND market_id = '5b05109662e7434fea498c4a1c91d3179b80e9b8950d6106cec60e1f342fc604'
+            ORDER BY bucket_gf DESC
+            LIMIT 200
+        ), returns AS (
+            SELECT bucket_gf,
+                close_gf,
+                (close_gf::decimal / lag(close_gf) OVER (ORDER BY bucket_gf)) - 1 AS return,
+                timestamp AS timestamp
+            FROM gf
+            ORDER BY bucket_gf DESC
+        ), avg AS (
+            SELECT
+                avg(close_gf) AS avg_close
+            FROM gf
+        ), d as (
+            SELECT
+                decimal_places
+            FROM markets
+            WHERE id = '5b05109662e7434fea498c4a1c91d3179b80e9b8950d6106cec60e1f342fc604'
+        ) SELECT
+            max(timestamp) AS timestamp,
+            stddev(stats_agg(return)) AS simple_volatilty,
+            stddev(stats_agg(return)) * sqrt(365) AS simple_annualized_volatility,
+            sum(((close_gf / 10^d.decimal_places) - (avg.avg_close / 10^d.decimal_places))^2) / count(close_gf) AS variance_usd,
+            sqrt(sum(((close_gf / 10^d.decimal_places) - (avg.avg_close / 10^d.decimal_places))^2) / count(close_gf)) AS volatility_abs,
+            (sqrt(sum(((close_gf / 10^d.decimal_places) - (avg.avg_close / 10^d.decimal_places))^2) / count(close_gf)) / min(avg.avg_close/10^d.decimal_places)) AS volatility_relative,
+            sqrt(sum(((close_gf / 10^d.decimal_places) - (avg.avg_close / 10^d.decimal_places))^2) / count(close_gf)) * sqrt(365) AS annualized_volatility_abs,
+            (sqrt(sum(((close_gf / 10^d.decimal_places) - (avg.avg_close / 10^d.decimal_places))^2) / count(close_gf)) * sqrt(365) / min(avg.avg_close/10^d.decimal_places)) AS annualized_volatility_relative
+        FROM returns CROSS JOIN d, avg;
+        ` */
 
         return [ query, [ marketId ] ];
     },
-    historicalVolatility() {
-        const query = `
+    historicalVolatility(marketId, intervalSize, windowSize, annualizer, table) {
+        const fQuery = `
+        WITH gf AS (
+            SELECT
+                time_bucket_gapfill($2::bigint, bucket) AS bucket_gf,
+                close AS close,
+                locf(close, bucket) AS close_gf,
+                last_timestamp AS timestamp
+            FROM %I
+            WHERE bucket > first_trade_time($1)
+                AND bucket < most_recent_trade_time($1)
+                AND market_id = $1
+        ), returns AS (
+            SELECT bucket_gf,
+                close_gf,
+                (close_gf::decimal / lag(close_gf) OVER (ORDER BY bucket_gf)) - 1 AS return,
+                timestamp AS timestamp
+            FROM gf
+            ORDER BY bucket_gf DESC
+        ), avg AS (
+            SELECT
+                avg(close_gf) AS avg_close
+            FROM gf
+        ), squares as (
+            SELECT
+                bucket_gf,
+                close_gf,
+                avg_close,
+                timestamp,
+                sum((close_gf - avg.avg_close)^2) OVER (ORDER BY bucket_gf DESC ROWS BETWEEN CURRENT ROW AND $3 - 1 FOLLOWING) AS sum_of_squares    
+            FROM returns CROSS JOIN avg
+        ) SELECT 
+            bucket_gf,
+            max(timestamp) AS timestamp,
+            sqrt(sum_of_squares / $3) / min(avg_close) AS volatility_relative,
+            (sqrt(sum_of_squares / $3) / min(avg_close)) * sqrt($4) AS annualized_volatility_relative
+        FROM squares
+        GROUP BY bucket_gf, sum_of_squares
+        ORDER BY bucket_gf DESC;
         `;
 
-        return [ query, [] ];
+        /* `
+        WITH gf AS (
+            SELECT
+                time_bucket_gapfill('86400000000000'::bigint, bucket) AS bucket_gf,
+                close AS close,
+                locf(close, bucket) AS close_gf,
+                last_timestamp AS timestamp
+            FROM candles_1d
+            WHERE bucket > first_trade_time('5b05109662e7434fea498c4a1c91d3179b80e9b8950d6106cec60e1f342fc604')
+                AND bucket < most_recent_trade_time('5b05109662e7434fea498c4a1c91d3179b80e9b8950d6106cec60e1f342fc604')
+                AND market_id = '5b05109662e7434fea498c4a1c91d3179b80e9b8950d6106cec60e1f342fc604'
+            ORDER BY bucket_gf DESC
+            LIMIT 500
+        ), returns AS (
+            SELECT bucket_gf,
+                close_gf,
+                (close_gf::decimal / lag(close_gf) OVER (ORDER BY bucket_gf)) - 1 AS return,
+                timestamp AS timestamp
+            FROM gf
+            ORDER BY bucket_gf DESC
+        ), avg AS (
+            SELECT
+                avg(close_gf) AS avg_close
+            FROM gf
+        ), d as (
+            SELECT
+                decimal_places
+            FROM markets
+            WHERE id = '5b05109662e7434fea498c4a1c91d3179b80e9b8950d6106cec60e1f342fc604'
+        ), squares as (
+            SELECT
+                bucket_gf,
+                close_gf,
+                avg_close,
+                timestamp,
+                sum((close_gf - avg.avg_close)^2) OVER (ORDER BY bucket_gf DESC ROWS BETWEEN CURRENT ROW AND 30 - 1 FOLLOWING) AS sum_of_squares    
+            FROM returns CROSS JOIN avg
+        ) SELECT 
+            bucket_gf,
+            max(timestamp) AS timestamp,
+            sqrt(sum_of_squares/30) / min(avg_close) AS volatility_relative,
+            (sqrt(sum_of_squares/30) / min(avg_close)) * sqrt(365) AS annualized_volatility_relative
+        FROM squares
+        GROUP BY bucket_gf, sum_of_squares
+        ORDER BY bucket_gf DESC;
+        ` */
+
+        /* `
+        SELECT
+            bucket_gf,
+            timestamp,
+            sum(((close_gf / 10^d.decimal_places) - (avg.avg_close / 10^d.decimal_places))^2) / count(close_gf) OVER (ORDER BY bucket_gf DESC ROWS BETWEEN 10 PRECEDING AND CURRENT ROW) AS variance_usd,
+            sum((close_gf - avg.avg_close)^2) OVER OVER (ORDER BY bucket_gf DESC ROWS BETWEEN 10 PRECEDING AND CURRENT ROW) AS sum_of_squares,
+            
+            (sqrt(sum((close_gf - avg.avg_close)^2) / count(close_gf)) / min(avg.avg_close)) OVER (ORDER BY bucket_gf DESC ROWS BETWEEN 10 PRECEDING AND CURRENT ROW) AS volatility_relative,
+            (sqrt(sum(((close_gf / 10^d.decimal_places) - (avg.avg_close / 10^d.decimal_places))^2) / count(close_gf)) * sqrt(365) / min(avg.avg_close/10^d.decimal_places)) OVER (ORDER BY bucket_gf DESC ROWS BETWEEN 10 PRECEDING AND CURRENT ROW) AS annualized_volatility_relative
+        FROM returns CROSS JOIN d, avg;
+        ` */
+
+        const query = format(fQuery, table);
+
+        return [ query, [ marketId, intervalSize, windowSize, annualizer ] ];
+    },
+    allHistoricalVolatilities(intervalSize, windowSize, annualizer, table) {
+        const fQuery = `
+        WITH gf AS (
+            SELECT
+                market_id,
+                time_bucket_gapfill($1::bigint, bucket) AS bucket_gf,
+                close AS close,
+                locf(close, bucket) AS close_gf,
+                last_timestamp as timestamp,
+                markets.state
+            FROM %I INNER JOIN markets ON markets.id = candles_1d.market_id
+            WHERE markets.state = 'STATE_ACTIVE'
+                OR markets.state = 'STATE_SUSPENDED'
+        ), returns AS (
+            SELECT
+                market_id,
+                bucket_gf,
+                close_gf,
+                (close_gf::decimal / lag(close_gf) OVER (PARTITION BY market_id ORDER BY bucket_gf)) - 1 AS return,
+                timestamp AS timestamp
+            FROM gf
+            ORDER BY bucket_gf DESC
+        ), avg AS (
+            SELECT
+                market_id,
+                avg(close_gf) AS avg_close
+            FROM gf
+            GROUP BY market_id
+        ), squares as (
+            SELECT
+                avg.market_id,
+                bucket_gf,
+                close_gf,
+                avg.avg_close,
+                timestamp,
+                sum((close_gf - avg.avg_close)^2) OVER (PARTITION BY avg.market_id ORDER BY bucket_gf DESC ROWS BETWEEN CURRENT ROW AND $2 - 1 FOLLOWING) AS sum_of_squares    
+            FROM returns INNER JOIN avg on avg.market_id = returns.market_id
+        ) SELECT 
+            market_id,
+            bucket_gf,
+            max(timestamp) AS timestamp,
+            sqrt(sum_of_squares / $2) / min(avg_close) AS volatility_relative,
+            (sqrt(sum_of_squares / $2) / min(avg_close)) * sqrt($3) AS annualized_volatility_relative
+        FROM squares
+        GROUP BY market_id, bucket_gf, sum_of_squares
+        ORDER BY bucket_gf DESC;
+        `;
+
+        /* `
+        WITH gf AS (
+            SELECT
+                market_id,
+                time_bucket_gapfill('86400000000000'::bigint, bucket) AS bucket_gf,
+                close AS close,
+                locf(close, bucket) AS close_gf,
+                last_timestamp as timestamp,
+                markets.state
+            FROM candles_1d INNER JOIN markets ON markets.id = candles_1d.market_id
+            WHERE markets.state = 'STATE_ACTIVE'
+                OR markets.state = 'STATE_SUSPENDED'
+        ), returns AS (
+            SELECT
+                market_id,
+                bucket_gf,
+                close_gf,
+                (close_gf::decimal / lag(close_gf) OVER (PARTITION BY market_id ORDER BY bucket_gf)) - 1 AS return,
+                timestamp AS timestamp
+            FROM gf
+            ORDER BY bucket_gf DESC
+        ), avg AS (
+            SELECT
+                market_id,
+                avg(close_gf) AS avg_close
+            FROM gf
+            GROUP BY market_id
+        ), squares as (
+            SELECT
+                avg.market_id,
+                bucket_gf,
+                close_gf,
+                avg.avg_close,
+                timestamp,
+                sum((close_gf - avg.avg_close)^2) OVER (PARTITION BY avg.market_id ORDER BY bucket_gf DESC ROWS BETWEEN CURRENT ROW AND 30 - 1 FOLLOWING) AS sum_of_squares    
+            FROM returns INNER JOIN avg on avg.market_id = returns.market_id
+        ) SELECT 
+            market_id,
+            bucket_gf,
+            max(timestamp) AS timestamp,
+            sqrt(sum_of_squares / 30) / min(avg_close) AS volatility_relative,
+            (sqrt(sum_of_squares / 30) / min(avg_close)) * sqrt(365) AS annualized_volatility_relative
+        FROM squares
+        GROUP BY market_id, bucket_gf, sum_of_squares
+        ORDER BY bucket_gf DESC;
+        ` */
+
+        // Select candles
+        // join to markets table for active markets
+        // gap fill for each active market
+        // calculate returns
+        // calculate sum of squares for each market using window function
+        // use sum of squares to complete volatility calculations
+
+        const query = format(fQuery, table);
+
+        return [ query, [ intervalSize, windowSize, annualizer ] ];
     },
     sharpeRatio(marketId) {
         const query = `
@@ -915,7 +1347,7 @@ const marketQueries = {
                 AND bucket < most_recent_trade_time($1)
                 AND market_id = $1
             ORDER BY bucket_gf DESC
-            LIMIT 30
+            LIMIT 50
         ), returns AS (
             SELECT bucket_gf,
                 (close_gf::decimal / lag(close_gf) OVER (ORDER BY bucket_gf)) - 1 AS return,
@@ -978,7 +1410,7 @@ const marketQueries = {
                 AND bucket < most_recent_trade_time($1)
                 AND market_id = $1
             ORDER BY bucket_gf DESC
-            LIMIT 30
+            LIMIT 50
         ), returns AS (
             SELECT bucket_gf,
                 (close_gf::decimal / lag(close_gf) OVER (ORDER BY bucket_gf)) - 1 AS return,
@@ -993,8 +1425,8 @@ const marketQueries = {
             stddev(stats_agg(return)) AS stddev_returns,
             sqrt(sum(
                 CASE WHEN return < 0 THEN return^2 ELSE 0 END
-            ) / count(return)) AS downside_deviation,
-            (avg(return)/sqrt(sum(CASE WHEN return < 0 THEN return^2 ELSE 0 END)/count(return)))*sqrt(365) AS sortino_ratio
+            ) / CASE WHEN count(return) != 0 THEN count(return) ELSE 1 END) AS downside_deviation,
+            (avg(return)/sqrt(sum(CASE WHEN return < 0 THEN return^2 ELSE 0 END)/CASE WHEN count(return) != 0 THEN count(return) ELSE 1 END))*sqrt(365) AS sortino_ratio
         FROM returns;
         `;
 
@@ -1048,6 +1480,147 @@ const marketQueries = {
         const query = format(fQuery, table);
 
         return [ query, [ marketId, bucketSize, windowLength-1, limit ] ];
+    },
+    rollingTakerVolume(marketId, windowSize, table) {
+        const fQuery = `
+        SELECT
+            market_id,
+            last(bucket, bucket) AS bucket,
+            last(timestamp, timestamp) AS timestamp,
+            sum(volume_long) AS volume_long, 
+            sum(volume_short) AS volume_short
+        FROM %I
+        WHERE bucket::bigint > ((select timestamp from taker_data_5m order by timestamp DESC limit 1) - $2::bigint)
+            AND marketId = $1
+        GROUP BY market_id;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ marketId, windowSize ] ];
+    },
+    allRollingTakerVolume(windowSize, table) {
+        const fQuery = `
+        SELECT
+            market_id,
+            last(timestamp, timestamp) AS timestamp,
+            sum(volume_long) AS volume_long, 
+            sum(volume_short) AS volume_short
+        FROM %I x INNER JOIN markets y ON X.market_id = y.id 
+        WHERE bucket::bigint > ((select timestamp from taker_data_5m order by timestamp DESC limit 1) - $1::bigint)
+            AND (y.state = 'STATE_ACTIVE' OR y.state = 'STATE_SUSPENDED')
+        GROUP BY market_id;
+        `;
+
+        `
+        SELECT
+            market_id,
+            last(timestamp, timestamp) AS timestamp,
+            sum(volume_long) AS volume_long, 
+            sum(volume_short) AS volume_short
+        FROM taker_data_5m x INNER JOIN markets y ON X.market_id = y.id 
+        WHERE bucket::bigint > (current_time_ns() - 3600000000000)
+            AND (y.state = 'STATE_ACTIVE' OR y.state = 'STATE_SUSPENDED')
+        GROUP BY market_id;
+        `
+
+        const query = format(fQuery, table);
+
+        return [ query, [ windowSize ] ];
+    },
+    historicalTakerVolume(marketId, limit, table) {
+        const fQuery = `
+        SELECT
+            market_id,
+            bucket,
+            timestamp,
+            volume_long,
+            volume_short
+        FROM %I
+        WHERE market_id = $1
+        ORDER BY bucket DESC
+        LIMIT $2;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ marketId, limit ] ];
+    },
+    allHistoricalTakerVolume(limit, table) {
+        const fQuery = `
+        SELECT
+            x.id, x.state, x.instrument_name,
+            y.market_id, y.bucket, y.volume_long, y.volume_short
+        FROM markets x JOIN LATERAL (
+            SELECT 
+                market_id,
+                bucket,
+                volume_long,
+                volume_short
+            FROM %I
+            WHERE market_id = x.id
+            ORDER BY bucket DESC 
+            LIMIT $1
+        ) y on true
+        WHERE (x.state = 'STATE_ACTIVE' OR x.state = 'STATE_SUSPENDED')
+        ORDER BY y.bucket DESC;
+        `;
+
+        const query = format(fQuery, table);
+
+        return [ query, [ limit ] ];
+    },
+    takerData(marketId) {
+        const query = `
+        WITH x AS (
+            SELECT
+                sum(volume_long) AS sum_volume_long,
+                sum(volume_short) AS sum_volume_short
+            FROM taker_data_1d
+            WHERE market_id = $1
+        )
+        SELECT
+            market_id,
+            last(timestamp, timestamp),
+            x.sum_volume_long AS volume_long,
+            x.sum_volume_short AS volume_short,
+            sum(
+                (avg_buy_size) * (volume_long/x.sum_volume_long)
+            ) AS avg_buy_size,
+            sum(
+                (avg_sell_size) * (volume_short/x.sum_volume_short)
+            ) AS avg_sell_size
+        FROM taker_data_1d CROSS JOIN x
+        WHERE market_id = $1
+        GROUP BY market_id;
+        `;
+
+
+        /* `
+        WITH x AS (
+            SELECT
+                sum(volume_long) AS sum_volume_long,
+                sum(volume_short) AS sum_volume_short
+            FROM taker_data_1d
+            WHERE market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
+        )
+        SELECT
+            market_id,
+            sum(volume_long) AS sum_volume_long,
+            sum(volume_short) AS sum_volume_short,
+            sum(
+                (avg_buyer_size) * (volume_long/x.sum_volume_long)
+            ) AS avg_buyer_size,
+            sum(
+                (avg_seller_size) * (volume_short/x.sum_volume_short)
+            ) AS avg_seller_size
+        FROM taker_data_1d CROSS JOIN x
+        WHERE market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
+        GROUP BY market_id;
+
+        ` */
+
+        return [ query, [ marketId ] ];
     },
     simpleMovingAveragesOld(marketId, interval, limit, bucketSize) {
         
@@ -1464,7 +2037,7 @@ const partyQueries = {
         SELECT 
             count(distinct party_id) as unique_depositors,
             max(timestamp) as timestamp
-        FROM bridge_diffs_5m
+        FROM bridge_diffs_1d
         WHERE diff > 0;
         `;
 

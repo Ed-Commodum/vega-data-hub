@@ -225,64 +225,6 @@ AS $$
     LIMIT 1
 $$ LANGUAGE SQL;
 
-CREATE FUNCTION most_recent_party_data_bucket(market_id TEXT, _table TEXT, party_id TEXT)
-RETURNS BIGINT
-LANGUAGE plpgsql
-AS
-$$
-DECLARE
-    retval BIGINT;
-BEGIN
-    EXECUTE format('
-        SELECT bucket
-        FROM %I
-        WHERE market_id = %L AND (buyer = %L OR seller = %L)
-        ORDER BY bucket DESC 
-        LIMIT 1;', _table, market_id, party_id, party_id)
-    INTO retval;
-    RETURN retval;
-END
-$$;
-
-CREATE FUNCTION first_party_data_bucket(market_id TEXT, _table TEXT, party_id TEXT)
-RETURNS BIGINT
-LANGUAGE plpgsql
-AS
-$$
-DECLARE
-    retval BIGINT;
-BEGIN
-    EXECUTE format('
-        SELECT bucket
-        FROM %I
-        WHERE market_id = %L AND (buyer = %L OR seller = %L)
-        ORDER BY bucket
-        LIMIT 1;', _table, market_id, party_id, party_id)
-    INTO retval;
-    RETURN retval;
-END
-$$;
-
-CREATE FUNCTION most_recent_party_data_bucket(in market_id TEXT, in _table TEXT, in party_id TEXT) RETURNS BIGINT
-AS $$
-    EXECUTE format('
-        SELECT bucket
-        FROM %I
-        WHERE market_id = $1 AND (buyer = $3 OR seller = $3)
-        ORDER BY bucket DESC 
-        LIMIT 1 RETURNING', $2)
-$$ LANGUAGE SQL;
-
-CREATE FUNCTION first_party_data_bucket(in market_id TEXT, in _table TEXT, in party_id TEXT) RETURNS BIGINT
-AS $$
-    EXECUTE format('
-        SELECT bucket
-        FROM %I
-        WHERE market_id = $1 AND (buyer = $3 OR seller = $3)
-        ORDER BY bucket 
-        LIMIT 1 RETURNING', $2);
-$$ LANGUAGE SQL;
-
 CREATE FUNCTION current_time_ns() RETURNS BIGINT
 LANGUAGE SQL STABLE AS $$
 SELECT '1000000000'::BIGINT * EXTRACT(EPOCH FROM NOW())::BIGINT
@@ -324,61 +266,23 @@ const continuousAggregates = {
             createMatView: `CREATE MATERIALIZED VIEW candles_1h
             WITH (timescaledb.continuous) AS
             SELECT market_id,
-                time_bucket(3600000000000, bucket) AS bucket,
-                max(high) AS high,
-                min(low) AS low,
-                first(open, bucket) AS open,
-                last(close, bucket) AS close,
-                last(last_timestamp, last_timestamp) AS last_timestamp,
-                sum(volume_contracts) AS volume_contracts,
-                sum(volume) AS volume
-            FROM candles_5m
-            GROUP BY market_id, time_bucket(3600000000000, bucket);`,
+                time_bucket(3600000000000, synth_timestamp) AS bucket,
+                max(price) AS high,
+                min(price) AS low,
+                first(price, synth_timestamp) AS open,
+                last(price, synth_timestamp) AS close,
+                last(timestamp, timestamp) AS last_timestamp,
+                sum(size) AS volume_contracts,
+                sum(size * price) AS volume
+            FROM trades
+            GROUP BY market_id, time_bucket(3600000000000, synth_timestamp);`,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('candles_1h',
-            start_offset => '2592000000000000'::bigint,
-            end_offset => '60000000000'::bigint,
+            start_offset => 2592000000000000,
+            end_offset => 60000000000,
             schedule_interval => INTERVAL '1 minute');`
         },
         interval_1d: {
             createMatView: `CREATE MATERIALIZED VIEW candles_1d
-            WITH (timescaledb.continuous) AS
-            SELECT market_id,
-                time_bucket(86400000000000, bucket) AS bucket,
-                max(high) AS high,
-                min(low) AS low,
-                first(open, bucket) AS open,
-                last(close, bucket) AS close,
-                last(last_timestamp, last_timestamp) AS last_timestamp,
-                sum(volume_contracts) AS volume_contracts,
-                sum(volume) AS volume
-            FROM candles_1h
-            GROUP BY market_id, time_bucket(86400000000000, bucket);`,
-            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('candles_1d',
-            start_offset => 2592000000000000,
-            end_offset => 60000000000,
-            schedule_interval => INTERVAL '1 minute');`
-        },
-        interval_1d_from_5m: {
-            createMatView: `CREATE MATERIALIZED VIEW candles_1d_from_5m
-            WITH (timescaledb.continuous) AS
-            SELECT market_id,
-                time_bucket(86400000000000, bucket) AS bucket,
-                max(high) AS high,
-                min(low) AS low,
-                first(open, bucket) AS open,
-                last(close, bucket) AS close,
-                last(last_timestamp, last_timestamp) AS last_timestamp,
-                sum(volume_contracts) AS volume_contracts,
-                sum(volume) AS volume
-            FROM candles_5m
-            GROUP BY market_id, time_bucket(86400000000000, bucket);`,
-            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('candles_1d_from_5m',
-            start_offset => 2592000000000000,
-            end_offset => 60000000000,
-            schedule_interval => INTERVAL '1 minute');`
-        },
-        interval_1d_from_raw: {
-            createMatView: `CREATE MATERIALIZED VIEW candles_1d_from_raw
             WITH (timescaledb.continuous) AS
             SELECT market_id,
                 time_bucket(86400000000000, synth_timestamp) AS bucket,
@@ -391,7 +295,7 @@ const continuousAggregates = {
                 sum(size * price) AS volume
             FROM trades
             GROUP BY market_id, time_bucket(86400000000000, synth_timestamp);`,
-            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('candles_1d_from_raw',
+            addRefreshPolicy: `SELECT add_continuous_aggregate_policy('candles_1d',
             start_offset => 2592000000000000,
             end_offset => 60000000000,
             schedule_interval => INTERVAL '1 minute');`
@@ -401,20 +305,20 @@ const continuousAggregates = {
         interval_5m: {
             createMatView: `CREATE MATERIALIZED VIEW taker_data_5m
             WITH (timescaledb.continuous) AS
-            SELECT market_id,
+            SELECT
+                market_id,
                 time_bucket(300000000000, synth_timestamp) AS bucket,
+                last(timestamp, timestamp) AS timestamp,
                 sum(CASE WHEN aggressor = 'SIDE_BUY' THEN size ELSE 0 END) AS volume_long_contracts,
-                sum(CASE WHEN aggressor = 'SIDE_BUY' THEN size ELSE 0 END * price) AS volume_long,
+                sum(CASE WHEN aggressor = 'SIDE_BUY' THEN size * price ELSE 0 END) AS volume_long,
                 sum(CASE WHEN aggressor = 'SIDE_SELL' THEN size ELSE 0 END) AS volume_short_contracts,
-                sum(CASE WHEN aggressor = 'SIDE_SELL' THEN size ELSE 0 END * price) AS volume_short,
+                sum(CASE WHEN aggressor = 'SIDE_SELL' THEN size * price ELSE 0 END) AS volume_short,
                 count(DISTINCT buyer) FILTER (WHERE aggressor = 'SIDE_BUY') AS num_buyers,
                 count(DISTINCT seller) FILTER (WHERE aggressor = 'SIDE_SELL') AS num_sellers,
                 count(*) FILTER (WHERE aggressor = 'SIDE_BUY') AS num_buys,
                 count(*) FILTER (WHERE aggressor = 'SIDE_SELL') AS num_sells,
-                sum(size) FILTER (WHERE aggressor = 'SIDE_BUY') AS sum_buyer_size,
-                sum(size) FILTER (WHERE aggressor = 'SIDE_SELL') AS sum_seller_size,
-                avg(size) FILTER (WHERE aggressor = 'SIDE_BUY') AS avg_buyer_size,
-                avg(size) FILTER (WHERE aggressor = 'SIDE_SELL') AS avg_seller_size
+                avg(size * price) FILTER (WHERE aggressor = 'SIDE_BUY') AS avg_buy_size,
+                avg(size * price) FILTER (WHERE aggressor = 'SIDE_SELL') AS avg_sell_size
             FROM trades
             GROUP BY market_id, time_bucket(300000000000, synth_timestamp);
             `,
@@ -427,48 +331,47 @@ const continuousAggregates = {
         interval_1h: {
             createMatView: `CREATE MATERIALIZED VIEW taker_data_1h
             WITH (timescaledb.continuous) AS
-            SELECT market_id,
-                time_bucket(3600000000000, bucket) AS bucket,
-                sum(volume_long_contracts) AS volume_long_contracts,
-                sum(volume_long) AS volume_long,
-                sum(volume_short_contracts) AS volume_short_contracts,
-                sum(volume_short) AS volume_short,
-                sum(num_buyers) AS num_buyers,
-                sum(num_sellers) AS num_sellers,
-                sum(num_buys) AS num_buys,
-                sum(num_sells) AS num_sells,
-                sum(sum_buyer_size) AS sum_buyer_size,
-                sum(sum_seller_size) AS sum_seller_size,
-                sum(sum_buyer_size) / sum(num_buys) AS avg_buyer_size,
-                sum(sum_seller_size) / sum(num_sells) AS avg_seller_size
-            FROM taker_data_5m
-            GROUP BY market_id, time_bucket(3600000000000, bucket);
+            SELECT
+                market_id,
+                time_bucket(3600000000000, synth_timestamp) AS bucket,
+                last(timestamp, timestamp) AS timestamp,
+                sum(CASE WHEN aggressor = 'SIDE_BUY' THEN size ELSE 0 END) AS volume_long_contracts,
+                sum(CASE WHEN aggressor = 'SIDE_BUY' THEN size * price ELSE 0 END) AS volume_long,
+                sum(CASE WHEN aggressor = 'SIDE_SELL' THEN size ELSE 0 END) AS volume_short_contracts,
+                sum(CASE WHEN aggressor = 'SIDE_SELL' THEN size * price ELSE 0 END) AS volume_short,
+                count(DISTINCT buyer) FILTER (WHERE aggressor = 'SIDE_BUY') AS num_buyers,
+                count(DISTINCT seller) FILTER (WHERE aggressor = 'SIDE_SELL') AS num_sellers,
+                count(*) FILTER (WHERE aggressor = 'SIDE_BUY') AS num_buys,
+                count(*) FILTER (WHERE aggressor = 'SIDE_SELL') AS num_sells,
+                avg(size * price) FILTER (WHERE aggressor = 'SIDE_BUY') AS avg_buy_size,
+                avg(size * price) FILTER (WHERE aggressor = 'SIDE_SELL') AS avg_sell_size
+            FROM trades
+            GROUP BY market_id, time_bucket(3600000000000, synth_timestamp);
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('taker_data_1h',
-            start_offset => 2592000000000000,
-            end_offset => 60000000000,
-            schedule_interval => INTERVAL '1 minute');
-            `
+            start_offset => '2592000000000000'::bigint,
+            end_offset => '60000000000'::bigint,
+            schedule_interval => INTERVAL '1 minute');`
         },
         interval_1d: {
             createMatView: `CREATE MATERIALIZED VIEW taker_data_1d
             WITH (timescaledb.continuous) AS
-            SELECT market_id,
-                time_bucket(86400000000000, bucket) AS bucket,
-                sum(volume_long_contracts) AS volume_long_contracts,
-                sum(volume_long) AS volume_long,
-                sum(volume_short_contracts) AS volume_short_contracts,
-                sum(volume_short) AS volume_short,
-                sum(num_buyers) AS num_buyers,
-                sum(num_sellers) AS num_sellers,
-                sum(num_buys) AS num_buys,
-                sum(num_sells) AS num_sells,
-                sum(sum_buyer_size) AS sum_buyer_size,
-                sum(sum_seller_size) AS sum_seller_size,
-                sum(sum_buyer_size) / sum(num_buys) AS avg_buyer_size,
-                sum(sum_seller_size) / sum(num_sells) AS avg_seller_size
-            FROM taker_data_1h
-            GROUP BY market_id, time_bucket(86400000000000, bucket);
+            SELECT
+                market_id,
+                time_bucket(86400000000000, synth_timestamp) AS bucket,
+                last(timestamp, timestamp) AS timestamp,
+                sum(CASE WHEN aggressor = 'SIDE_BUY' THEN size ELSE 0 END) AS volume_long_contracts,
+                sum(CASE WHEN aggressor = 'SIDE_BUY' THEN size * price ELSE 0 END) AS volume_long,
+                sum(CASE WHEN aggressor = 'SIDE_SELL' THEN size ELSE 0 END) AS volume_short_contracts,
+                sum(CASE WHEN aggressor = 'SIDE_SELL' THEN size * price ELSE 0 END) AS volume_short,
+                count(DISTINCT buyer) FILTER (WHERE aggressor = 'SIDE_BUY') AS num_buyers,
+                count(DISTINCT seller) FILTER (WHERE aggressor = 'SIDE_SELL') AS num_sellers,
+                count(*) FILTER (WHERE aggressor = 'SIDE_BUY') AS num_buys,
+                count(*) FILTER (WHERE aggressor = 'SIDE_SELL') AS num_sells,
+                avg(size * price) FILTER (WHERE aggressor = 'SIDE_BUY') AS avg_buy_size,
+                avg(size * price) FILTER (WHERE aggressor = 'SIDE_SELL') AS avg_sell_size
+            FROM trades
+            GROUP BY market_id, time_bucket(86400000000000, synth_timestamp);
             `,
             addRefreshPolicy: `SELECT add_continuous_aggregate_policy('taker_data_1d',
             start_offset => 2592000000000000,
@@ -476,6 +379,32 @@ const continuousAggregates = {
             schedule_interval => INTERVAL '1 minute');
             `
         }
+        // interval_1d: {
+        //     createMatView: `CREATE MATERIALIZED VIEW taker_data_1d
+        //     WITH (timescaledb.continuous) AS
+        //     SELECT market_id,
+        //         time_bucket(86400000000000, bucket) AS bucket,
+        //         sum(volume_long_contracts) AS volume_long_contracts,
+        //         sum(volume_long) AS volume_long,
+        //         sum(volume_short_contracts) AS volume_short_contracts,
+        //         sum(volume_short) AS volume_short,
+        //         sum(num_buyers) AS num_buyers,
+        //         sum(num_sellers) AS num_sellers,
+        //         sum(num_buys) AS num_buys,
+        //         sum(num_sells) AS num_sells,
+        //         sum(sum_buyer_size) AS sum_buyer_size,
+        //         sum(sum_seller_size) AS sum_seller_size,
+        //         sum(sum_buyer_size) / sum(num_buys) AS avg_buyer_size,
+        //         sum(sum_seller_size) / sum(num_sells) AS avg_seller_size
+        //     FROM taker_data_1h
+        //     GROUP BY market_id, time_bucket(86400000000000, bucket);
+        //     `,
+        //     addRefreshPolicy: `SELECT add_continuous_aggregate_policy('taker_data_1d',
+        //     start_offset => 2592000000000000,
+        //     end_offset => 60000000000,
+        //     schedule_interval => INTERVAL '1 minute');
+        //     `
+        // }
     },
     infraFeesByMarket: {
         interval_5m: {
@@ -587,7 +516,6 @@ const continuousAggregates = {
                 count(market_id) AS num_trades,
                 sum(size) AS volume_contracts,
                 sum(size * price) AS volume,
-                avg()
                 sum(buyer_fee_infrastructure + seller_fee_infrastructure) AS fees_paid_infrastructure,
                 sum(buyer_fee_infrastructure + buyer_fee_maker +
                     buyer_fee_liquidity + seller_fee_infrastructure +
@@ -1096,6 +1024,7 @@ const start = () => {
                                     createContAggs(pgPool, ["candles", "takerData", "marketData", "partyData", "infraFeesByMarket"]);
                                 } else {
                                     console.log(err);
+                                    createContAggs(pgPool, ["candles", "takerData", "marketData", "partyData", "infraFeesByMarket"]);
                                 }
                             });
                         } else {
@@ -1123,7 +1052,7 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
     //     console.log(evt);
     //     mostRecentBeginBlock = evt.beginBlock;
     // });
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "trades-group-23" });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "trades-group-27" });
     kafkaConsumer.on("message", (msg) => {
         // console.log("New message");
         const evt = JSON.parse(msg.value);
@@ -1174,7 +1103,7 @@ const batchPersistTrades = (rows) => {
     
     const typeCastings = [
         '::text', '::text', '::bigint', '::bigint', '::text', '::text', '::text', '::text',
-        '::text', '::text', '::bigint', '::text', '::numeric(40)', '::numeric(40)', '::numeric(40)',
+        '::text', '::bigint', '::bigint', '::text', '::numeric(40)', '::numeric(40)', '::numeric(40)',
         '::numeric(40)', '::numeric(40)', '::numeric(40)', '::integer'
     ];
 
@@ -1253,4 +1182,4 @@ const formatTrade = (trade) => {
     return formatted;
 };
 
-setTimeout(start, 29000);
+setTimeout(start, 28000);
