@@ -96,9 +96,11 @@ class DataHandler {
         const openInterestRes = await fetch(`${this.apiAddr}/open-interest`);
         const openInterestJson = await openInterestRes.json();
         this.openInterests.length = 0;
+        console.log(openInterestJson);
         for (let market of openInterestJson.openInterests) {
-            // console.log(market);
+            console.log(market);
             if (!Object.keys(this.decimals).includes(market.marketId)) continue;
+            // console.log(market);
             this.openInterests.push(
                 {
                     marketId: market.marketId,
@@ -106,7 +108,7 @@ class DataHandler {
                     assetName: this.decimals[market.marketId].assetName,
                     openInterestContracts: market.openInterest,
                     lastTradedPrice: market.lastTradedPrice,
-                    openInterest: this.convertVolumeUnits(market.marketId, (BigInt(market.openInterest) * BigInt(market.lastTradedPrice)))
+                    openInterest: this.convertVolumeUnits(market.marketId, (BigInt(market.openInterest ? market.openInterest : 0) * BigInt(market.lastTradedPrice)))
                 }
             );
         }
