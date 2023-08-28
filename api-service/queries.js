@@ -1495,6 +1495,20 @@ const marketQueries = {
         GROUP BY market_id;
         `;
 
+
+        `
+        SELECT
+            market_id
+            last(timestamp, synth_timestamp) as timestamp,
+            sum(CASE WHEN aggressor = 'SIDE_BUY' THEN size * price ELSE 0 END) AS volume_long,
+            sum(CASE WHEN aggressor = 'SIDE_SELL' THEN size * price ELSE 0 END) AS volume_short,
+        FROM trades
+        WHERE timestamp >= <WINDOW_END> AND timestamp < <FIRST_BUCKET>
+        GROUP BY market_id
+
+        `
+
+
         const query = format(fQuery, table);
 
         return [ query, [ marketId, windowSize ] ];

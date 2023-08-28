@@ -1114,6 +1114,11 @@ const routes = (app, pgPool) => {
 
     })
 
+    app.get('rolling-volume', async (req, res) => {
+        
+
+    });
+
     // ---------- TEST AGAIN ---------- //
     app.get('/trade-count', async (req, res) => {
         // Takes a marketId (optional) and a partyId (optional) and returns the most recent count of trades for
