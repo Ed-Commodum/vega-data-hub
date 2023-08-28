@@ -28,7 +28,7 @@ const pgPool = new Pool({
 
 const kafka = require("kafka-node");
 const { EventEmitter } = require("node:events");
-const { nextTick } = require('node:process');
+const { performance } = require("node:perf_hooks");
 
 const { tradeAggressorMappings, tradeTypeMappings } = require('./type-mappings.js');
 const { topicBusEventMappings } = require('./busEventTopicMappings.js');
@@ -40,27 +40,60 @@ console.log(kafkaBrokers);
 console.log(process.env);
 
 let kafkaConsumer;
-let kafkaConsumerBlocks;
 
 const formattedBatch = [];
 const flushFormattedBatchInterval = setInterval(() => {
     if (formattedBatch.length == 0 || formattedBatch.length == 1) return;
     batchPersistTrades(formattedBatch.slice());
     formattedBatch.length = 0;
-}, 100);
+}, 200);
 
-let subQueue = [];
 const intervalMap = {
     interval_5m: 300000000000n,
     interval_1h: 3600000000000n,
     interval_1d: 86400000000000n
 };
+
 const bucketIndices = {
     interval_5m: 0n,
     interval_1h: 0n,
     interval_1d: 0n
 };
 
+const replaying = false;
+const busEventBlockMap = {};
+const blockEmitter = new EventEmitter();
+
+blockEmitter.on('noTrades', (height) => {
+    
+    console.log(`No trades for height ${height}`);
+    
+    // Fire off event to notify API service that the block has no trades.
+
+})
+
+blockEmitter.on('SuccessfulInserts', (height) => {
+
+    console.log(`Successfully inserted block with height: ${height}`);
+
+    // Fire off event that triggers API serice to send off data for that particular height.
+    // Should the event be launched into Kafka for it to handle or would it be wise to build
+    // and API/RPC on the websocket API service that this service can call directly?
+
+});
+
+blockEmitter.on('FailedInserts', (height) => {
+    
+    console.log(`Failed to insert trades at height: ${height}`);
+    process.exit(0);
+
+    // What should the workflow be for this?
+    //
+    //  - Retry inserts
+    //  - Send event to websocket API to notify of failure.
+
+
+});
 
 const createTablesQuery = `
 CREATE TABLE IF NOT EXISTS trades (
@@ -672,200 +705,6 @@ const continuousAggregates = {
     }
 };
 
-const marketData = {
-    totalTrades: 0,
-    totalVolume: 0,
-    totalFeesPaid: 0,
-    totalInfrastructureFees: 0,
-    openInterest: 0, // Compute at query time
-    return: 0, // Compute at query time
-    lnReturn: 0, // Compute at query time
-    variance: 0, // Compute at query time
-    volatiltiy: 0, // Compute at query time
-    valueAtRisk: 0, // Compute at query time
-    expectedShortfall: 0, // Compute at query time
-    sharpeRatio: 0, // Compute at query time
-    sortinoRatio: 0, // Compute at query time
-    simpleMAs: { // Compute at query time
-        interval_5m: [],
-        interval_1h: [],
-        interval_1d: []
-    },
-    exponentialMAs: { // Compute at query time
-        interval_5m: [],
-        interval_1h: [],
-        interval_1d: []
-    },
-};
-
-const partyData = {
-    totalTrades: 0,
-    totalVolume: 0,
-    totalFeesPaid:  0,
-    openPositions: [],
-    historicalPnls: {
-        realisedPnl: [],
-        unrealisedPnl: [],
-    }
-};
-
-
-const windowFunctions = {
-    movingAverages: {
-        interval_5m: `
-        SELECT market_id,
-            bucket,
-            sum(CAST(price AS DECIMAL)) OVER (
-                PARTITION BY market_id
-                ORDER BY bucket DESC ROWS BETWEEN 1 FOLLOWING AND 50 FOLLOWING
-            ) / 50 as ma50,
-            sum(CAST(price AS DECIMAL)) OVER (
-                PARTITION BY market_id
-                ORDER BY bucket DESC ROWS BETWEEN 1 FOLLOWING AND 100 FOLLOWING
-            ) / 100 as ma100,
-            sum(CAST(price AS DECIMAL)) OVER (
-                PARTITION BY market_id
-                ORDER BY bucket DESC ROWS BETWEEN 1 FOLLOWING AND 200 FOLLOWING
-            ) / 200 as ma200
-        FROM candles_5m
-        GROUP BY market_id, bucket;
-        `,
-        interval_1h: {
-
-        },
-        interval_1d: {
-
-        }
-    },
-    marketRiskMetrics: {
-        valueAtRisk: {
-            interval_1d: {
-
-            }
-        },
-        expectedShortfall: {
-            interval_1d: {
-
-            }
-        }
-    },
-    volatility: {},
-}
-
-const userDefinedFunctions = {
-    refreshSMA5m:`CREATE FUNCTION refresh_sma_5m( ts BIGINT )
-    RETURNS TABLE (
-        market_id TEXT, bucket BIGINT, sma50 NUMERIC, sma100 NUMERIC, sma200 NUMERIC
-    ) AS $$
-    #variable_conflict use_column
-    BEGIN
-        RETURN QUERY
-            SELECT
-                market_id,
-                bucket,
-                sum(CAST(close AS DECIMAL)) OVER (
-                    PARTITION BY market_id
-                    ORDER BY bucket DESC ROWS BETWEEN 1 FOLLOWING AND 50 FOLLOWING
-                ) / 50 as sma50,
-                sum(CAST(close AS DECIMAL)) OVER (
-                    PARTITION BY market_id
-                    ORDER BY bucket DESC ROWS BETWEEN 1 FOLLOWING AND 100 FOLLOWING
-                ) / 100 as sma100,
-                sum(CAST(close AS DECIMAL)) OVER (
-                    PARTITION BY market_id
-                    ORDER BY bucket DESC ROWS BETWEEN 1 FOLLOWING AND 200 FOLLOWING
-                ) / 200 as sma200
-            FROM candles_5m
-            WHERE bucket > (ts - 300000000000 * 2);
-    END;
-    $$ LANGUAGE plpgsql;
-    `,
-    refreshSMA1h:`CREATE FUNCTION refresh_sma_1h( ts BIGINT )
-    RETURNS TABLE (
-        market_id TEXT, bucket BIGINT, sma50 NUMERIC, sma100 NUMERIC, sma200 NUMERIC
-    ) AS $$
-    #variable_conflict use_column
-    BEGIN
-        RETURN QUERY
-            SELECT
-                market_id,
-                bucket,
-                sum(CAST(close AS DECIMAL)) OVER (
-                    PARTITION BY market_id
-                    ORDER BY bucket DESC ROWS BETWEEN 1 FOLLOWING AND 50 FOLLOWING
-                ) / 50 as sma50,
-                sum(CAST(close AS DECIMAL)) OVER (
-                    PARTITION BY market_id
-                    ORDER BY bucket DESC ROWS BETWEEN 1 FOLLOWING AND 100 FOLLOWING
-                ) / 100 as sma100,
-                sum(CAST(close AS DECIMAL)) OVER (
-                    PARTITION BY market_id
-                    ORDER BY bucket DESC ROWS BETWEEN 1 FOLLOWING AND 200 FOLLOWING
-                ) / 200 as sma200
-            FROM candles_1h
-            WHERE bucket > (ts - 3600000000000 * 2);
-    END;
-    $$ LANGUAGE plpgsql;
-    `,
-    refreshSMA1d:`CREATE FUNCTION refresh_sma_1d( ts BIGINT )
-    RETURNS TABLE (
-        market_id TEXT, bucket BIGINT, sma50 NUMERIC, sma100 NUMERIC, sma200 NUMERIC
-    ) AS $$
-    #variable_conflict use_column
-    BEGIN
-        RETURN QUERY
-            SELECT
-                market_id,
-                bucket,
-                sum(CAST(close AS DECIMAL)) OVER (
-                    PARTITION BY market_id
-                    ORDER BY bucket DESC ROWS BETWEEN 1 FOLLOWING AND 50 FOLLOWING
-                ) / 50 as sma50,
-                sum(CAST(close AS DECIMAL)) OVER (
-                    PARTITION BY market_id
-                    ORDER BY bucket DESC ROWS BETWEEN 1 FOLLOWING AND 100 FOLLOWING
-                ) / 100 as sma100,
-                sum(CAST(close AS DECIMAL)) OVER (
-                    PARTITION BY market_id
-                    ORDER BY bucket DESC ROWS BETWEEN 1 FOLLOWING AND 200 FOLLOWING
-                ) / 200 as sma200
-            FROM candles_1d
-            WHERE bucket > (ts - 86400000000000 * 2);
-    END;
-    $$ LANGUAGE plpgsql;
-    `,
-    preAggSMAs: `CREATE FUNCTION pre_agg_sma() RETURNS trigger AS $$
-        BEGIN
-            IF NEW.is_first_in_bucket = 1 THEN
-                INSERT INTO sma_5m
-                    SELECT * FROM refresh_sma_5m(NEW.synth_timestamp);
-            ELSIF NEW.is_first_in_bucket = 2 THEN
-                INSERT INTO sma_5m
-                    SELECT * FROM refresh_sma_5m(NEW.synth_timestamp);
-                INSERT INTO sma_1h
-                    SELECT * FROM refresh_sma_1h(NEW.synth_timestamp);
-            ELSIF NEW.is_first_in_bucket = 3 THEN
-                INSERT INTO sma_5m
-                    SELECT * FROM refresh_sma_5m(NEW.synth_timestamp);
-                INSERT INTO sma_1h
-                    SELECT * FROM refresh_sma_1h(NEW.synth_timestamp);
-                INSERT INTO sma_1d
-                    SELECT * FROM refresh_sma_1d(NEW.synth_timestamp);
-            END IF;
-            RETURN NEW;
-        END;
-        $$ LANGUAGE plpgsql;
-    `,
-    preAggSMATrigger: `CREATE TRIGGER pre_agg_sma
-        BEFORE INSERT ON trades
-        FOR EACH ROW
-        EXECUTE PROCEDURE pre_agg_sma();
-    `
-};
-
-
-
-
 const createContAggs = async (client, types) => {
 
     const queryQueue = [];
@@ -1008,33 +847,33 @@ const start = () => {
             });
 
             // List tables
-            pgClient.query('SELECT * FROM information_schema.tables;', (err, res) => {
-                if (!err) {
-                    console.log("Listing tables...");
-                    // console.log(res);
-                    console.log(res.rows.length);
-                    // Create a trades table.
-                    pgClient.query(createTablesQuery, (err, res) => {
-                        if (!err) {
-                            console.log(res);
-                            // Set integer time.
-                            pgClient.query(setIntegerNowFunc, (err, res) => {
-                                if(!err) {
-                                    console.log(res);
-                                    createContAggs(pgPool, ["candles", "takerData", "marketData", "partyData", "infraFeesByMarket"]);
-                                } else {
-                                    console.log(err);
-                                    createContAggs(pgPool, ["candles", "takerData", "marketData", "partyData", "infraFeesByMarket"]);
-                                }
-                            });
-                        } else {
-                            console.log(err);
-                        }
-                    });
-                } else {
-                    console.log(err);
-                }
-            });
+            // pgClient.query('SELECT * FROM information_schema.tables;', (err, res) => {
+            //     if (!err) {
+            //         console.log("Listing tables...");
+            //         // console.log(res);
+            //         console.log(res.rows.length);
+            //         // Create a trades table.
+            //         pgClient.query(createTablesQuery, (err, res) => {
+            //             if (!err) {
+            //                 console.log(res);
+            //                 // Set integer time.
+            //                 pgClient.query(setIntegerNowFunc, (err, res) => {
+            //                     if(!err) {
+            //                         console.log(res);
+            //                         createContAggs(pgPool, ["candles", "takerData", "marketData", "partyData", "infraFeesByMarket"]);
+            //                     } else {
+            //                         console.log(err);
+            //                         createContAggs(pgPool, ["candles", "takerData", "marketData", "partyData", "infraFeesByMarket"]);
+            //                     }
+            //                 });
+            //             } else {
+            //                 console.log(err);
+            //             }
+            //         });
+            //     } else {
+            //         console.log(err);
+            //     }
+            // });
         } else {
             console.log(err);
         }
@@ -1056,44 +895,81 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
     kafkaConsumer.on("message", (msg) => {
         // console.log("New message");
         const evt = JSON.parse(msg.value);
-        if (evt.Event.Trade) {
-            // console.log(evt);
-            const trade = evt.Event.Trade;
-            // console.log(mostRecentBeginBlock);
-            // console.log(trade);
 
-            // Extract evt index in block from index
-            const id = evt.id;
-            const idParts = id.split('-');
-            // console.log(idParts);
-            // console.log("Event index: ", idParts[1]);
+        // Logic for synchronous block inserts.
+        if (!replaying) {
+            if (evt.Event.BeginBlock) {
+                // console.log(evt);
+                busEventBlockMap[evt.Event.BeginBlock.height] = [];
+            }
+
+            if (evt.Event.Trade) {
+                
+                const trade = evt.Event.Trade;
+                const idParts = evt.id.split('-');
+
+                // Create synthetic timestamp for each trade
+                const synthTimestamp = BigInt(trade.timestamp) + BigInt(idParts[1]);
+                trade["synth_timestamp"] = synthTimestamp;
+    
+                if (!(trade.aggressor == 1 || trade.aggressor == 2)) {
+                    trade.aggressor = 0;
+                }
+    
+                if (!trade.aggressor && !(trade.aggressor === 0)) {
+                    console.log("Aggressor not found...");
+                    console.log(trade);
+                }
+
+                // convert enums to their respective text values
+                trade.type = tradeTypeMappings[trade.type];
+                trade.aggressor = tradeAggressorMappings[trade.aggressor];
+                
+                busEventBlockMap[evt.id.split('-')[0]].push(formatTrade(trade));
+            };
+
+            if (evt.Event.EndBlock) {
+                
+                const height = evt.Event.EndBlock.height;
+                if (busEventBlockMap[height].length) {
+                    blockPersistTrades(height, busEventBlockMap[height]);
+                }
+
+            };
+
+        } else {
+            if (evt.Event.Trade) {
             
-            // Create synthetic timestamp for each trade
-            const synthTimestamp = BigInt(trade.timestamp) + BigInt(idParts[1]);
-            // console.log("Timestamp: ", trade.timestamp);
-            // console.log("Synthetic Timestamp: ", synthTimestamp);
-            trade["synth_timestamp"] = synthTimestamp;
-
-            if (!(trade.aggressor == 1 || trade.aggressor == 2)) {
-                trade.aggressor = 0;
+                const trade = evt.Event.Trade;
+                
+                // Extract evt index in block from index
+                const id = evt.id;
+                const idParts = id.split('-');
+                // console.log(idParts);
+                
+                // Create synthetic timestamp for each trade
+                const synthTimestamp = BigInt(trade.timestamp) + BigInt(idParts[1]);
+                trade["synth_timestamp"] = synthTimestamp;
+    
+                if (!(trade.aggressor == 1 || trade.aggressor == 2)) {
+                    trade.aggressor = 0;
+                }
+    
+                // convert enum fields to their respective text values
+                trade.type = tradeTypeMappings[trade.type];
+                trade.aggressor = tradeAggressorMappings[trade.aggressor];
+    
+                if (!trade.aggressor && !(trade.aggressor === 0)) {
+                    console.log("Aggressor not found...");
+                    console.log(trade);
+                }
+    
+                formattedBatch.push(formatTrade(trade));
+                if (formattedBatch.length >= 500) {
+                    batchPersistTrades(formattedBatch.slice());
+                    formattedBatch.length = 0;
+                }
             }
-
-            // convert enum fields to their respective text values
-            trade.type = tradeTypeMappings[trade.type];
-            trade.aggressor = tradeAggressorMappings[trade.aggressor];
-
-            if (!trade.aggressor && !(trade.aggressor === 0)) {
-                console.log(trade);
-            }
-
-            formattedBatch.push(formatTrade(trade));
-            if (formattedBatch.length >= 300) {
-                batchPersistTrades(formattedBatch.slice());
-                formattedBatch.length = 0;
-            }
-        }
-        if (evt.Event.BeginBlock) {
-            // console.log(evt);
         }
     });
     kafkaConsumer.addTopics([{ topic: 'trades', offset: 0 }], () => console.log("topic added"));
@@ -1180,6 +1056,48 @@ const formatTrade = (trade) => {
     ];
 
     return formatted;
+};
+
+const blockPersistTrades = (height, rows) => {
+
+    const startTime = performance.now();
+
+    const typeCastings = [
+        '::text', '::text', '::bigint', '::bigint', '::text', '::text', '::text', '::text',
+        '::text', '::bigint', '::bigint', '::text', '::numeric(40)', '::numeric(40)', '::numeric(40)',
+        '::numeric(40)', '::numeric(40)', '::numeric(40)', '::integer'
+    ];
+
+    let template = `(`;
+    for (let elem of rows[0]) {
+        template = template + format(`%L%%s, `, elem);
+    }
+
+    let formatted;
+    if (rows.length == 1) {
+        formatted = format(fInsertTrades, format(template.slice(0,-2)+')', ...typeCastings));
+    } else {
+        formatted = format(fInsertTrades, format(template.slice(0,-2)+')', ...typeCastings)+', '+format('%L', rows.slice(1)))
+    }
+
+    pgPool.query(formatted, [], (err, res) => { // format(fInsertTrades, rows)
+        if (!err) {
+            
+            console.log(`Block inserts successful for height ${height}`);
+            console.log(`Time elapsed: ${performance.now() - startTime}ms`);
+            blockEmitter.emit('SuccessfulInserts', height);
+
+        } else {
+            console.log(`Error performing inserts for height ${height}`);
+            console.log(err);
+            console.log(`Error Code: `, err.code);
+            if (err.code == '23505') { // Duplicate key violates unique constraint
+                // Retry inserts individually
+
+            }
+        }
+    });
+
 };
 
 setTimeout(start, 28000);

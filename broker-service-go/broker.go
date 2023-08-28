@@ -277,6 +277,14 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 					})
 					batchBytesCount += len(jsonEvtBytes)
 				}
+			} else if evtType.String() == "BUS_EVENT_TYPE_END_BLOCK" {
+				for topic := range topicSet {
+					batch = append(batch, kafka.Message{
+						Topic: topic,
+						Value: jsonEvtBytes,
+					})
+					batchBytesCount += len(jsonEvtBytes)
+				}
 			} else {
 				if topic, ok := busEventTopicMap[evtType.String()]; ok {
 					batch = append(batch, kafka.Message{ // Batch messages
@@ -284,7 +292,7 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 						Value: jsonEvtBytes, // Add JSON bytes to value field of kafka.Message.
 					})
 					batchBytesCount += len(jsonEvtBytes)
-					if len(jsonEvtBytes) >= 5000 {
+					if len(jsonEvtBytes) >= 7500 {
 						fmt.Println(string(jsonEvtBytes))
 					}
 				} else {
