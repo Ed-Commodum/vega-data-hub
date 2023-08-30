@@ -40,6 +40,7 @@ console.log(kafkaBrokers);
 console.log(process.env);
 
 let kafkaConsumer;
+let kafkaProducer;
 
 const formattedBatch = [];
 const flushFormattedBatchInterval = setInterval(() => {
@@ -60,7 +61,7 @@ const bucketIndices = {
     interval_1d: 0n
 };
 
-const replaying = false;
+const replaying = true;
 const busEventBlockMap = {};
 const blockEmitter = new EventEmitter();
 
@@ -70,9 +71,19 @@ blockEmitter.on('noTrades', (height) => {
     
     // Fire off event to notify API service that the block has no trades.
 
+    const payload = { topic: 'persistence_status', message: [`{ topic: "trades", height: ${height}, status: "success" }`] };
+
+    kafkaProducer.send([payload], (err, result) => {
+        if (!err) {
+            console.log(result);
+        } else {
+            console.log(err);
+        }
+    });
+
 })
 
-blockEmitter.on('SuccessfulInserts', (height) => {
+blockEmitter.on('successfulInserts', (height) => {
 
     console.log(`Successfully inserted block with height: ${height}`);
 
@@ -80,18 +91,36 @@ blockEmitter.on('SuccessfulInserts', (height) => {
     // Should the event be launched into Kafka for it to handle or would it be wise to build
     // and API/RPC on the websocket API service that this service can call directly?
 
+    const payload = { topic: 'persistence_status', message: [`{ topic: "trades", height: ${height}, status: "success" }`] };
+
+    kafkaProducer.send([payload], (err, result) => {
+        if (!err) {
+            console.log(result);
+        } else {
+            console.log(err);
+        }
+    });
+
 });
 
-blockEmitter.on('FailedInserts', (height) => {
+blockEmitter.on('failedInserts', (height) => {
     
     console.log(`Failed to insert trades at height: ${height}`);
-    process.exit(0);
 
     // What should the workflow be for this?
     //
     //  - Retry inserts
     //  - Send event to websocket API to notify of failure.
 
+    const payload = { topic: 'persistence_status', message: [`{ topic: "trades", height: ${height}, status: "failure" }`] };
+
+    kafkaProducer.send([payload], (err, result) => {
+        if (!err) {
+            console.log(result);
+        } else {
+            console.log(err);
+        }
+    });
 
 });
 
@@ -812,8 +841,9 @@ const start = () => {
                     if (topics.includes("trades")) {
 
                         console.log("Topic already exists.");
-                        // Set up consumer
-                        setConsumer(kafkaConsumer);
+                        // Set up producer and consumer
+                        setProducer(kafkaClient, kafkaProducer);
+                        setConsumer(kafkaClient, kafkaConsumer);
 
                     } else {
 
@@ -831,7 +861,8 @@ const start = () => {
                             if (!err) {
 
                                 console.log("Topics created successfully");
-                                // Set up consumer
+                                // Set up producer and consumer
+                                setProducer(kafkaClient, kafkaProducer);
                                 setConsumer(kafkaClient, kafkaConsumer);
 
                             } else {
@@ -881,16 +912,13 @@ const start = () => {
 
 };
 
-// let mostRecentBeginBlock;
+const setProducer = (kafkaClient, kafkaProducer) => {
+
+    kafkaProducer = new kafka.Producer(kafkaClient);
+
+};
 
 const setConsumer = (kafkaClient, kafkaConsumer) => {
-    // kafkaConsumerBlocks = new kafka.Consumer(kafkaClient, [{ topic: "blocks" }]);
-    // kafkaConsumerBlocks.on("message", (msg) => {
-    //     console.log("New Block Event");
-    //     const evt = JSON.parse(msg.value);
-    //     console.log(evt);
-    //     mostRecentBeginBlock = evt.beginBlock;
-    // });
     kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "trades-group-27" });
     kafkaConsumer.on("message", (msg) => {
         // console.log("New message");
@@ -932,8 +960,9 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
                 
                 const height = evt.Event.EndBlock.height;
                 if (busEventBlockMap[height].length) {
-                    blockPersistTrades(height, busEventBlockMap[height]);
+                    blockPersistTrades(height, busEventBlockMap[height].slice());
                 }
+                delete busEventBlockMap[height-1000];
 
             };
 
@@ -1085,7 +1114,7 @@ const blockPersistTrades = (height, rows) => {
             
             console.log(`Block inserts successful for height ${height}`);
             console.log(`Time elapsed: ${performance.now() - startTime}ms`);
-            blockEmitter.emit('SuccessfulInserts', height);
+            blockEmitter.emit('successfulInserts', height);
 
         } else {
             console.log(`Error performing inserts for height ${height}`);
@@ -1095,6 +1124,7 @@ const blockPersistTrades = (height, rows) => {
                 // Retry inserts individually
 
             }
+            blockEmitter.emit('failedInserts', height);
         }
     });
 

@@ -25,3 +25,7 @@ app.listen(PORT, async () => {
 
     swaggerDocs(app, PORT);
 });
+
+const { main } = require('./websocket-api/index.js');
+
+main();
