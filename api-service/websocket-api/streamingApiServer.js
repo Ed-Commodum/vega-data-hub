@@ -6,7 +6,7 @@ const { Kafka } = require('kafkajs');
 const { EventEmitter } = require('node:events');
 const { streamQueries } = require('./streamQueries');
 const { RingBuffer, RecentBlocks } = require('../../utils/ringBuffers.js')
-
+const { payloadParsers } = require('./streamQueries.js');
 
 
 class Stream {
@@ -36,7 +36,7 @@ class Stream {
     }
 
     getQuery(payload) {
-        return parsers[payload.type](payload);
+        return payloadParsers[payload.type](payload);
     }
 
     update() {
@@ -97,11 +97,15 @@ class StreamingAPIServer {
         wsServer.on('message', (msg) => {
             // Parse the payloads to determine the requested streams.
 
+
             // Create the stream if it does not already exists.
+
 
             // Start the stream if it is not already active.
 
+
             // Assign the requested streams to the client.
+
 
         });
 
@@ -143,7 +147,7 @@ class StreamingAPIServer {
         this.controller.on('beginBlock', (height) => {
 
             // Add new height to store
-            this.store.push({ height: height, pending: [...this.topics], success: [], failure: [] });
+            this.store.push({ height: height, pending: [...this.topics], success: [], failure: [], sent: false });
 
             // Create timeout to send data to subscribers if not all confirmations received in time.
             this.sendTimeout = setTimeout(() => this.sendHeight(height), 300);
@@ -180,6 +184,10 @@ class StreamingAPIServer {
     }
 
     sendHeight(height) {
+
+        if (this.store.get(height).sent) {
+            return;
+        }
 
         const failedTopics = this.store.get(height).failure;
         

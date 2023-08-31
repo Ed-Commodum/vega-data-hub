@@ -1,5 +1,4 @@
 const enums = {
-
     account: {
         type: {
             // Default value
@@ -314,31 +313,34 @@ const enums = {
     },
 
     timeInterval: {
-        "INTERVAL_5M": 0,
-        "INTERVAL_15M": 1,
-        "INTERVAL_30M": 2,
-        "INTERVAL_1H": 3,
-        "INTERVAL_2H": 4,
-        "INTERVAL_4H": 5,
-        "INTERVAL_6H": 6,
-        "INTERVAL_12H": 7,
-        "INTERVAL_1D": 8,
-        "INTERVAL_3D": 9,
-        "INTERVAL_1W": 10,
-        "INTERVAL_1MO": 11,
+        INTERVAL_5M: 66,
+        "INTERVAL_1M": 0,
+        "INTERVAL_5M": 1,
+        "INTERVAL_15M": 2,
+        "INTERVAL_30M": 3,
+        "INTERVAL_1H": 4,
+        "INTERVAL_2H": 5,
+        "INTERVAL_4H": 6,
+        "INTERVAL_6H": 7,
+        "INTERVAL_12H": 8,
+        "INTERVAL_1D": 9,
+        "INTERVAL_3D": 10,
+        "INTERVAL_1W": 11,
+        "INTERVAL_1MO": 12,
 
-        "INTERVAL_ROLLING_5M": 100,
-        "INTERVAL_ROLLING_15M": 101,
-        "INTERVAL_ROLLING_30M": 102,
-        "INTERVAL_ROLLING_1H": 103,
-        "INTERVAL_ROLLING_2H": 104,
-        "INTERVAL_ROLLING_4H": 105,
-        "INTERVAL_ROLLING_6H": 106,
-        "INTERVAL_ROLLING_12H": 107,
-        "INTERVAL_ROLLING_1D": 108,
-        "INTERVAL_ROLLING_3D": 109,
-        "INTERVAL_ROLLING_1W": 110,
-        "INTERVAL_ROLLING_1MO": 111
+        "INTERVAL_ROLLING_1M": 100,
+        "INTERVAL_ROLLING_5M": 101,
+        "INTERVAL_ROLLING_15M": 102,
+        "INTERVAL_ROLLING_30M": 103,
+        "INTERVAL_ROLLING_1H": 104,
+        "INTERVAL_ROLLING_2H": 105,
+        "INTERVAL_ROLLING_4H": 106,
+        "INTERVAL_ROLLING_6H": 107,
+        "INTERVAL_ROLLING_12H": 108,
+        "INTERVAL_ROLLING_1D": 109,
+        "INTERVAL_ROLLING_3D": 110,
+        "INTERVAL_ROLLING_1W": 111,
+        "INTERVAL_ROLLING_1MO": 112
     }
 
 };
@@ -510,6 +512,7 @@ const typeMappings = {
 
     timeInterval: {
         nanos: {
+            [enums.timeInterval.INTERVAL_1M]: '60000000000',
             [enums.timeInterval.INTERVAL_5M]: '300000000000',
             [enums.timeInterval.INTERVAL_15M]: '900000000000',
             [enums.timeInterval.INTERVAL_30M]: '1800000000000',
@@ -522,6 +525,7 @@ const typeMappings = {
             [enums.timeInterval.INTERVAL_3D]: '259200000000000',
             [enums.timeInterval.INTERVAL_1W]: '604800000000000',
             [enums.timeInterval.INTERVAL_1MO]: '2629756800000000',
+            [enums.timeInterval.INTERVAL_ROLLING_1M]: '60000000000',
             [enums.timeInterval.INTERVAL_ROLLING_5M]: '300000000000',
             [enums.timeInterval.INTERVAL_ROLLING_15M]: '900000000000',
             [enums.timeInterval.INTERVAL_ROLLING_30M]: '1800000000000',
@@ -536,6 +540,7 @@ const typeMappings = {
             [enums.timeInterval.INTERVAL_ROLLING_1MO]: '2629756800000000',
         },
         tableSuffix: {
+            [enums.timeInterval.INTERVAL_1M]: '_1m',
             [enums.timeInterval.INTERVAL_5M]: '_5m',
             [enums.timeInterval.INTERVAL_15M]: '_15m',
             [enums.timeInterval.INTERVAL_30M]: '_30m',
@@ -548,6 +553,7 @@ const typeMappings = {
             [enums.timeInterval.INTERVAL_3D]: '_3d',
             [enums.timeInterval.INTERVAL_1W]: '_1w',
             [enums.timeInterval.INTERVAL_1MO]: '_1mo',
+            [enums.timeInterval.INTERVAL_ROLLING_1M]: '_1m',
             [enums.timeInterval.INTERVAL_ROLLING_5M]: '_5m',
             [enums.timeInterval.INTERVAL_ROLLING_15M]: '_15m',
             [enums.timeInterval.INTERVAL_ROLLING_30M]: '_30m',
@@ -560,6 +566,34 @@ const typeMappings = {
             [enums.timeInterval.INTERVAL_ROLLING_3D]: '_3d',
             [enums.timeInterval.INTERVAL_ROLLING_1W]: '_1w',
             [enums.timeInterval.INTERVAL_ROLLING_1MO]: '_1mo',
+        },
+        queryTableSuffix: {
+            [enums.timeInterval.INTERVAL_1M]: '_1m',
+            [enums.timeInterval.INTERVAL_5M]: '_5m',
+            [enums.timeInterval.INTERVAL_15M]: '_15m',
+            [enums.timeInterval.INTERVAL_30M]: '_30m',
+            [enums.timeInterval.INTERVAL_1H]: '_1h',
+            [enums.timeInterval.INTERVAL_2H]: '_2h',
+            [enums.timeInterval.INTERVAL_4H]: '_4h',
+            [enums.timeInterval.INTERVAL_6H]: '_6h',
+            [enums.timeInterval.INTERVAL_12H]: '_12h',
+            [enums.timeInterval.INTERVAL_1D]: '_1d',
+            [enums.timeInterval.INTERVAL_3D]: '_3d',
+            [enums.timeInterval.INTERVAL_1W]: '_1w',
+            [enums.timeInterval.INTERVAL_1MO]: '_1mo',
+            [enums.timeInterval.INTERVAL_ROLLING_1M]: '',
+            [enums.timeInterval.INTERVAL_ROLLING_5M]: '',
+            [enums.timeInterval.INTERVAL_ROLLING_15M]: '_5m',
+            [enums.timeInterval.INTERVAL_ROLLING_30M]: '_5m',
+            [enums.timeInterval.INTERVAL_ROLLING_1H]: '_5m',
+            [enums.timeInterval.INTERVAL_ROLLING_2H]: '_5m',
+            [enums.timeInterval.INTERVAL_ROLLING_4H]: '_5m',
+            [enums.timeInterval.INTERVAL_ROLLING_6H]: '_5m',
+            [enums.timeInterval.INTERVAL_ROLLING_12H]: '_1h',
+            [enums.timeInterval.INTERVAL_ROLLING_1D]: '_1h',
+            [enums.timeInterval.INTERVAL_ROLLING_3D]: '_1h',
+            [enums.timeInterval.INTERVAL_ROLLING_1W]: '_1h',
+            [enums.timeInterval.INTERVAL_ROLLING_1MO]: '_1d',
         }
     }
 
