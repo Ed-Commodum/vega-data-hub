@@ -1,6 +1,28 @@
 const { enums, typeMappings } = reuqire('../../types/enums.js'); 
 
 const payloadParsers = {
+    volume: {
+        total: {
+
+        },
+        historical: {
+
+        },
+        rolling: {
+
+        }
+    },
+    assetVolume: {
+        total: {
+
+        },
+        historical: {
+
+        },
+        rolling: {
+
+        }
+    },
     volume: (payload) => {
         const marketId = payload.marketId; // Mandatory
         const partyId = payload.partyId; // Optional
@@ -42,13 +64,13 @@ const payloadParsers = {
 
         switch (true) {
             case (assetId != undefined): {
-
                 const query = `
                 WITH vols AS (
                     SELECT
                         market_id AS market_id,
                         sum(x.volume) AS volume,
-                        max(x.timestamp) AS timestamp
+                        max(x.timestamp) AS timestamp,
+                        y.future_quote_name AS quote_name
                     FROM market_data_5m x LEFT JOIN markets y ON x.market_id = y.id
                     WHERE y.future_settlement_asset = 'bf1e88d19db4b3ca0d1d5bdb73718a01686b18cf731ca26adedf3c8b83802bba'
                     GROUP BY market_id
@@ -60,15 +82,18 @@ const payloadParsers = {
                     FROM markets
                     GROUP BY id
                 ) SELECT
-                    sum(volume / 10^(d.decimal_places + d.position_decimal_places)) AS volume_usd,
                     max(timestamp) as timestamp
+                    sum(volume) AS volume,
+                    quote_name,
+                    sum(volume / 10^(d.decimal_places + d.position_decimal_places)) AS volume_quote
                 FROM vols LEFT JOIN d on vols.market_id = d.id;
                 `;
+
+                const params = [ assetId ];
 
                 return [ query, params ]
             }
             case (assetId = undefined): {
-
                 const query = `
                 WITH vols AS (
                     SELECT
@@ -87,9 +112,10 @@ const payloadParsers = {
                     FROM markets
                     GROUP BY id
                 ) SELECT
+                    max(timestamp) AS timestamp,
+                    sum(volume) AS volume,
                     vols.quote_name AS quote_name,
-                    sum(volume / 10^(d.decimal_places + d.position_decimal_places)) AS volume_quote,
-                    max(timestamp) as timestamp
+                    sum(volume / 10^(d.decimal_places + d.position_decimal_places)) AS volume_quote
                 FROM vols LEFT JOIN d on vols.market_id = d.id
                 GROUP BY vols.settlement_asset, vols.quote_name;
                 `;
@@ -110,7 +136,7 @@ const payloadParsers = {
         // Package this switch statement into it's own function:
         //  - Accepts the raw data table, the matViewTable prefix, and the time interval.
         //      -- Alternatively this could take the queryType and the interval.
-        //  - Returns the interalSize and the string with the table name for the query.
+        //  - Returns the intervalSize and the string with the table name for the query.
         //      -- In the case of using queryType as an argument, the return values will be
         //         specific to the queryType that is provided.
         let intervalSize, table;
@@ -181,46 +207,220 @@ const payloadParsers = {
 
         switch (true) {
             case (marketId != undefined): {
-
-                const query = `
-                SELECT
-                    market_id,
-                    max(timestamp) AS timestamp,
-                    sum(volume) AS volume
-                FROM market_data_1h
-                WHERE bucket::bigint > ((select timestamp from trades order by synth_timestamp desc limit 1) - 86400000000000::bigint)
-                AND market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
-                GROUP BY market_id;
-
-                WITH main AS (
+                const fQuery = `
+                WITH ts AS (
                     SELECT
-                        market_id,
-                        max(timestamp) AS timestamp,
+                        timestamp
+                    FROM trades
+                    ORDER BY synth_timestamp DESC
+                    LIMIT 1
+                ), main AS (
+                    SELECT
+                        x.market_id,
+                        max(x.timestamp) AS timestamp,
                         sum(volume) AS volume
-                    FROM market_data_1h
-                    WHERE bucket::bigint > ((select timestamp from trades order by synth_timestamp desc limit 1) - 86400000000000::bigint)
+                    FROM market_data_1h x, ts
+                    WHERE bucket::bigint > (ts.timestamp - $2::bigint)
+                    AND market_id = $1
+                    GROUP BY market_id
+                ), missed AS (
+                    SELECT 
+                        trades.market_id,
+                        sum(size * price) AS volume
+                    FROM trades, ts 
+                    WHERE trades.timestamp < (select bucket from market_data_1h where bucket > ts.timestamp - $2::bigint ORDER BY bucket ASC LIMIT 1)
+                    AND trades.timestamp >= (ts.timestamp - $2::bigint)
+                    AND market_id = $1
+                    GROUP BY trades.market_id
+                ), d AS (
+                    SELECT
+                        id,
+                        decimal_places,
+                        position_decimal_places
+                    FROM markets
+                    WHERE id = $1
+                ), market AS (
+                    SELECT
+                        id,
+                        future_settlement_asset AS settlement_asset,
+                        future_quote_name AS quote_name
+                    FROM markets
+                    WHERE id = $1
+                )
+                SELECT
+                    main.market_id,main.timestamp,
+                    main.volume + CASE WHEN missed.volume IS NOT NULL THEN missed.volume ELSE 0 END AS volume,
+                    market.quote_name,
+                    (main.volume + CASE WHEN missed.volume IS NOT NULL THEN missed.volume ELSE 0 END) / 10^(d.decimal_places + d.position_decimal_places) AS volume_quote
+                FROM main LEFT JOIN missed ON main.market_id = missed.market_id
+                LEFT JOIN market ON main.market_id = market.id
+                LEFT JOIN d ON main.market_id = d.id, ts;
+                `;
+
+                /* `
+                WITH ts AS (
+                    SELECT
+                        timestamp
+                    FROM trades
+                    ORDER BY synth_timestamp DESC
+                    LIMIT 1
+                ), main AS (
+                    SELECT
+                        x.market_id,
+                        max(x.timestamp) AS timestamp,
+                        sum(volume) AS volume
+                    FROM market_data_1h x, ts
+                    WHERE bucket::bigint > (ts.timestamp - 86400000000000::bigint)
                     AND market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
                     GROUP BY market_id
                 ), missed AS (
-                    
+                    SELECT 
+                        trades.market_id,
+                        sum(size * price) AS volume
+                    FROM trades, ts 
+                    WHERE trades.timestamp < (select bucket from market_data_1h where bucket > ts.timestamp - 86400000000000::bigint ORDER BY bucket ASC LIMIT 1)
+                    AND trades.timestamp >= (ts.timestamp - 86400000000000::bigint)
+                    AND market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
+                    GROUP BY trades.market_id
+                ), d AS (
+                    SELECT
+                        id,
+                        decimal_places,
+                        position_decimal_places
+                    FROM markets
+                    WHERE id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
+                ), market AS (
+                    SELECT
+                        id,
+                        future_settlement_asset AS settlement_asset,
+                        future_quote_name AS quote_name
+                    FROM markets
+                    WHERE id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
                 )
+                SELECT
+                    main.market_id,main.timestamp,
+                    main.volume + CASE WHEN missed.volume IS NOT NULL THEN missed.volume ELSE 0 END AS volume,
+                    market.quote_name,
+                    (main.volume + CASE WHEN missed.volume IS NOT NULL THEN missed.volume ELSE 0 END) / 10^(d.decimal_places + d.position_decimal_places) AS volume_quote
+                FROM main LEFT JOIN missed ON main.market_id = missed.market_id
+                LEFT JOIN market ON main.market_id = market.id
+                LEFT JOIN d ON main.market_id = d.id, ts;
+                ` */
 
-
-                `;
-
+                const query = format(fQuery, table);
 
                 const params = [ marketId, intervalSize ];
 
                 return [ query, params ];
             }
             case (marketId == undefined): {
+                const fQuery = `
+                WITH ts AS (
+                    SELECT
+                        timestamp
+                    FROM trades
+                    ORDER BY synth_timestamp DESC
+                    LIMIT 1
+                ), main AS (
+                    SELECT
+                        x.market_id,
+                        max(x.timestamp) AS timestamp,
+                        sum(volume) AS volume
+                    FROM %I x, ts
+                    WHERE bucket::bigint > (ts.timestamp - $1::bigint)
+                    GROUP BY market_id
+                ), missed AS (
+                    SELECT 
+                        trades.market_id,
+                        sum(size * price) AS volume
+                    FROM trades, ts 
+                    WHERE trades.timestamp < (select bucket from %I where bucket > ts.timestamp - $1::bigint ORDER BY bucket ASC LIMIT 1)
+                    AND trades.timestamp >= (ts.timestamp - $1::bigint)
+                    GROUP BY trades.market_id
+                ), d AS (
+                    SELECT
+                        id,
+                        decimal_places,
+                        position_decimal_places
+                    FROM markets
+                    GROUP BY id
+                ), markets AS (
+                    SELECT
+                        id,
+                        future_settlement_asset AS settlement_asset,
+                        future_quote_name AS quote_name
+                    FROM markets
+                    GROUP BY id
+                )
+                SELECT
+                    main.market_id,
+                    max(main.timestamp) AS timestamp,
+                    sum(main.volume + CASE WHEN missed.volume IS NOT NULL THEN missed.volume ELSE 0 END) AS volume,
+                    markets.quote_name,
+                    sum((main.volume + CASE WHEN missed.volume IS NOT NULL THEN missed.volume ELSE 0 END) / 10^(d.decimal_places + d.position_decimal_places)) AS volume_quote
+                FROM main LEFT JOIN missed on main.market_id = missed.market_id 
+                LEFT JOIN markets ON main.market_id = markets.id
+                LEFT JOIN d ON main.market_id = d.id, ts
+                GROUP BY main.market_id, markets.quote_name;
+                `;
 
-                break;
+                /* `
+                WITH ts AS (
+                    SELECT
+                        timestamp
+                    FROM trades
+                    ORDER BY synth_timestamp DESC
+                    LIMIT 1
+                ), main AS (
+                    SELECT
+                        x.market_id,
+                        max(x.timestamp) AS timestamp,
+                        sum(volume) AS volume
+                    FROM market_data_1h x, ts
+                    WHERE bucket::bigint > (ts.timestamp - 86400000000000::bigint)
+                    GROUP BY market_id
+                ), missed AS (
+                    SELECT 
+                        trades.market_id,
+                        sum(size * price) AS volume
+                    FROM trades, ts 
+                    WHERE trades.timestamp < (select bucket from market_data_1h where bucket > ts.timestamp - 86400000000000::bigint ORDER BY bucket ASC LIMIT 1)
+                    AND trades.timestamp >= (ts.timestamp - 86400000000000::bigint)
+                    GROUP BY trades.market_id
+                ), d AS (
+                    SELECT
+                        id,
+                        decimal_places,
+                        position_decimal_places
+                    FROM markets
+                    GROUP BY id
+                ), markets AS (
+                    SELECT
+                        id,
+                        future_settlement_asset AS settlement_asset,
+                        future_quote_name AS quote_name
+                    FROM markets
+                    GROUP BY id
+                )
+                SELECT
+                    main.market_id,
+                    max(main.timestamp) AS timestamp,
+                    sum(main.volume + CASE WHEN missed.volume IS NOT NULL THEN missed.volume ELSE 0 END) AS volume,
+                    markets.quote_name,
+                    sum((main.volume + CASE WHEN missed.volume IS NOT NULL THEN missed.volume ELSE 0 END) / 10^(d.decimal_places + d.position_decimal_places)) AS volume_quote
+                FROM main LEFT JOIN missed on main.market_id = missed.market_id 
+                LEFT JOIN markets ON main.market_id = markets.id
+                LEFT JOIN d ON main.market_id = d.id, ts
+                GROUP BY main.market_id, markets.quote_name;
+                ` */
+
+                const query = format(fQuery, table);
+
+                const params = [ intervalSize ];
+
+                return [ query, params];
             }
         }
-
-
-
 
     },
     historicalVolume: null,
