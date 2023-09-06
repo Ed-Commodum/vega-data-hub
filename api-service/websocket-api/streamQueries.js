@@ -461,6 +461,7 @@ const asyncQuery = (query, values, pgPool) => {
                     resolve(result.rows);
                 } else {
                     console.log(err);
+                    resolve(null);
                 };
             });
 
@@ -472,6 +473,7 @@ const asyncQuery = (query, values, pgPool) => {
                     resolve(result.rows);
                 } else {
                     console.log(err);
+                    resolve(null);
                 };
             });
 

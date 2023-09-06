@@ -6,24 +6,27 @@ const { Kafka } = require('kafkajs');
 const { EventEmitter } = require('node:events');
 const { streamQueries } = require('./streamQueries');
 const { RingBuffer, RecentBlocks } = require('../../utils/ringBuffers.js')
-const { payloadParsers } = require('./streamQueries.js');
+const { payloadParsers, asyncQuery } = require('./streamQueries.js');
+const crypto = require('crypto');
 
 
 class Stream {
     constructor(payload) {
         this.payload = payload;
-        this.streamId = this.getStreamId(payload);
+        this.streamId = this.buildStreamId(payload);
         [ this.query, this.queryParams ] = this.getQuery(payload);
         this.active = false;
+        this.updating = false;
         this.subscribers = [];
+        this.data = {};
         
     }
 
-    getStreamId(payload) {
+    static getStreamId(payload) {
 
-        const id = '';
+        const str = '';
 
-        const properties = [ 'type', 'marketId', 'partyId', 'assetId', 'interval', 'limit', 'windowSize', 'confidenceInterval' ];
+        const properties = [ 'type', 'mode', 'marketId', 'partyId', 'assetId', 'interval', 'limit', 'windowSize', 'confidenceInterval' ];
 
         for (let prop of properties) {
             const value = payload[prop];
@@ -32,15 +35,50 @@ class Stream {
             }
         }
 
-        return id;
+        const hash = crypto.createHash('sha256')
+            .update(str)
+            .digest('hex');
+
+        console.log(hash);
+
+        return hash;
+    }
+
+    buildStreamId(payload) {
+
+        const str = '';
+
+        const properties = [ 'type', 'mode', 'marketId', 'partyId', 'assetId', 'interval', 'limit', 'windowSize', 'confidenceInterval' ];
+
+        for (let prop of properties) {
+            const value = payload[prop];
+            if (value != undefined) {
+                id = id + String(value);
+            }
+        }
+
+        const hash = crypto.createHash('sha256')
+            .update(str)
+            .digest('hex');
+
+        console.log(hash);
+
+        return hash;
     }
 
     getQuery(payload) {
         return payloadParsers[payload.type](payload);
     }
 
-    update() {
+    async update(pgPool) {
 
+        this.updating = true;
+        const res = await asyncQuery(this.query, ...this.queryParams, pgPool);
+        this.updating = false;
+
+        console.log(`Query res for stream ${this.streamId}: `);
+        console.log(res);
+        
     }
 
 }
@@ -57,6 +95,12 @@ class StreamingAPIServer {
 
         this.controller = new EventEmitter();
         this.setControllerHandlers();
+
+        this.streamIds = [];
+        this.activeStreamIds = [];
+        this.streams = {};
+        this.wsClients = [];
+        this.subscribers = [];
 
         // Connect Kafka
         this.kafka = new Kafka({ clientId: 'websocket-api', brokers: [process.env.KAFKA_BROKERS] });
@@ -91,20 +135,46 @@ class StreamingAPIServer {
 
         wsServer.on('connection', (socket) => {
             console.log(`Connected clients: ${wsServer.clients.size}`);
-            app.locals.clients = wsServer.clients;
+            
+            socket.on('message', () => {
+
+            });
+
+            socket.on('close', () => {
+                
+            });
+
+            this.wsClients = wsServer.clients;
+        });
+
+        wsServer.on('close', (msg) => {
+
+
+            this.wsClients = wsServer.clients;
         });
 
         wsServer.on('message', (msg) => {
             // Parse the payloads to determine the requested streams.
+            for (let payload of msg.payloads) {
+                
+                const id = Stream.getStreamId(payload);
+
+                if (this.activeStreamIds.includes(id)) {
+                    // Allocate the stream to client
 
 
-            // Create the stream if it does not already exists.
+                } else {
+                    // Create the stream then allocate it to client.
+                    this.streams[id] = new Stream(payload);
 
+                    this.handleSubscription()
 
-            // Start the stream if it is not already active.
+                }
 
+            }
 
             // Assign the requested streams to the client.
+
 
 
         });
@@ -190,15 +260,16 @@ class StreamingAPIServer {
         }
 
         const failedTopics = this.store.get(height).failure;
+        const unfinishedTopics = this.store.get(height).pending;
         
-        if (!failedTopics.length == 0) {
+        if (!failedTopics.length == 0 || !unfinishedTopics.length == 0) {
             // Determine which streams cannot be refreshed, return null for those streams.
 
         }
 
         // Run stream queries/aggregations.
-        for (let stream of activeStreams) {
-            stream.query();
+        for (let streamId of this.activeStreamIds) {
+            this.streams[streamId].update();
         }
         
         // For each subscriber, send the requested stream data.
