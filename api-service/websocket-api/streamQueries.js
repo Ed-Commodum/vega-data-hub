@@ -1,4 +1,5 @@
-const { enums, typeMappings } = reuqire('../../types/enums.js'); 
+// const { enums, typeMappings } = require('../../types/enums.js');
+const { enums, typeMappings } = require('./enums.js');
 
 const payloadParsers = {
     volume: {
@@ -34,8 +35,10 @@ const payloadParsers = {
                 SELECT
                     sum(volume) + sum(self_volume) AS volume,
                     max(timestamp) AS timestamp
-                FROM party_data_1d
-                WHERE buyer = $1 OR seller = $1 AND market_id = $2;
+                FROM party_data_1d x LEFT JOIN markets y ON x.market_id = y.id
+                WHERE (y.state = 'STATE_ACTIVE' OR y.state = 'STATE_SUSPENDED')
+                AND (buyer = $1 OR seller = $1)
+                AND market_id = $2;
                 `;
 
                 const params = [ partyId, marketId ];
@@ -56,7 +59,58 @@ const payloadParsers = {
 
                 return [ query, params ];
             }
+            case (marketId == undefined && partyId != undefined): {
+                const query = `
+                SELECT
+                    market_id,
+                    sum(volume) + sum(self_volume) AS volume,
+                    max(timestamp) AS timestamp
+                FROM party_data_1d x LEFT JOIN markets y ON x.market_id = y.id
+                WHERE (y.state = 'STATE_ACTIVE' OR y.state = 'STATE_SUSPENDED')
+                AND (buyer = $1 OR seller = $1)
+                GROUP BY market_id;
+                `;
 
+
+                const params = [ partyId ];
+
+                return [ query, params ];
+            }
+            case (marketId == undefined && partyId == undefined): {
+                const query = `
+                SELECT
+                    market_id,
+                    sum(volume) AS volume,
+                    max(timestamp) AS timestamp
+                FROM market_data_1d x LEFT JOIN markets y ON x.market_id = y.id
+                WHERE (y.state = 'STATE_ACTIVE' OR y.state = 'STATE_SUSPENDED')
+                GROUP BY market_id;
+                `;
+
+
+                const params = [];
+
+                return [ query, params ];
+            }
+        }
+
+        switch (true) {
+            case (marketId == undefined && partyId == undefined): {
+                const query = `
+                SELECT
+                    market_id,
+                    sum(volume) AS volume,
+                    max(timestamp) AS timestamp
+                FROM market_data_1d x LEFT JOIN markets y ON x.market_id = y.id
+                WHERE (y.state = 'STATE_ACTIVE' OR y.state = 'STATE_SUSPENDED')
+                GROUP BY market_id;
+                `;
+
+
+                const params = [ marketId ];
+
+                return [ query, params ];
+            }
         }
     },
     assetVolume: (payload) => {
@@ -451,13 +505,14 @@ const parsePayload = (payload) => {
 const asyncQuery = (query, values, pgPool) => {
     return new Promise((resolve, reject) => {
         
-        console.log(query);
+        // console.log(query);
 
         if (values.length == 0) {
             
             pgPool.query(query, (err, result) => {
                 if (!err) {
-                    console.log(result.rows);
+                    // console.log(result);
+                    // console.log(result.rows);
                     resolve(result.rows);
                 } else {
                     console.log(err);
@@ -469,6 +524,7 @@ const asyncQuery = (query, values, pgPool) => {
 
             pgPool.query(query, values, (err, result) => {
                 if (!err) {
+                    console.log(result);
                     console.log(result.rows);
                     resolve(result.rows);
                 } else {
@@ -482,4 +538,4 @@ const asyncQuery = (query, values, pgPool) => {
     });
 };
 
-module.exports = { asyncQuery, streamQueries, payloadParsers };
+module.exports = { asyncQuery, payloadParsers };

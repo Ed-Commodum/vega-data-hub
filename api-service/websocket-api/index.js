@@ -150,7 +150,7 @@ const createAPIServer = () => {
         console.log(`Server running on port: ${PORT}`)
     });
 
-    const wsServer = new ws.Server({server, path: '/ws'});
+    const wsServer = new ws.Server({server: server, path: '/ws'});
 
     wsServer.on('connection', (socket) => {
         console.log(`Connected clients: ${wsServer.clients.size}`);

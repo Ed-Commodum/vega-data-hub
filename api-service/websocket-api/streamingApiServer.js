@@ -5,10 +5,56 @@ const ws = require('ws');
 const { Kafka } = require('kafkajs');
 const { EventEmitter } = require('node:events');
 const { streamQueries } = require('./streamQueries');
-const { RingBuffer, RecentBlocks } = require('../../utils/ringBuffers.js')
+// const { RingBuffer, RecentBlocks } = require('../../utils/ringBuffers.js');
+const { RingBuffer, RecentBlocks } = require('./ringBuffers.js');
 const { payloadParsers, asyncQuery } = require('./streamQueries.js');
 const crypto = require('crypto');
 
+class Subscriber {
+    constructor(socket) {
+        this.client = socket;
+        this.streams = [];
+        this.metadata = [];
+        this.pendingData = [];
+        this.updating = false;
+        this.lastSentHeight = -1;
+    }
+
+    getData(pgPool) {
+        this.updating = true;
+        for (let stream of this.streams) {
+            this.pendingData.push(stream.getDataAsync(pgPool));
+        }
+    }
+
+    // For now this version just sends the raw data from the postgres query.
+    // Later on will use payload types to isolate stream data and metadata.
+    async sendAsync(height) {
+        console.log("Pending data arr length: ", this.pendingData.length);
+        const msg = [];
+        const results = await Promise.allSettled(this.pendingData);
+        for (let res of results) msg.push(...res.value);
+        this.updating = false;
+        if (this.lastSentHeight >= height) {
+            this.pendingData.length = 0;
+            return;
+        }
+        if (this.client.readyState === ws.WebSocket.OPEN) {
+            this.client.send(JSON.stringify({ height: height, data: msg }) + '\n');
+            this.lastSentHeight = height;
+            this.pendingData.length = 0;
+        }
+    }
+
+    forceSend(height) {
+        // Called when the stream data is not fetched in time.
+        for (let datum of this.pendingData) {
+            console.log(datum);
+        }
+        this.lastSentHeight = height;
+        this.pendingData.length = 0;
+    }
+}
 
 class Stream {
     constructor(payload) {
@@ -17,21 +63,27 @@ class Stream {
         [ this.query, this.queryParams ] = this.getQuery(payload);
         this.active = false;
         this.updating = false;
+        this.updateMetadata;
+        this.subCount = 0;
         this.subscribers = [];
-        this.data = {};
+        this.store = {
+            timestamp: '',
+            data: [],
+            metadata: []
+        };
         
     }
 
     static getStreamId(payload) {
 
-        const str = '';
+        let str = '';
 
         const properties = [ 'type', 'mode', 'marketId', 'partyId', 'assetId', 'interval', 'limit', 'windowSize', 'confidenceInterval' ];
 
         for (let prop of properties) {
             const value = payload[prop];
             if (value != undefined) {
-                id = id + String(value);
+                str = str + String(value);
             }
         }
 
@@ -46,14 +98,14 @@ class Stream {
 
     buildStreamId(payload) {
 
-        const str = '';
+        let str = '';
 
         const properties = [ 'type', 'mode', 'marketId', 'partyId', 'assetId', 'interval', 'limit', 'windowSize', 'confidenceInterval' ];
 
         for (let prop of properties) {
             const value = payload[prop];
             if (value != undefined) {
-                id = id + String(value);
+                str = str + String(value);
             }
         }
 
@@ -70,15 +122,34 @@ class Stream {
         return payloadParsers[payload.type](payload);
     }
 
-    async update(pgPool) {
+    getMetadata(rows) {
+        // NOTE: Consider adding metadata types for each payload type to streamQueries.js
 
+        const metadata = [];
+        for (let i=0; i<rows.length; i++) {
+            metadata.push({ index: i, market_id: rows[i].market_id });
+        }
+
+        return metadata;
+    }
+
+    async getDataAsync(pgPool) {
         this.updating = true;
-        const res = await asyncQuery(this.query, ...this.queryParams, pgPool);
-        this.updating = false;
+        const res = asyncQuery(this.query, this.queryParams, pgPool);
 
-        console.log(`Query res for stream ${this.streamId}: `);
-        console.log(res);
-        
+        // NOTE: Sometimes the number of rows for a query can change. eg; a new market gets
+        //       enacted and it is a valid market for the stream query, it's results will be
+        //       added to the stream data. When this occurs we MUST update the metadata to
+        //       reflect this and send a metadata update to the relevant subscribers.
+        //
+        // Potential Solutions:
+        //  - Hash the metadata and save the hash on the stream, can use this to detect changes
+        //    in metadata. Downside is computational cost of hash function.
+        //  - Concat the metadata into a string and use comparison to detect metadata changes.
+        //
+
+        // const metadata = this.getMetadata(res.rows);
+        return res;
     }
 
 }
@@ -88,10 +159,12 @@ class StreamingAPIServer {
     constructor(expressServer) {
 
         // Topics for which to track inserts.
-        this.topics = [ 'trades', 'transfers', 'markets', 'assets', 'market_data', 'stake_linkings' ]; //, 'orders', 'accounts' ];
-        this.store = new RecentBlocks(1000);
+        // this.topics = [ 'trades', 'transfers', 'markets', 'assets', 'market_data', 'stake_linkings' ]; //, 'orders', 'accounts' ];
+        this.topics = ['trades'];
+        this.store = new RecentBlocks(50000);
 
         this.sendTimeout;
+        this.staleHeight = -1; // Height at which to ignore notifications from persistence services.
 
         this.controller = new EventEmitter();
         this.setControllerHandlers();
@@ -99,12 +172,15 @@ class StreamingAPIServer {
         this.streamIds = [];
         this.activeStreamIds = [];
         this.streams = {};
-        this.wsClients = [];
-        this.subscribers = [];
+        this.subscribers = {};
 
         // Connect Kafka
+        console.log(process.env.KAFKA_BROKERS);
         this.kafka = new Kafka({ clientId: 'websocket-api', brokers: [process.env.KAFKA_BROKERS] });
-        this.kafkaConsumer = new this.kafka.Consumer({ groupId: 'websocket-api-group', maxBytesPerPartition: 2 * 1024 * 1024 });
+        this.kafkaConsumer = this.kafka.consumer({ groupId: 'websocket-api-group', maxBytesPerPartition: 2 * 1024 * 1024 });
+        this.kafkaAdmin = this.kafka.admin();
+        this.kafkaConsumer.connect();
+        this.kafkaAdmin.connect();
 
         // Connect postgres
         this.pgPool = new Pool({
@@ -115,6 +191,9 @@ class StreamingAPIServer {
             password: 'ilovetimescaledb'
         });
 
+        // Start block insertion notification server
+        this.startNotificationServer();
+
         // Sub to kafka topics
         this.setKafkaHandler();
 
@@ -123,113 +202,180 @@ class StreamingAPIServer {
 
     }
 
-    startWSServer(expressServer) {
+    startNotificationServer() {
 
         const app = express();
-        const PORT = 8081;
-        expressServer = app.listen(PORT, () => {
-            console.log(`Server running on port: ${PORT}`)
+        const PORT = 1337;
+        const expressServer = app.listen(PORT, () => {
+            console.log(`Server running on port: ${PORT}`);
+
+            app.post('/block-notification', (req, res) => {
+                
+                console.log("Recieved POST request: ");
+                // console.log(req);
+
+                let body = '';
+                req.on('data', (chunk) => {
+                    body += chunk.toString();
+                })
+
+                req.on('end', () => {
+                    console.log("Data: ");
+                    console.log(body);
+                    res.send({ status: "success" });
+                })
+
+            });
+
         });
 
-        const wsServer = new ws.Server({expressServer, path: '/ws'});
+    }
+
+    startWSServer(expressServer) {
+
+        // ---------- For testing purposes only ---------- //
+        // const app = express();
+        // const PORT = 8081;
+        // expressServer = app.listen(PORT, () => {
+        //     console.log(`Server running on port: ${PORT}`)
+        // });
+        // ----------------------------------------------- //
+
+        const wsServer = new ws.Server({ server: expressServer, path: '/ws' });
 
         wsServer.on('connection', (socket) => {
             console.log(`Connected clients: ${wsServer.clients.size}`);
             
-            socket.on('message', () => {
-
-            });
+            // socket.on('open', () => {
+            //     // Create new subscriber for client.
+            //     const clientId = crypto.randomBytes(16).toString('base64');
+            //     socket.clientId = clientId;
+            //     const subscriber = new Subscriber(socket);
+            //     this.subscribers[clientId] = subscriber;
+            // });
 
             socket.on('close', () => {
-                
+                // Update subscriber count on streams, deactivate unused streams, remove subscriber.
+                for (let stream of this.subscribers[socket.clientId].streams) {
+                    stream.subCount--;
+                    if (stream.subCount == 0) {
+                        const index = this.activeStreamIds.indexOf(stream.streamId);
+                        this.activeStreamIds.splice(index, 1);
+                        stream.active = false;
+                    }
+                    delete this.subscribers[socket.clientId];
+                }
+
             });
 
-            this.wsClients = wsServer.clients;
-        });
+            socket.on('message', (msg) => {
 
-        wsServer.on('close', (msg) => {
+                if (socket.clientId === undefined) {
+                    // Create new subscriber for client.
+                    const clientId = crypto.randomBytes(16).toString('base64');
+                    socket.clientId = clientId;
+                    const subscriber = new Subscriber(socket);
+                    this.subscribers[clientId] = subscriber;
+                }
 
+                console.dir(JSON.parse(msg.toString()));
 
-            this.wsClients = wsServer.clients;
-        });
+                // Add functionality to fetch a stream from it's streamId instead of a payload.
 
-        wsServer.on('message', (msg) => {
-            // Parse the payloads to determine the requested streams.
-            for (let payload of msg.payloads) {
-                
-                const id = Stream.getStreamId(payload);
+                // Parse the payloads to determine the requested streams.
+                for (let payload of JSON.parse(msg.toString()).payloads) {
 
-                if (this.activeStreamIds.includes(id)) {
-                    // Allocate the stream to client
+                    const streamId = Stream.getStreamId(payload);
+                    
+                    if (this.activeStreamIds.includes(streamId)) {
+                        // Allocate the stream to client
+                        this.subscribers[socket.clientId].streams.push(this.streams[streamId]);
 
+                    } else {
+                        // Create the stream then allocate it to client.
+                        this.streams[streamId] = new Stream(payload);
 
-                } else {
-                    // Create the stream then allocate it to client.
-                    this.streams[id] = new Stream(payload);
-
-                    this.handleSubscription()
+                        // Set to active
+                        this.streams[streamId].active = true;
+                        this.activeStreamIds.push(streamId);
+                        this.subscribers[socket.clientId].streams.push(this.streams[streamId]);
+                        this.streams[streamId].numSubs++;
+                    }
 
                 }
 
-            }
-
-            // Assign the requested streams to the client.
-
-
+            });
 
         });
 
 
     }
 
-    setKafkaHandler() {
+    async setKafkaHandler() {
 
-        this.kafkaConsumer.subscribe({ topic: 'blocks', partition: 0 }, { topic: 'persistence_status', partition: 0 });
+        // Get latest offsets
+        const blocksOffsets = await this.kafkaAdmin.fetchTopicOffsets('blocks');
+        const persistenceStatusOffsets = await this.kafkaAdmin.fetchTopicOffsets('persistence_status');
+
+        this.kafkaConsumer.subscribe({ topics: ['blocks', 'persistence_status'] }); //{ topic: 'blocks', partition: 0 }, { topic: 'persistence_status', partition: 0 });
         this.kafkaConsumer.run({
             eachMessage: async (msg) => {
-                console.log(msg);
-                const evt = JSON.parse(msg.value);
+                // console.log(msg);
+                // console.log(typeof msg.message.value)
+                // console.log(msg.message.value);
+                // console.log(msg.message.value.toString());
+                // console.log(Buffer.isBuffer(msg.message.value));
+                const evt = JSON.parse(msg.message.value.toString());
+
+                if (msg.topic == 'persistence_status') {
+                    this.controller.emit('handleNotification', JSON.parse(msg.message.value.toString()));
+                    return;
+                }
 
                 // On BeginBlock, wait for confirmations for each set of inserts.
                 if (evt.Event.BeginBlock) {
-                    console.log("Begin Block!!!");
-                    this.controller.emit('beginBlock', evt.Event.BeginBlock.height);
+                    console.log(`Begin Block at height: ${evt.Event.BeginBlock.height}`);
+                    this.controller.emit('beginBlock', evt.Event.BeginBlock);
                 }
 
-                // On EndBlock, wait 200ms then push data to streams whether it is ready or not.
-                // Replace missing values with null.
                 if (evt.Event.EndBlock) {
-                    console.log("End Block!!!");
+                    console.log(`End Block at height: ${evt.Event.EndBlock.height}`);
 
-                }
-
-                if (msg.topic == 'persistence_status') {
-                    this.controller.emit('handleNotification', msg);
                 }
 
             }
         });
+        this.kafkaConsumer.seek({ topic: 'blocks', partition: 0, offset: blocksOffsets[0].offset });
+        this.kafkaConsumer.seek({ topic: 'persistence_status', partition: 0, offset: persistenceStatusOffsets[0].offset });
 
     }
 
     setControllerHandlers() {
 
-        this.controller.on('beginBlock', (height) => {
+        this.controller.on('beginBlock', (evt) => {
 
             // Add new height to store
-            this.store.push({ height: height, pending: [...this.topics], success: [], failure: [], sent: false });
+            this.store.push({ height: evt.height, timestamp: evt.timestamp, pending: [...this.topics], success: [], failure: [], sent: false });
 
-            // Create timeout to send data to subscribers if not all confirmations received in time.
-            this.sendTimeout = setTimeout(() => this.sendHeight(height), 300);
+            // Set send timeout for all subscribers.
+            this.sendTimeout = setTimeout(() => {
+                this.staleHeight = evt.height;
+                for (let sub of Object.values(this.subscribers)) {
+                    sub.forceSend(evt.height);
+                }
+            }, 300);
 
         });
         
         this.controller.on('handleNotification', (msg) => {
             
-            console.log(msg);
+            if (msg.height <= this.staleHeight) return;
 
-            const pending = this.store.get(msg.height).pending
+            console.log("Notification: ", msg);
+
             const block = this.store.get(msg.height);
+            if (block == undefined) return;
+            const pending = this.store.get(msg.height).pending
 
             if (msg.status == 'success') {
                 block.success.push(...pending.splice(pending.indexOf(msg.topic), 1));
@@ -253,40 +399,71 @@ class StreamingAPIServer {
 
     }
 
-    sendHeight(height) {
+    async sendHeight(height) {
 
-        if (this.store.get(height).sent) {
+        // console.log(height);
+        // console.log(typeof(height));
+        // console.log(this.store);
+        const block = this.store.get(height);
+        if (block.sent) {
             return;
         }
 
-        const failedTopics = this.store.get(height).failure;
-        const unfinishedTopics = this.store.get(height).pending;
+        const failedTopics = block.failure;
+        const unfinishedTopics = block.pending;
         
         if (!failedTopics.length == 0 || !unfinishedTopics.length == 0) {
             // Determine which streams cannot be refreshed, return null for those streams.
+            console.log(`Failed & unfinished topics: `);
+            console.log("Failed: ", failedTopics);
+            console.log("Unfinished: ", unfinishedTopics);
 
         }
 
-        // Run stream queries/aggregations.
-        for (let streamId of this.activeStreamIds) {
-            this.streams[streamId].update();
+        // For each subscriber, collect promises for each stream and await data.
+        for (let subscriber of Object.values(this.subscribers)) {
+            subscriber.getData(this.pgPool);
+            subscriber.sendAsync(height);
         }
-        
-        // For each subscriber, send the requested stream data.
-        for (let subscriber of this.subscribers) {
-            const data = [];
-            for (let stream of subscriber.streams) {
-                data.push(stream.data());
-            }
-            subscriber.send(data);
-        }
-        
+
+        // // Run stream queries/aggregations.
+        // for (let streamId of this.activeStreamIds) {
+        //     this.streams[streamId].update(this.pgPool);
+        // }
+
+        // // If any metadata has changed, send metadata updates to subscribers
+
+        // // For each subscriber, send the requested stream data.
+        // for (let subscriber of Object.values(this.subscribers)) {
+            
+        //     const metadata = [];
+        //     const updateMetadata = false;
+        //     const msg = { timestamp: block.timestamp, data: [] };
+
+        //     for (let stream of subscriber.streams) {
+        //         if (stream.updating) {
+        //             // 
+        //         }
+        //         if (stream.updateMetadata == true) {
+        //             updateMetadata = true;
+        //         }
+        //         metadata.push(...stream.metadata());
+        //         msg.data.push(...stream.data());
+        //         msg.timestamp = stream.timestamp();
+        //     }
+
+        //     if (subscriber.client.readyState === ws.WebSocket.OPEN) {
+        //         if (updateMetadata) {
+        //             subscriber.client.send(JSON.stringify({ timestamp: block.timestamp, metadata: metadata }));
+        //         }
+        //         subscriber.client.send(JSON.stringify(msg));
+        //     }
+        // }
+
+        block.sent = true;
     }
-
-    start() {
-
-
-
-    }
-
 }
+
+module.exports = {
+    StreamingAPIServer
+};

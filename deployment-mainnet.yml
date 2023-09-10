@@ -225,8 +225,12 @@ metadata:
   name: api-service-mainnet
 spec:
   ports:
-    - port: 8080
+    - name: api
+      port: 8080
       targetPort: 8080
+    - name: block-notifications
+      port: 1337
+      targetPort: 1337
   selector:
     app: api-mainnet
 ---
@@ -257,6 +261,8 @@ spec:
           value: timescaledb-service-mainnet
         - name: TIMESCALEDB_PORT
           value: "5432"
+        - name: KAFKA_BROKERS
+          value: "$(KAFKA_SERVICE_MAINNET_SERVICE_HOST):9092"
 ---
 apiVersion: v1
 kind: Pod

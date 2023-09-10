@@ -61,17 +61,34 @@ const bucketIndices = {
     interval_1d: 0n
 };
 
-const replaying = true;
+// const replaying = true;
+const replaying = false;
 const busEventBlockMap = {};
 const blockEmitter = new EventEmitter();
 
-blockEmitter.on('noTrades', (height) => {
+blockEmitter.on('noTrades', async (height) => {
     
     console.log(`No trades for height ${height}`);
     
     // Fire off event to notify API service that the block has no trades.
+    // const host = process.env.API_SERVICE_MAINNET_SERVICE_HOST;
+    // const port = process.env.API_SERVICE_MAINNET_SERVICE_PORT_BLOCK_NOTIFICATIONS;
 
-    const payload = { topic: 'persistence_status', message: [`{ topic: "trades", height: ${height}, status: "success" }`] };
+    // console.log(host);
+    // console.log(port);
+
+    // const url = `http://${host}:${port}/block-notification`;
+    // const headers = { "Content-Type": "application/json" };
+    // const msg = `{ "topic": "trades", "height": ${height}, "status": "success" }`;
+    // const res = await fetch(url, { method: 'POST', headers: headers, body: msg });
+    // // console.log(res);
+    // // console.log(res.ok);
+    // console.log(await res.json());
+
+    const msgValue = `{ "topic": "trades", "height": ${height}, "status": "success" }`;
+
+    // const payload = { topic: 'persistence_status', messages: [ { value: Buffer.from(`{ topic: "trades", height: ${height}, status: "success" }`) } ] };
+    const payload = { topic: 'persistence_status', messages: [msgValue] };
 
     kafkaProducer.send([payload], (err, result) => {
         if (!err) {
@@ -91,15 +108,18 @@ blockEmitter.on('successfulInserts', (height) => {
     // Should the event be launched into Kafka for it to handle or would it be wise to build
     // and API/RPC on the websocket API service that this service can call directly?
 
-    const payload = { topic: 'persistence_status', message: [`{ topic: "trades", height: ${height}, status: "success" }`] };
+    const msgValue = `{ "topic": "trades", "height": ${height}, "status": "success" }`;
 
-    kafkaProducer.send([payload], (err, result) => {
-        if (!err) {
-            console.log(result);
-        } else {
-            console.log(err);
-        }
-    });
+    // const payload = { topic: 'persistence_status', messages: [ { value: Buffer.from(`{ topic: "trades", height: ${height}, status: "success" }`) } ] };
+    const payload = { topic: 'persistence_status', messages: [msgValue] };
+
+    // kafkaProducer.send([payload], (err, result) => {
+    //     if (!err) {
+    //         console.log(result);
+    //     } else {
+    //         console.log(err);
+    //     }
+    // });
 
 });
 
@@ -112,15 +132,18 @@ blockEmitter.on('failedInserts', (height) => {
     //  - Retry inserts
     //  - Send event to websocket API to notify of failure.
 
-    const payload = { topic: 'persistence_status', message: [`{ topic: "trades", height: ${height}, status: "failure" }`] };
+    const msgValue = `{ "topic": "trades", "height": ${height}, "status": "failure" }`;
 
-    kafkaProducer.send([payload], (err, result) => {
-        if (!err) {
-            console.log(result);
-        } else {
-            console.log(err);
-        }
-    });
+    // const payload = { topic: 'persistence_status', messages: [ { value: Buffer.from(`{ topic: "trades", height: ${height}, status: "failure" }`) } ] };
+    const payload = { topic: 'persistence_status', messages: [msgValue] };
+
+    // kafkaProducer.send([payload], (err, result) => {
+    //     if (!err) {
+    //         console.log(result);
+    //     } else {
+    //         console.log(err);
+    //     }
+    // });
 
 });
 
@@ -816,6 +839,8 @@ const start = () => {
       }});
     const kafkaAdmin = new kafka.Admin(kafkaClient);
 
+    kafkaProducer = new kafka.Producer(kafkaClient);
+
     // Connect to postgres.
     pgPool.connect((err) => {
         if (err) {
@@ -841,8 +866,7 @@ const start = () => {
                     if (topics.includes("trades")) {
 
                         console.log("Topic already exists.");
-                        // Set up producer and consumer
-                        setProducer(kafkaClient, kafkaProducer);
+                        // Set up consumer
                         setConsumer(kafkaClient, kafkaConsumer);
 
                     } else {
@@ -861,8 +885,7 @@ const start = () => {
                             if (!err) {
 
                                 console.log("Topics created successfully");
-                                // Set up producer and consumer
-                                setProducer(kafkaClient, kafkaProducer);
+                                // Set consumer
                                 setConsumer(kafkaClient, kafkaConsumer);
 
                             } else {
@@ -912,12 +935,6 @@ const start = () => {
 
 };
 
-const setProducer = (kafkaClient, kafkaProducer) => {
-
-    kafkaProducer = new kafka.Producer(kafkaClient);
-
-};
-
 const setConsumer = (kafkaClient, kafkaConsumer) => {
     kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "trades-group-27" });
     kafkaConsumer.on("message", (msg) => {
@@ -958,9 +975,15 @@ const setConsumer = (kafkaClient, kafkaConsumer) => {
 
             if (evt.Event.EndBlock) {
                 
+                if (Object.values(busEventBlockMap).length == 0) {
+                    return;
+                }
+
                 const height = evt.Event.EndBlock.height;
                 if (busEventBlockMap[height].length) {
                     blockPersistTrades(height, busEventBlockMap[height].slice());
+                } else {
+                    blockEmitter.emit('noTrades', height);
                 }
                 delete busEventBlockMap[height-1000];
 

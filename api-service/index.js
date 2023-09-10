@@ -3,6 +3,8 @@ const express = require('express');
 const { swaggerDocs } = require('./swagger.js');
 const { routes } = require('./routes.js');
 
+const { StreamingAPIServer } = require('./websocket-api/streamingApiServer.js');
+
 const pgPool = new Pool({
     host: process.env.TIMESCALEDB_HOST,
     port: process.env.TIMESCALEDB_PORT,
@@ -18,7 +20,7 @@ app.use(express.json());
 app.set('json spaces', 2);
 
 
-app.listen(PORT, async () => {
+const expressServer = app.listen(PORT, async () => {
     console.log(`App is running at http://localhost:${PORT}`);
 
     routes(app, pgPool);
@@ -26,6 +28,7 @@ app.listen(PORT, async () => {
     swaggerDocs(app, PORT);
 });
 
-const { main } = require('./websocket-api/index.js');
+new StreamingAPIServer(expressServer);
 
-main();
+// const { main } = require('./websocket-api/index.js');
+// main();

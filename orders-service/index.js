@@ -432,7 +432,7 @@ const setConsumer = () => {
             }
         }
     });
-    kafkaConsumer.addTopics([{ topic: 'orders', offset: 0 },{ topic: 'blocks', offset: 0 }], () => console.log("topic added"));
+    kafkaConsumer.addTopics([{ topic: 'orders', offset: 0 }], () => console.log("topic added"));
 };
 
 // const setConsumer = (kafkaConsumer) => {

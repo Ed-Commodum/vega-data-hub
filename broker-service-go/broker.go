@@ -188,6 +188,25 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 	accountCount := 0
 	stakeLinkingCount := 0
 
+	print := func(evt) {
+
+		fmt.Println(evt.Id)
+		fmt.Println("Height: ", height)
+		fmt.Println("Blocks count: ", blockCount)
+		fmt.Println("Bytes count: ", batchBytesCount)
+		fmt.Println("Trade count: ", tradeCount)
+		fmt.Println("Order count: ", orderCount)
+		fmt.Println("Position state count: ", posStateCount)
+		fmt.Println("Market data count: ", marketDataCount)
+		fmt.Println("Asset count: ", assetCount)
+		fmt.Println("Market count: ", marketCount)
+		fmt.Println("Legder movements count: ", ledgerMovementsCount)
+		fmt.Println("Deposit withdrawal count: ", depositWithdrawalCount)
+		fmt.Println("Account count: ", accountCount)
+		fmt.Println("Stake Linking count: ", stakeLinkingCount)
+
+	}
+
 	go func() {
 		defer close(msgCh)
 		defer wg.Done()
@@ -284,6 +303,10 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 						Value: jsonEvtBytes,
 					})
 					batchBytesCount += len(jsonEvtBytes)
+
+					msgCh <- batch
+					batch = nil
+
 				}
 			} else {
 				if topic, ok := busEventTopicMap[evtType.String()]; ok {
@@ -355,9 +378,9 @@ func (b Broker) start() {
 	busEventTopicMap := GetBusEventTopicMap()
 	topicSet := make(map[string]void)
 	for _, v := range busEventTopicMap {
-		if v == "blocks" {
-			continue
-		}
+		// if v == "blocks" {
+		// 	continue
+		// }
 		topicSet[v] = member
 	}
 
