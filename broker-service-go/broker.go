@@ -40,7 +40,7 @@ type SocketServer struct {
 }
 
 type KafkaClient struct {
-	writer kafka.Writer
+	writer *kafka.Writer
 }
 
 type void struct{}
@@ -76,7 +76,7 @@ func newKafkaClient() (*KafkaClient, error) {
 	}
 
 	return &KafkaClient{
-		writer: *w,
+		writer: w,
 	}, nil
 
 }
@@ -188,7 +188,7 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 	accountCount := 0
 	stakeLinkingCount := 0
 
-	print := func(evt) {
+	printEventCounts := func(evt *eventspb.BusEvent) {
 
 		fmt.Println(evt.Id)
 		fmt.Println("Height: ", height)
@@ -304,9 +304,11 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 					})
 					batchBytesCount += len(jsonEvtBytes)
 
+					// Send a batch at the end of every block.
 					msgCh <- batch
 					batch = nil
-
+					printEventCounts(evt)
+					batchBytesCount = 0
 				}
 			} else {
 				if topic, ok := busEventTopicMap[evtType.String()]; ok {
@@ -329,26 +331,26 @@ func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, t
 				}
 			}
 
-			if len(batch) >= 50 { // When batch is a certain size, send it
-				msgCh <- batch
-				batch = nil
-				// fmt.Println(string(jsonEvt))
-				fmt.Println(evt.Id)
-				fmt.Println("Height: ", height)
-				fmt.Println("Blocks count: ", blockCount)
-				fmt.Println("Bytes count: ", batchBytesCount)
-				fmt.Println("Trade count: ", tradeCount)
-				fmt.Println("Order count: ", orderCount)
-				fmt.Println("Position state count: ", posStateCount)
-				fmt.Println("Market data count: ", marketDataCount)
-				fmt.Println("Asset count: ", assetCount)
-				fmt.Println("Market count: ", marketCount)
-				fmt.Println("Legder movements count: ", ledgerMovementsCount)
-				fmt.Println("Deposit withdrawal count: ", depositWithdrawalCount)
-				fmt.Println("Account count: ", accountCount)
-				fmt.Println("Stake Linking count: ", stakeLinkingCount)
-				batchBytesCount = 0
-			}
+			// if len(batch) >= 50 { // When batch is a certain size, send it
+			// 	msgCh <- batch
+			// 	batch = nil
+			// 	// fmt.Println(string(jsonEvt))
+			// 	fmt.Println(evt.Id)
+			// 	fmt.Println("Height: ", height)
+			// 	fmt.Println("Blocks count: ", blockCount)
+			// 	fmt.Println("Bytes count: ", batchBytesCount)
+			// 	fmt.Println("Trade count: ", tradeCount)
+			// 	fmt.Println("Order count: ", orderCount)
+			// 	fmt.Println("Position state count: ", posStateCount)
+			// 	fmt.Println("Market data count: ", marketDataCount)
+			// 	fmt.Println("Asset count: ", assetCount)
+			// 	fmt.Println("Market count: ", marketCount)
+			// 	fmt.Println("Legder movements count: ", ledgerMovementsCount)
+			// 	fmt.Println("Deposit withdrawal count: ", depositWithdrawalCount)
+			// 	fmt.Println("Account count: ", accountCount)
+			// 	fmt.Println("Stake Linking count: ", stakeLinkingCount)
+			// 	batchBytesCount = 0
+			// }
 		}
 	}()
 
@@ -391,7 +393,7 @@ func (b Broker) start() {
 
 	err := b.ss.listen()
 	if err != nil {
-		log.Fatal(fmt.Errorf("Failed to listen: ", err))
+		log.Fatal(fmt.Errorf("Failed to listen: %v", err))
 	}
 
 	inCh := b.ss.recieve(wg)

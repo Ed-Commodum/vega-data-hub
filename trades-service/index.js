@@ -80,9 +80,11 @@ blockEmitter.on('noTrades', async (height) => {
     // const url = `http://${host}:${port}/block-notification`;
     // const headers = { "Content-Type": "application/json" };
     // const msg = `{ "topic": "trades", "height": ${height}, "status": "success" }`;
-    // const res = await fetch(url, { method: 'POST', headers: headers, body: msg });
-    // // console.log(res);
-    // // console.log(res.ok);
+    // const res = await fetch(url, { method: 'POST', headers: headers, body: msg })
+    //     .then(res => console.log(res.json))
+    //     .catch(err => console.log(err));
+    // console.log(res);
+    // console.log(res.ok);
     // console.log(await res.json());
 
     const msgValue = `{ "topic": "trades", "height": ${height}, "status": "success" }`;

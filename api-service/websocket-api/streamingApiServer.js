@@ -7,7 +7,7 @@ const { EventEmitter } = require('node:events');
 const { streamQueries } = require('./streamQueries');
 // const { RingBuffer, RecentBlocks } = require('../../utils/ringBuffers.js');
 const { RingBuffer, RecentBlocks } = require('./ringBuffers.js');
-const { payloadParsers, asyncQuery } = require('./streamQueries.js');
+const { payloadParsers, asyncQuery, payloadMetadataNames } = require('./streamQueries.js');
 const crypto = require('crypto');
 
 class Subscriber {
@@ -27,13 +27,36 @@ class Subscriber {
         }
     }
 
-    // For now this version just sends the raw data from the postgres query.
-    // Later on will use payload types to isolate stream data and metadata.
     async sendAsync(height) {
+        // For now this version just sends the raw data from the postgres query.
+        // Later on will use payload types to isolate stream data and metadata.
+
         console.log("Pending data arr length: ", this.pendingData.length);
+        if (this.pendingData.length > this.streams.length) throw new Error("Subscriber has too much data pending raltive to it's number of streams.");
         const msg = [];
+        const metadata = [];
         const results = await Promise.allSettled(this.pendingData);
-        for (let res of results) msg.push(...res.value);
+        for (let stream of results) {
+            const payloadType = stream.payloadType;
+            const payloadMode = stream.payloadMode;
+            for (let datum of stream.value) {
+                // Separate datapoint and metadata from raw data obj
+                const metadatum = {};
+                const metadataNames = payloadMetadataNames[payloadType][payloadMode];
+
+                for (let key of Object.keys(datum)) {
+                    if (metadataNames.includes(key)) {
+                        metadatum[key] = datum[key].valueOf();
+                        delete datum[key];
+                    }
+                }
+
+                msg.push(datum);
+                metadata.push(metadatum);
+            }
+        }
+        console.log("Message: ", msg);
+        console.log("Metadata: ", metadata);
         this.updating = false;
         if (this.lastSentHeight >= height) {
             this.pendingData.length = 0;
@@ -44,10 +67,29 @@ class Subscriber {
             this.lastSentHeight = height;
             this.pendingData.length = 0;
         }
+
+        // console.log("Pending data arr length: ", this.pendingData.length);
+        // if (this.pendingData.length > this.streams.length) throw new Error("Subscriber has too much data pending raltive to it's number of streams.");
+        // const msg = [];
+        // const results = await Promise.allSettled(this.pendingData);
+        // for (let res of results) msg.push(...res.value);
+        // this.updating = false;
+        // if (this.lastSentHeight >= height) {
+        //     this.pendingData.length = 0;
+        //     return;
+        // }
+        // if (this.client.readyState === ws.WebSocket.OPEN) {
+        //     this.client.send(JSON.stringify({ height: height, data: msg }) + '\n');
+        //     this.lastSentHeight = height;
+        //     this.pendingData.length = 0;
+        // }
     }
 
     forceSend(height) {
         // Called when the stream data is not fetched in time.
+        
+        console.log("Force send triggered");
+
         for (let datum of this.pendingData) {
             console.log(datum);
         }
@@ -134,8 +176,10 @@ class Stream {
     }
 
     async getDataAsync(pgPool) {
-        this.updating = true;
+        // this.updating = true;
         const res = asyncQuery(this.query, this.queryParams, pgPool);
+        res['payloadType'] = this.payload.type;
+        res['payloadMode'] = this.payload.mode;
 
         // NOTE: Sometimes the number of rows for a query can change. eg; a new market gets
         //       enacted and it is a valid market for the stream query, it's results will be
@@ -157,6 +201,8 @@ class Stream {
 
 class StreamingAPIServer {
     constructor(expressServer) {
+
+        this.serviceReady = false;
 
         // Topics for which to track inserts.
         // this.topics = [ 'trades', 'transfers', 'markets', 'assets', 'market_data', 'stake_linkings' ]; //, 'orders', 'accounts' ];
@@ -192,7 +238,7 @@ class StreamingAPIServer {
         });
 
         // Start block insertion notification server
-        this.startNotificationServer();
+        // this.startNotificationServer();
 
         // Sub to kafka topics
         this.setKafkaHandler();
@@ -220,8 +266,33 @@ class StreamingAPIServer {
                 })
 
                 req.on('end', () => {
-                    console.log("Data: ");
-                    console.log(body);
+                    // console.log("Data: ");
+                    // console.log(body);
+
+                    const msg = JSON.parse(body);
+
+                    if (msg.height <= this.staleHeight) return;
+
+                    console.log("Notification: ", msg);
+
+                    const block = this.store.get(msg.height);
+                    if (block == undefined) return;
+                    const pending = this.store.get(msg.height).pending
+
+                    if (msg.status == 'success') {
+                        block.success.push(...pending.splice(pending.indexOf(msg.topic), 1));
+                    }
+
+                    if (msg.status == 'failure') {
+                        console.log(`Inserts failed for topic: ${msg.topic} at height: ${msg.height}`);
+                        block.failure.push(...pending.splice(pending.indexOf(msg.topic), 1));
+                    }
+
+                    if (block.pending.length == 0) {
+                        clearTimeout(this.sendTimeout);
+                        this.sendHeight(msg.height);
+                    }
+
                     res.send({ status: "success" });
                 })
 
@@ -334,25 +405,35 @@ class StreamingAPIServer {
 
                 // On BeginBlock, wait for confirmations for each set of inserts.
                 if (evt.Event.BeginBlock) {
-                    console.log(`Begin Block at height: ${evt.Event.BeginBlock.height}`);
+                    // console.log(`Begin Block at height: ${evt.Event.BeginBlock.height}`);
                     this.controller.emit('beginBlock', evt.Event.BeginBlock);
                 }
 
                 if (evt.Event.EndBlock) {
-                    console.log(`End Block at height: ${evt.Event.EndBlock.height}`);
+                    // console.log(`End Block at height: ${evt.Event.EndBlock.height}`);
 
                 }
 
             }
         });
+
         this.kafkaConsumer.seek({ topic: 'blocks', partition: 0, offset: blocksOffsets[0].offset });
         this.kafkaConsumer.seek({ topic: 'persistence_status', partition: 0, offset: persistenceStatusOffsets[0].offset });
+
+        this.kafkaConsumer.on(this.kafkaConsumer.events.HEARTBEAT, (hb) => {
+            console.log("Heartbeat: ", hb);
+            if (hb.id >= 1) {
+                this.serviceReady = true;
+            }
+        });
 
     }
 
     setControllerHandlers() {
 
         this.controller.on('beginBlock', (evt) => {
+
+            if (!this.serviceReady) return;
 
             // Add new height to store
             this.store.push({ height: evt.height, timestamp: evt.timestamp, pending: [...this.topics], success: [], failure: [], sent: false });
@@ -369,6 +450,8 @@ class StreamingAPIServer {
         
         this.controller.on('handleNotification', (msg) => {
             
+            if (!this.serviceReady) return;
+
             if (msg.height <= this.staleHeight) return;
 
             console.log("Notification: ", msg);
