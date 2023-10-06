@@ -15,7 +15,9 @@ class Subscriber {
         this.client = socket;
         this.streams = [];
         this.metadata = [];
+        this.metadataStr = '';
         this.pendingData = [];
+        this.resolvedData = [];
         this.updating = false;
         this.lastSentHeight = -1;
     }
@@ -23,26 +25,56 @@ class Subscriber {
     getData(pgPool) {
         this.updating = true;
         for (let stream of this.streams) {
+            console.log("Subscriber.getData() block");
             this.pendingData.push(stream.getDataAsync(pgPool));
         }
     }
 
-    async sendAsync(height) {
+    async sendAsync(height, vegaTime) {
         // For now this version just sends the raw data from the postgres query.
         // Later on will use payload types to isolate stream data and metadata.
 
         console.log("Pending data arr length: ", this.pendingData.length);
-        if (this.pendingData.length > this.streams.length) throw new Error("Subscriber has too much data pending raltive to it's number of streams.");
+        if (this.pendingData.length > this.streams.length) throw new Error("Subscriber has too much data pending relative to it's number of streams.");
         const msg = [];
         const metadata = [];
-        const results = await Promise.allSettled(this.pendingData);
-        for (let stream of results) {
-            const payloadType = stream.payloadType;
-            const payloadMode = stream.payloadMode;
-            for (let datum of stream.value) {
+        console.dir(this.pendingData, {depth:null});
+        
+        let startTime = performance.now();
+        await Promise.allSettled(this.pendingData.map((elem) => elem.promise))
+        console.log(`${performance.now() - startTime} ms`);
+
+        console.log(this.pendingData);
+        await new Promise(async (res, rej) => {
+            for (let i=0; i<this.pendingData.length; i++) {
+                this.pendingData[i].data = await this.pendingData[i].promise;
+                delete this.pendingData[i].promise;
+                this.resolvedData.push(this.pendingData[i]);
+            }
+            res();
+        });
+        
+        console.log(this.resolvedData);
+
+        for (let stream of this.resolvedData) {
+            console.dir(stream, {depth:null});
+            const [ payloadType, payloadMode, payloadInterval ] = [ stream.payloadType, stream.payloadMode, stream.payloadInterval ];
+            console.log("Payload Type: ", payloadType);
+            msg.push({ blockHeight: height },{ vegaTime: vegaTime });
+            metadata.push({ type: 'Block height' }, { type: 'Vega time' });
+            if (stream.data.length == 0) {
+                msg.push
+            }
+            for (let datum of stream.data) {
                 // Separate datapoint and metadata from raw data obj
                 const metadatum = {};
                 const metadataNames = payloadMetadataNames[payloadType][payloadMode];
+
+                metadatum.type = payloadType;
+                metadatum.mode = payloadMode;
+                if (payloadInterval) {
+                    metadatum.interval = payloadInterval;
+                };
 
                 for (let key of Object.keys(datum)) {
                     if (metadataNames.includes(key)) {
@@ -51,21 +83,34 @@ class Subscriber {
                     }
                 }
 
-                msg.push(datum);
+                msg.push({ [payloadType]: datum[payloadType] });
                 metadata.push(metadatum);
             }
         }
         console.log("Message: ", msg);
         console.log("Metadata: ", metadata);
+        this.metadata = metadata;
         this.updating = false;
         if (this.lastSentHeight >= height) {
             this.pendingData.length = 0;
+            this.resolvedData.length = 0;
             return;
         }
         if (this.client.readyState === ws.WebSocket.OPEN) {
-            this.client.send(JSON.stringify({ height: height, data: msg }) + '\n');
+
+            // Determine whether the metadata has changed.
+            const metadataStr = JSON.stringify(metadata);
+            if (this.metadataStr != metadataStr) {
+                console.log("Detected metadata change.");
+                this.metadataStr = metadataStr;
+                this.client.send(this.metadataStr + '\n');
+            }
+
+            // this.client.send(JSON.stringify({ height: height, data: msg }) + '\n');
+            this.client.send(JSON.stringify(msg) + '\n');
             this.lastSentHeight = height;
             this.pendingData.length = 0;
+            this.resolvedData.length = 0;
         }
 
         // console.log("Pending data arr length: ", this.pendingData.length);
@@ -101,6 +146,7 @@ class Subscriber {
 class Stream {
     constructor(payload) {
         this.payload = payload;
+
         this.streamId = this.buildStreamId(payload);
         [ this.query, this.queryParams ] = this.getQuery(payload);
         this.active = false;
@@ -114,6 +160,23 @@ class Stream {
             metadata: []
         };
         
+    }
+
+    // Write func to verify payload, requests with invalid payloads should be rejected.
+    static verifyPayload(payload) {
+
+        // Check type and mode are valid
+
+        // Check for missing mandatory fields
+
+        // Check for fields that should not exist
+
+        // Check for requests for inactive markets
+
+        // Check for non-existant assets
+
+        // Check for invalid confidenceInterval
+
     }
 
     static getStreamId(payload) {
@@ -161,7 +224,7 @@ class Stream {
     }
 
     getQuery(payload) {
-        return payloadParsers[payload.type](payload);
+        return payloadParsers[payload.type][payload.mode](payload);
     }
 
     getMetadata(rows) {
@@ -175,11 +238,24 @@ class Stream {
         return metadata;
     }
 
-    async getDataAsync(pgPool) {
+    getDataAsync(pgPool) {
         // this.updating = true;
-        const res = asyncQuery(this.query, this.queryParams, pgPool);
-        res['payloadType'] = this.payload.type;
-        res['payloadMode'] = this.payload.mode;
+        
+        // const prom = asyncQuery(this.query, this.queryParams, pgPool);
+        // const res = { promise: prom, payloadType: this.payload.type, payloadMode: this.payload.mode };
+        // console.log(res);
+
+        const prom = asyncQuery(this.query, this.queryParams, pgPool);
+
+        let res;
+        if (this.payload.interval) {
+            res = { promise: prom, payloadType: this.payload.type, payloadMode: this.payload.mode, payloadInterval: this.payload.interval };
+        } else {
+            res = { promise: prom, payloadType: this.payload.type, payloadMode: this.payload.mode };
+        }
+
+        console.log(res);
+        
 
         // NOTE: Sometimes the number of rows for a query can change. eg; a new market gets
         //       enacted and it is a valid market for the stream query, it's results will be
@@ -356,6 +432,14 @@ class StreamingAPIServer {
                 // Parse the payloads to determine the requested streams.
                 for (let payload of JSON.parse(msg.toString()).payloads) {
 
+                    const err = Stream.verifyPayload(payload);
+                    if (err) {
+                        // Send error message to socket.
+
+                        // Close socket
+
+                    }
+                    
                     const streamId = Stream.getStreamId(payload);
                     
                     if (this.activeStreamIds.includes(streamId)) {
@@ -506,7 +590,7 @@ class StreamingAPIServer {
         // For each subscriber, collect promises for each stream and await data.
         for (let subscriber of Object.values(this.subscribers)) {
             subscriber.getData(this.pgPool);
-            subscriber.sendAsync(height);
+            subscriber.sendAsync(height, block.timestamp);
         }
 
         // // Run stream queries/aggregations.

@@ -115,13 +115,13 @@ blockEmitter.on('successfulInserts', (height) => {
     // const payload = { topic: 'persistence_status', messages: [ { value: Buffer.from(`{ topic: "trades", height: ${height}, status: "success" }`) } ] };
     const payload = { topic: 'persistence_status', messages: [msgValue] };
 
-    // kafkaProducer.send([payload], (err, result) => {
-    //     if (!err) {
-    //         console.log(result);
-    //     } else {
-    //         console.log(err);
-    //     }
-    // });
+    kafkaProducer.send([payload], (err, result) => {
+        if (!err) {
+            console.log(result);
+        } else {
+            console.log(err);
+        }
+    });
 
 });
 
@@ -139,13 +139,13 @@ blockEmitter.on('failedInserts', (height) => {
     // const payload = { topic: 'persistence_status', messages: [ { value: Buffer.from(`{ topic: "trades", height: ${height}, status: "failure" }`) } ] };
     const payload = { topic: 'persistence_status', messages: [msgValue] };
 
-    // kafkaProducer.send([payload], (err, result) => {
-    //     if (!err) {
-    //         console.log(result);
-    //     } else {
-    //         console.log(err);
-    //     }
-    // });
+    kafkaProducer.send([payload], (err, result) => {
+        if (!err) {
+            console.log(result);
+        } else {
+            console.log(err);
+        }
+    });
 
 });
 

@@ -4,6 +4,7 @@ build:
 	docker build markets-service/ -t data-hub/markets-mainnet && \
 	docker build assets-service/ -t data-hub/assets-mainnet && \
 	docker build trades-service/ -t data-hub/trades-mainnet && \
+	docker build orders-service/ -t data-hub/orders-mainnet && \
 	docker build broker-service-go/ -t data-hub/broker-go-mainnet && \
 	docker build api-service/ -t data-hub/api-mainnet && \
 	docker build vega-node/0.71.4/ -t data-hub/vega-node-mainnet && \

@@ -686,6 +686,42 @@ const marketQueries = {
 
         return [ query, [] ]
     },
+    orderBookDiffs(marketId, table) {
+        const fQuery = `
+        WITH ids AS (
+            SELECT
+                time_bucket('300000000000'::bigint, synth_timestamp) AS bucket,
+                DISTINCT id,
+                CASE
+                    WHEN status = 'STATUS_CANCELLED' THEN FALSE
+                    WHEN status = 'STATUS_STOPPED' THEN FLASE
+                    WHEN status = 'STATUS_EXPIRED' THEN FALSE
+                    ELSE TRUE
+                END AS is_live
+            FROM order_updates
+        )
+        `;
+
+        /*
+        id TEXT NOT NULL,
+        market_id TEXT NOT NULL,
+        party_id TEXT NOT NULL,
+        side TEXT NOT NULL,
+        price NUMERIC,
+        size NUMERIC,
+        remaining NUMERIC,
+        type TEXT NOT NULL,
+        created_at BIGINT,
+        synth_timestamp BIGINT,
+        status TEXT NOT NULL,
+        version INTEGER,
+        PRIMARY KEY (id, synth_timestamp, version)
+        */
+
+        const query = format(fQuery, table);
+
+        return [ query, [  ] ];
+    },
     totalFees(marketId) {
         const query = `
         SELECT sum(fees_paid) AS total_fees,

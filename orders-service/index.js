@@ -2,6 +2,8 @@ const { orderEnums, orderEnumMappings } = require('./order-enums.js');
 const { Client, Pool } = require('pg');
 const format = require('pg-format');
 const { performance } = require('node:perf_hooks');
+const { RecentBlocks } = require('./ringBuffers.js');
+const EventEmitter = require('node:events');
 
 const pgClient = new Client({
     host: process.env.TIMESCALEDB_HOST,
@@ -32,8 +34,14 @@ const kafkaClient = new kafka.KafkaClient({ kafkaHost: kafkaBrokers });
 // const kafkaAdmin = new kafka.Admin(kafkaClient);
 let kafkaBlockConsumer;
 let kafkaConsumer;
+let kafkaProducer;
 
-const { RecentBlocks } = require('./ringBuffers.js');
+const formattedOrderUpdatesBatch = [];
+const flushFormattedBatchInterval = setInterval(() => {
+    if (formattedOrderUpdatesBatch.length == 0 || formattedOrderUpdatesBatch.length == 1) return;
+    batchPersistOrderUpdates(formattedOrderUpdatesBatch.slice());
+    formattedOrderUpdatesBatch.length = 0;
+}, 200);
 
 const orderQueue = [];
 const toInsert = [];
@@ -124,6 +132,23 @@ INSERT INTO order_updates (
     status,
     version
 ) values %L RETURNING *;`
+
+const fInsertOrderUpdates = `
+INSERT INTO order_updates (
+    id,
+    market_id,
+    party_id,
+    side,
+    price,
+    size,
+    remaining,
+    type,
+    created_at,
+    synth_timestamp,
+    status,
+    version
+) SELECT DISTINCT * FROM ( VALUES %s ) t ON CONFLICT DO NOTHING;
+`
 
 const fInsertDiffs = `
 INSERT INTO order_book_diffs (
@@ -331,11 +356,81 @@ const flushOrderQueue = () => {
 
 flushOrderQueueInterval = setInterval(flushOrderQueue, 50);
 
+const replaying = true;
+// const replaying = false;
+const busEventBlockMap = {};
+const blockEmitter = new EventEmitter();
+
+blockEmitter.on('noOrders', async (height) => {
+    
+    console.log(`No orders for height ${height}`);
+
+    const msgValue = `{ "topic": "orders", "height": ${height}, "status": "success" }`;
+
+    const payload = { topic: 'persistence_status', messages: [msgValue] };
+
+    kafkaProducer.send([payload], (err, result) => {
+        if (!err) {
+            console.log(result);
+        } else {
+            console.log(err);
+        }
+    });
+
+})
+
+blockEmitter.on('successfulInserts', (height) => {
+
+    console.log(`Successfully inserted block with height: ${height}`);
+
+    // Fire off event that triggers API serice to send off data for that particular height.
+    // Should the event be launched into Kafka for it to handle or would it be wise to build
+    // and API/RPC on the websocket API service that this service can call directly?
+
+    const msgValue = `{ "topic": "orders", "height": ${height}, "status": "success" }`;
+
+    const payload = { topic: 'persistence_status', messages: [msgValue] };
+
+    kafkaProducer.send([payload], (err, result) => {
+        if (!err) {
+            console.log(result);
+        } else {
+            console.log(err);
+        }
+    });
+
+});
+
+blockEmitter.on('failedInserts', (height) => {
+    
+    console.log(`Failed to insert orders at height: ${height}`);
+
+    // What should the workflow be for this?
+    //
+    //  - Retry inserts
+    //  - Send event to websocket API to notify of failure.
+
+    const msgValue = `{ "topic": "orders", "height": ${height}, "status": "failure" }`;
+
+    const payload = { topic: 'persistence_status', messages: [msgValue] };
+
+    kafkaProducer.send([payload], (err, result) => {
+        if (!err) {
+            console.log(result);
+        } else {
+            console.log(err);
+        }
+    });
+
+});
+
+
 const start = () => {
 
     // Connect to Kafka.
     const kafkaClient = new kafka.KafkaClient({ kafkaHost: kafkaBrokers });
     const kafkaAdmin = new kafka.Admin(kafkaClient);
+    kafkaProducer = new kafka.Producer(kafkaClient);
 
     // Connect to postgres.
     pgPool.connect((err) => {
@@ -344,31 +439,31 @@ const start = () => {
         }
     });
 
-    pgClient.connect((err) => {
-        if (!err) {
-            console.log("Connected to postgres...");
-            pgClient.query(createTablesQuery, (err, res) => {
-                if (!err) {
-                    console.log("Created tables.");
-                    console.log(res);
-                    // Set integer time.
-                    pgClient.query(setIntegerNowFunc, (err, res) => {
-                        if(!err) {
-                            console.log(res);
-                            // createContAggs(pgClient, ["openInterest", "pnls"]);
+    // pgClient.connect((err) => {
+    //     if (!err) {
+    //         console.log("Connected to postgres...");
+    //         pgClient.query(createTablesQuery, (err, res) => {
+    //             if (!err) {
+    //                 console.log("Created tables.");
+    //                 console.log(res);
+    //                 // Set integer time.
+    //                 pgClient.query(setIntegerNowFunc, (err, res) => {
+    //                     if(!err) {
+    //                         console.log(res);
+    //                         // createContAggs(pgClient, ["openInterest", "pnls"]);
                             
-                        } else {
-                            console.log(err);
-                        };
-                    });
-                } else {
-                    console.log(err);
-                };
-            });
-        } else {
-            console.log(err);
-        };
-    });
+    //                     } else {
+    //                         console.log(err);
+    //                     };
+    //                 });
+    //             } else {
+    //                 console.log(err);
+    //             };
+    //         });
+    //     } else {
+    //         console.log(err);
+    //     };
+    // });
 
     const topic = [{
         topic: "orders",
@@ -389,50 +484,228 @@ const start = () => {
     });
 };
 
-
 const setConsumer = () => {
 
-    const options = {
-        kafkaHost: kafkaBrokers,
-        groupId: 'orders-group',
-        // encoding: 'buffer',
-        fetchMaxBytes: 2 * 1024 * 1024
-    };
-
-    const kafkaConsumer = new kafka.ConsumerGroup(options, []);
-
-    // let startTime = performance.now();
-    // let msgCount = 0;
-
-    kafkaConsumer.on('message', (msg) => {
-        // msgCount++;
-        // if (msgCount % 1000 == 0) {
-        //     console.log(`Time to poll 1000 messages: ${performance.now() - startTime}`);
-        //     startTime = performance.now();
-        // }
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "orders-group-02" });
+    kafkaConsumer.on("message", (msg) => {
+        // console.log("New message");
         const evt = JSON.parse(msg.value);
-        if (msg.topic == "blocks") {
-            // console.log(msg);
-            if (evt.Event.BeginBlock) recentBlocks.push(evt.Event.BeginBlock);
-        }
-        if (msg.topic == "orders") {
+
+        // Logic for synchronous block inserts.
+        if (!replaying) {
             if (evt.Event.BeginBlock) {
-                recentBlocks.push(evt.Event.BeginBlock);
-            }
-            if (evt.Event.Order) {
                 // console.log(evt);
-                orderQueue.push(evt);
+                busEventBlockMap[evt.Event.BeginBlock.height] = [];
+                busEventBlockMap[evt.Event.BeginBlock.height].timestamp = evt.Event.BeginBlock.timestamp;
             }
+
             if (evt.Event.ExpiredOrders) {
+                // Contains a marketId and an array of orderIds
+
+                const idParts = evt.id.split('-');
+                const height = idParts[0];
+                const evtIndex = idParts[1];
+                const timestamp = busEventBlockMap[height].timestamp;
+                // NOTE: This is one of the only cases in which we allow the synthetic timestamp to be non-unique
+                //       between rows of a table. This is only acceptable in this case because there is a composite
+                //       index on the order_updates table that enforces uniqueness between rows.
+                const synthTimestamp = BigInt(timestamp) + BigInt(evtIndex);
+
+                const marketId = evt.Event.ExpiredOrders.market_id;
+                const orderIds = evt.Event.ExpiredOrders.order_ids;
+
+                // id TEXT NOT NULL,
+                // market_id TEXT NOT NULL,
+                // party_id TEXT NOT NULL,
+                // side TEXT NOT NULL,
+                // price NUMERIC,
+                // size NUMERIC,
+                // remaining NUMERIC,
+                // type TEXT NOT NULL,
+                // created_at BIGINT,
+                // synth_timestamp BIGINT,
+                // status TEXT NOT NULL,
+                // version INTEGER,
+
+                for (let id of orderIds) {
+
+                    const orderUpdate = {
+                        id: id,
+                        market_id: marketId,
+                        party_id: 'UNSPECIFIED',
+                        side: 'SIDE_UNSPECIFIED',
+                        price: 0,
+                        size: 0,
+                        remaining: 0,
+                        type: 'TYPE_UNSPECIFIED',
+                        created_at: 0,
+                        synth_timestamp: synthTimestamp,
+                        status: 'STATUS_EXPIRED',
+                        verison: 0
+                    };
+
+                    busEventBlockMap[height].push(formatOrderUpdate(orderUpdate));
+                }
+
+            }
+
+            if (evt.Event.Order) {
+                
+                const order = evt.Event.Order;
+                const idParts = evt.id.split('-');
+                const height = idParts[0];
+
+                // Create synthetic timestamp for each order
+                const timestamp = busEventBlockMap[height].timestamp;
+                const synthTimestamp = BigInt(timestamp) + BigInt(idParts[1]);
+                order["synth_timestamp"] = synthTimestamp;
+
+                // convert enums to their respective text values
+                order.side = orderEnumMappings.side[order.side];
+                order.type = orderEnumMappings.type[order.type];
+                order.status = orderEnumMappings.status[order.status];
+                
+                busEventBlockMap[height].push(formatOrderUpdate(order));
+            };
+
+            if (evt.Event.EndBlock) {
+                
+                if (Object.values(busEventBlockMap).length == 0) {
+                    return;
+                }
+
+                const height = evt.Event.EndBlock.height;
+                if (busEventBlockMap[height].length) {
+                    blockPersistOrderUpdates(height, busEventBlockMap[height].slice());
+                } else {
+                    blockEmitter.emit('noOrders', height);
+                }
+                delete busEventBlockMap[height-1000];
+
+            };
+
+        } else {
+
+            if (evt.Event.BeginBlock) {
                 // console.log(evt);
-                orderQueue.push(evt);
+                busEventBlockMap[evt.Event.BeginBlock.height] = [];
+                busEventBlockMap[evt.Event.BeginBlock.height].timestamp = evt.Event.BeginBlock.timestamp;
+                delete busEventBlockMap[evt.Event.BeginBlock.height - 10000];
             }
-            if (evt.Event.DistressedOrdersClosed) {
-                console.log(evt);
+
+            if (evt.Event.Order) {
+            
+                const order = evt.Event.Order;
+
+                // Extract evt index in block from index
+                const id = evt.id;
+                const idParts = id.split('-');
+                // console.log(idParts);
+                
+                // Create synthetic timestamp for each order
+                const timestamp = busEventBlockMap[height].timestamp;
+                const synthTimestamp = BigInt(timestamp) + BigInt(idParts[1]);
+                order["synth_timestamp"] = synthTimestamp;
+    
+                // convert enums to their respective text values
+                order.side = orderEnumMappings.side[order.side];
+                order.type = orderEnumMappings.type[order.type];
+                order.status = orderEnumMappings.status[order.status];
+    
+                formattedOrderUpdatesBatch.push(formatOrderUpdate(order));
+                if (formattedOrderUpdatesBatch.length >= 500) {
+                    batchPersistOrderUpdates(formattedOrderUpdatesBatch.slice());
+                    formattedOrderUpdatesBatch.length = 0;
+                }
             }
+
+            if (evt.Event.ExpiredOrders) {
+                // Contains a marketId and an array of orderIds
+
+                const idParts = evt.id.split('-');
+                const height = idParts[0];
+                const evtIndex = idParts[1];
+                const timestamp = busEventBlockMap[height].timestamp;
+                // NOTE: This is one of the only cases in which we allow the synthetic timestamp to be non-unique
+                //       between rows of a table. This is only acceptable in this case because there is a composite
+                //       index on the order_updates table that enforces uniqueness between rows.
+                const synthTimestamp = BigInt(timestamp) + BigInt(evtIndex);
+
+                const marketId = evt.Event.ExpiredOrders.market_id;
+                const orderIds = evt.Event.ExpiredOrders.order_ids;
+
+                for (let id of orderIds) {
+
+                    const orderUpdate = {
+                        id: id,
+                        market_id: marketId,
+                        party_id: 'UNSPECIFIED',
+                        side: 'SIDE_UNSPECIFIED',
+                        price: 0,
+                        size: 0,
+                        remaining: 0,
+                        type: 'TYPE_UNSPECIFIED',
+                        created_at: 0,
+                        synth_timestamp: synthTimestamp,
+                        status: 'STATUS_STOPPED',
+                        verison: 0
+                    };
+
+                    formattedOrderUpdatesBatch.push(formatOrderUpdate(orderUpdate));
+                if (formattedOrderUpdatesBatch.length >= 500) {
+                    batchPersistOrderUpdates(formattedOrderUpdatesBatch.slice());
+                    formattedOrderUpdatesBatch.length = 0;
+                }
+                }
+
+            }
+
         }
     });
-    kafkaConsumer.addTopics([{ topic: 'orders', offset: 0 }], () => console.log("topic added"));
+    kafkaConsumer.addTopics([{ topic: 'trades', offset: 0 }], () => console.log("topic added"));
+
+
+    // const options = {
+    //     kafkaHost: kafkaBrokers,
+    //     groupId: 'orders-group',
+    //     // encoding: 'buffer',
+    //     fetchMaxBytes: 2 * 1024 * 1024
+    // };
+
+    // const kafkaConsumer = new kafka.ConsumerGroup(options, []);
+
+    // // let startTime = performance.now();
+    // // let msgCount = 0;
+
+    // kafkaConsumer.on('message', (msg) => {
+    //     // msgCount++;
+    //     // if (msgCount % 1000 == 0) {
+    //     //     console.log(`Time to poll 1000 messages: ${performance.now() - startTime}`);
+    //     //     startTime = performance.now();
+    //     // }
+    //     const evt = JSON.parse(msg.value);
+    //     if (msg.topic == "blocks") {
+    //         // console.log(msg);
+    //         if (evt.Event.BeginBlock) recentBlocks.push(evt.Event.BeginBlock);
+    //     }
+    //     if (msg.topic == "orders") {
+    //         if (evt.Event.BeginBlock) {
+    //             recentBlocks.push(evt.Event.BeginBlock);
+    //         }
+    //         if (evt.Event.Order) {
+    //             // console.log(evt);
+    //             orderQueue.push(evt);
+    //         }
+    //         if (evt.Event.ExpiredOrders) {
+    //             // console.log(evt);
+    //             orderQueue.push(evt);
+    //         }
+    //         if (evt.Event.DistressedOrdersClosed) {
+    //             console.log(evt);
+    //         }
+    //     }
+    // });
+    // kafkaConsumer.addTopics([{ topic: 'orders', offset: 0 }], () => console.log("topic added"));
 };
 
 // const setConsumer = (kafkaConsumer) => {
@@ -475,10 +748,24 @@ const setConsumer = () => {
 
 const formatOrder = (order) => {
 
-    // Convert enums into their text values
-    order.side = orderEnumMappings.side[order.side];
-    order.type = orderEnumMappings.type[order.type];
-    order.status = orderEnumMappings.status[order.status];
+    // Convert to array format
+    const formatted = [
+        order.id, order.market_id, order.party_id, order.side, order.price, order.size, order.remaining,
+        order.type, order.created_at, order.synth_timestamp, order.status, order.version
+    ];
+
+    // Set undefined types for when order is stopped
+    if (order.status == orderEnumMappings.status[orderEnums.status.STATUS_STOPPED]) {
+        formatted[5] = "0";
+        formatted[6] = "0";
+        formatted[7] = "TYPE_UNSPECIFIED";
+        formatted[11] = "0";
+    }
+
+    return formatted;
+}
+
+const formatOrderUpdate = (order) => {
 
     // Convert to array format
     const formatted = [
@@ -490,12 +777,81 @@ const formatOrder = (order) => {
     if (order.status == orderEnumMappings.status[orderEnums.status.STATUS_STOPPED]) {
         formatted[5] = "0";
         formatted[6] = "0";
-        formatted[7] = "N/A";
+        formatted[7] = "TYPE_UNSPECIFIED";
         formatted[11] = "0";
     }
 
     return formatted;
+}
 
+const blockPersistOrderUpdates = (height, rows) => {
+
+    const startTime = performance.now();
+
+    const typeCastings = [
+        '::text', '::text', '::text', '::text', '::numeric', '::numeric', '::numeric', '::text',
+        '::bigint', '::bigint', '::text', '::integer'
+    ];
+
+    let template = `(`;
+    for (let elem of rows[0]) {
+        template = template + format(`%L%%s, `, elem);
+    };
+
+    let formatted;
+    if (rows.length == 1) {
+        formatted = format(fInsertOrderUpdates, format(template.slice(0,-2)+')', ...typeCastings));
+    } else {
+        formatted = format(fInsertOrderUpdates, format(template.slice(0,-2)+')', ...typeCastings)+', '+format('%L', rows.slice(1)))
+    }
+
+    pgPool.query(formatted, [], (err, res) => { // format(fInsertTrades, rows)
+        if (!err) {
+            
+            console.log(`Block inserts successful for height ${height}`);
+            console.log(`Time elapsed: ${performance.now() - startTime}ms`);
+            blockEmitter.emit('successfulInserts', height);
+
+        } else {
+            console.log(`Error performing inserts for height ${height}`);
+            console.log(err);
+            console.log(`Error Code: `, err.code);
+            if (err.code == '23505') { // Duplicate key violates unique constraint
+                // Retry inserts individually
+
+            }
+            blockEmitter.emit('failedInserts', height);
+        }
+    });
+}
+
+const batchPersistOrderUpdates = (rows) => {
+    
+    const typeCastings = [
+        '::text', '::text', '::text', '::text', '::numeric', '::numeric', '::numeric', '::text',
+        '::bigint', '::bigint', '::text', '::integer'
+    ];
+
+    let template = `(`;
+    for (let elem of rows[0]) {
+        template = template + format(`%L%%s, `, elem);
+    };
+
+    // console.log(format(fInsertTrades, format(template.slice(0,-2)+')', ...typeCastings)+', '+format('%L', rows.slice(1))));
+
+    pgPool.query(format(fInsertOrderUpdates, format(template.slice(0,-2)+')', ...typeCastings)+', '+format('%L', rows.slice(1))), [], (err, res) => { // format(fInsertTrades, rows)
+        if (!err) {
+            console.log("Batch inserts successful");
+        } else {
+            console.log(`Error performing inserts`);
+            console.log(err);
+            console.log(`Error Code: `, err.code);
+            if (err.code == '23505') { // Duplicate key violates unique constraint
+                // Retry inserts individually
+
+            }
+        }
+    });
 }
 
 const convertOrderToDiff = (order) => {

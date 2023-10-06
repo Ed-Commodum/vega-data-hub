@@ -67,7 +67,7 @@ metadata:
 spec:
   storageClassName: ""
   capacity:
-    storage: 60Gi
+    storage: 150Gi
   accessModes:
     - ReadWriteOnce
   hostPath:
@@ -84,7 +84,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 58Gi
+      storage: 149Gi
 ---
 apiVersion: v1
 kind: Service
@@ -513,6 +513,32 @@ spec:
       - name: TIMESCALEDB_PORT
         value: "5432"
 ---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: orders-pod-mainnet
+  labels:
+    app: orders-pod-mainnet
+spec:
+  restartPolicy: Never
+  containers:
+  - name: orders-mainnet
+    image: data-hub/orders-mainnet
+    imagePullPolicy: Never
+    # resources:
+    #   limits:
+    #     cpu: 1000m
+    #     memory: 900Mi
+    #   requests:
+    #     cpu: 1000m
+    #     memory: 900Mi
+    env:
+    - name: KAFKA_BROKERS
+      value: "$(KAFKA_SERVICE_MAINNET_SERVICE_HOST):9092"
+    - name: TIMESCALEDB_HOST
+      value: timescaledb-service-mainnet
+    - name: TIMESCALEDB_PORT
+      value: "5432"
 # ---
 # apiVersion: v1
 # kind: Pod
