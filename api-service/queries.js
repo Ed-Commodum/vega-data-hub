@@ -688,19 +688,98 @@ const marketQueries = {
     },
     orderBookDiffs(marketId, table) {
         const fQuery = `
+        
+        `;
+
+
+        // STATUS_ACTIVE
+        // STATUS_CANCELLED
+        // STATUS_STOPPED
+        // STATUS_EXPIRED
+        // STATUS_FILLED
+
+
+
+        // Experiments below have all failed, attempt with window functions. Run the window function
+        // queries using a trigger on insertion of an EndBlock event. Also experiment with a single
+        // window function query to aggregate an entire history of order updates. This could be called 
+        // one after replay or periodically during replay.
+
+
+        // Maybe we should collect a time ordered section of the underlying table first to
+        // use in the individual SELECT statements?
+        `
         WITH ids AS (
             SELECT
-                time_bucket('300000000000'::bigint, synth_timestamp) AS bucket,
-                DISTINCT id,
+                time_bucket('500000000'::bigint, synth_timestamp) AS bucket,
+                id,
                 CASE
-                    WHEN status = 'STATUS_CANCELLED' THEN FALSE
-                    WHEN status = 'STATUS_STOPPED' THEN FLASE
-                    WHEN status = 'STATUS_EXPIRED' THEN FALSE
+                    WHEN last(status, synth_timestamp) = 'STATUS_CANCELLED' THEN FALSE
+                    WHEN last(status, synth_timestamp) = 'STATUS_STOPPED' THEN FALSE
+                    WHEN last(status, synth_timestamp) = 'STATUS_EXPIRED' THEN FALSE
+                    WHEN last(status, synth_timestamp) = 'STATUS_FILLED' THEN FALSE
+                    WHEN last(status, synth_timestamp) = 'STATUS_PARTIALLY_FILLED' THEN FALSE
                     ELSE TRUE
                 END AS is_live
             FROM order_updates
+            WHERE synth_timestamp < (select min(synth_timestamp) from order_updates) + 60000000000
+            GROUP BY id, bucket
+            ORDER BY bucket ASC
+            LIMIT 10
+        ), WITH amounts AS (
+            SELECT
+                time_bucket('1000000000'::bigint, synth_timestamp) AS bucket,
+                id
+            FROM order_updates
         )
-        `;
+        `
+
+        `
+        WITH ids AS (
+            SELECT
+                time_bucket('500000000'::bigint, synth_timestamp) AS bucket,
+                id,
+                status
+            FROM order_updates
+            WHERE synth_timestamp < (select min(synth_timestamp) from order_updates) + 60000000000
+            AND status != 'STATUS_CANCELLED'
+            AND status != 'STATUS_STOPPED'
+            AND status != 'STATUS_EXPIRED'
+            AND status != 'STATUS_FILLED'
+            AND status != 'STATUS_PARTIALLY_FILLED'
+            ORDER BY bucket ASC
+            LIMIT 10
+        )
+        `
+
+
+        `
+        WITH min_synth_ts AS (
+            SELECT
+                min(synth_timestamp) AS value
+            FROM order_updates
+        ) 
+        SELECT z.*
+        FROM (
+            SELECT
+                time_bucket('500000000'::bigint, synth_timestamp) AS bucket
+            FROM order_updates
+            WHERE synth_timestamp < (select value from min_synth_ts) + 300000000000
+            ORDER BY bucket ASC
+            LIMIT 1
+        ) x JOIN LATERAL (
+            SELECT
+                time_bucket('500000000'::bigint, synth_timestamp) AS bucket,
+                id,
+                status,
+                last(remaining, synth_timestamp)
+            FROM order_updates y
+            WHERE synth_timestamp < (select value from min_synth_ts) + 300000000000
+            GROUP BY id, bucket
+            ORDER BY bucket ASC
+        ) z ON bucket
+        `
+
 
         /*
         id TEXT NOT NULL,

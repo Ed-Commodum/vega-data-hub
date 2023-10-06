@@ -41,7 +41,7 @@ const flushFormattedBatchInterval = setInterval(() => {
     if (formattedOrderUpdatesBatch.length == 0 || formattedOrderUpdatesBatch.length == 1) return;
     batchPersistOrderUpdates(formattedOrderUpdatesBatch.slice());
     formattedOrderUpdatesBatch.length = 0;
-}, 200);
+}, 300);
 
 const orderQueue = [];
 const toInsert = [];
@@ -484,12 +484,33 @@ const start = () => {
     });
 };
 
-const setConsumer = () => {
+let orderCount = 0;
+let expiredCount = 0;
 
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "orders-group-02" });
+setInterval(() => {
+    console.log("OrderCount: ", orderCount);
+    console.log("ExpiredCount: ", expiredCount);
+}, 50);
+
+const setConsumer = (kafkaConsumer) => {
+
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "orders-group-11" });
     kafkaConsumer.on("message", (msg) => {
         // console.log("New message");
         const evt = JSON.parse(msg.value);
+
+        // Note: We should consider filtering out all TAKER orders before instering orders into the db.
+        //       The reasoning for this is we want to aggregate orders into order book snapshots, and
+        //       taker orders, by definition, will never sit on the book.
+        // Orders to ignore:
+        //  - STATUS_PARTIALLY_FILLED These are always IOC orders and are not allowed during auction
+        //  - STATUS_REJECTED These never trade
+        //  - STATUS_PARKED These are off the books
+        //  - TIME_IN_FORCE_IOC
+        //  - TIME_IN_FORCE_FOK
+        //  
+
+
 
         // Logic for synchronous block inserts.
         if (!replaying) {
@@ -541,7 +562,7 @@ const setConsumer = () => {
                         created_at: 0,
                         synth_timestamp: synthTimestamp,
                         status: 'STATUS_EXPIRED',
-                        verison: 0
+                        version: 0
                     };
 
                     busEventBlockMap[height].push(formatOrderUpdate(orderUpdate));
@@ -590,16 +611,19 @@ const setConsumer = () => {
                 // console.log(evt);
                 busEventBlockMap[evt.Event.BeginBlock.height] = [];
                 busEventBlockMap[evt.Event.BeginBlock.height].timestamp = evt.Event.BeginBlock.timestamp;
-                delete busEventBlockMap[evt.Event.BeginBlock.height - 10000];
+                delete busEventBlockMap[evt.Event.BeginBlock.height - 25000];
             }
 
             if (evt.Event.Order) {
             
+                orderCount++
+
                 const order = evt.Event.Order;
 
                 // Extract evt index in block from index
                 const id = evt.id;
                 const idParts = id.split('-');
+                const height = idParts[0];
                 // console.log(idParts);
                 
                 // Create synthetic timestamp for each order
@@ -621,6 +645,9 @@ const setConsumer = () => {
 
             if (evt.Event.ExpiredOrders) {
                 // Contains a marketId and an array of orderIds
+                console.log(evt.id);
+
+                expiredCount++
 
                 const idParts = evt.id.split('-');
                 const height = idParts[0];
@@ -647,8 +674,8 @@ const setConsumer = () => {
                         type: 'TYPE_UNSPECIFIED',
                         created_at: 0,
                         synth_timestamp: synthTimestamp,
-                        status: 'STATUS_STOPPED',
-                        verison: 0
+                        status: 'STATUS_EXPIRED',
+                        version: "0"
                     };
 
                     formattedOrderUpdatesBatch.push(formatOrderUpdate(orderUpdate));
@@ -662,7 +689,7 @@ const setConsumer = () => {
 
         }
     });
-    kafkaConsumer.addTopics([{ topic: 'trades', offset: 0 }], () => console.log("topic added"));
+    kafkaConsumer.addTopics([{ topic: 'orders', offset: 0 }], () => console.log("topic added"));
 
 
     // const options = {
@@ -773,6 +800,8 @@ const formatOrderUpdate = (order) => {
         order.type, order.created_at, order.synth_timestamp, order.status, order.version
     ];
 
+    // console.log(formatted)
+
     // Set undefined types for when order is stopped
     if (order.status == orderEnumMappings.status[orderEnums.status.STATUS_STOPPED]) {
         formatted[5] = "0";
@@ -827,6 +856,8 @@ const blockPersistOrderUpdates = (height, rows) => {
 
 const batchPersistOrderUpdates = (rows) => {
     
+    console.log("Recieved new rows to insert...")
+
     const typeCastings = [
         '::text', '::text', '::text', '::text', '::numeric', '::numeric', '::numeric', '::text',
         '::bigint', '::bigint', '::text', '::integer'
