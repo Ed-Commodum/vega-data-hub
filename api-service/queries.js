@@ -700,10 +700,44 @@ const marketQueries = {
 
 
 
-        // Experiments below have all failed, attempt with window functions. Run the window function
+        // Experiments below have all failed, attempt with window functions instead. Run the window function
         // queries using a trigger on insertion of an EndBlock event. Also experiment with a single
         // window function query to aggregate an entire history of order updates. This could be called 
         // one after replay or periodically during replay.
+        // case when STATUS_CANCELLED  0 - remaining
+        // case when STATUS_STOPPED    0 - prev_remaining
+        // case when STATUS_EXPIRED    0 - prev_remaining
+        // case when STATUS_FILLED     0 - prev_remaining
+        // case when STATUS_PARKED     0 - remaining
+        // case when STATUS_ACTIVE     remaining - prev_remaining
+        `
+        SELECT  id,
+                party_id,
+                timestamp,
+                status,
+                version,
+                diff              
+        FROM (
+            SELECT  id,
+                    party_id,
+                    block_ts AS timestamp,
+                    status,
+                    version,
+                    CASE    WHEN status='STATUS_ACTIVE'     THEN remaining - (lag(remaining, 1, 0) OVER w1)
+                            WHEN status='STATUS_STOPPED'    THEN remaining - (lag(remaining, 1, 0) OVER w1)
+                            WHEN status='STATUS_EXPIRED'    THEN remaining - (lag(remaining, 1, 0) OVER w1)
+                            WHEN status='STATUS_FILLED'     THEN 0 - (lag(remaining, 1, 0) OVER w1)
+                            WHEN status='STATUS_CANCELLED'  THEN -remaining
+                            WHEN status='STATUS_PARKED'     THEN -remaining
+                    END AS diff
+            FROM order_updates
+            WHERE block_ts < (SELECT min(block_ts) FROM order_updates) + 60000000000
+            WINDOW w1 AS (PARTITION BY id ORDER BY block_ts)) a
+        ORDER BY timestamp ASC
+        LIMIT 20;
+        `
+
+
 
 
         // Maybe we should collect a time ordered section of the underlying table first to

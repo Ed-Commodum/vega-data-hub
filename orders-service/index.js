@@ -61,11 +61,16 @@ CREATE TABLE IF NOT EXISTS order_updates (
     remaining NUMERIC,
     type TEXT NOT NULL,
     created_at BIGINT,
+    block_ts BIGINT,
     synth_timestamp BIGINT,
     status TEXT NOT NULL,
     version INTEGER,
     PRIMARY KEY (id, synth_timestamp, version)
 );
+
+CREATE INDEX order_updates_block_ts_idx ON order_updates(block_ts);
+CREATE INDEX order_updates_synth_ts_idx ON order_updates(synth_timestamp);
+CREATE INDEX order_updates_market_id_idx ON order_updates(market_id);
 
 CREATE TABLE IF NOT EXISTS orders (
     id TEXT NOT NULL,
@@ -128,6 +133,7 @@ INSERT INTO order_updates (
     remaining,
     type,
     created_at,
+    block_ts,
     synth_timestamp,
     status,
     version
@@ -144,6 +150,7 @@ INSERT INTO order_updates (
     remaining,
     type,
     created_at,
+    block_ts,
     synth_timestamp,
     status,
     version
@@ -172,8 +179,11 @@ INSERT INTO order_updates (
 
 const setIntegerNowFunc = `
 SELECT set_integer_now_func('order_updates', 'current_time_ns');
-SELECT set_integer_now_func('orders', 'current_time_ns');
 `;
+
+// `
+// SELECT set_integer_now_func('orders', 'current_time_ns');
+// `;
 
 const continuousAggregates = {
     // To create order snapshots we need to capture each change (diff) in the order books within
@@ -494,7 +504,7 @@ setInterval(() => {
 
 const setConsumer = (kafkaConsumer) => {
 
-    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "orders-group-11" });
+    kafkaConsumer = new kafka.Consumer(kafkaClient, [], { groupId: "orders-group-16" });
     kafkaConsumer.on("message", (msg) => {
         // console.log("New message");
         const evt = JSON.parse(msg.value);
@@ -505,9 +515,10 @@ const setConsumer = (kafkaConsumer) => {
         // Orders to ignore:
         //  - STATUS_PARTIALLY_FILLED These are always IOC orders and are not allowed during auction
         //  - STATUS_REJECTED These never trade
-        //  - STATUS_PARKED These are off the books
         //  - TIME_IN_FORCE_IOC
         //  - TIME_IN_FORCE_FOK
+        //  
+        // Or just filter out all orders with TYPE_MARKET
         //  
 
 
@@ -544,6 +555,7 @@ const setConsumer = (kafkaConsumer) => {
                 // remaining NUMERIC,
                 // type TEXT NOT NULL,
                 // created_at BIGINT,
+                // block_ts BIGINT,
                 // synth_timestamp BIGINT,
                 // status TEXT NOT NULL,
                 // version INTEGER,
@@ -560,6 +572,7 @@ const setConsumer = (kafkaConsumer) => {
                         remaining: 0,
                         type: 'TYPE_UNSPECIFIED',
                         created_at: 0,
+                        block_ts: timestamp,
                         synth_timestamp: synthTimestamp,
                         status: 'STATUS_EXPIRED',
                         version: 0
@@ -572,14 +585,18 @@ const setConsumer = (kafkaConsumer) => {
 
             if (evt.Event.Order) {
                 
+                // Ignore market orders
+                if (evt.Event.Order.type == orderEnums.type.TYPE_MARKET) return 
+
                 const order = evt.Event.Order;
                 const idParts = evt.id.split('-');
                 const height = idParts[0];
 
-                // Create synthetic timestamp for each order
+                // Create synthetic timestamp and block timestamp for each order
                 const timestamp = busEventBlockMap[height].timestamp;
                 const synthTimestamp = BigInt(timestamp) + BigInt(idParts[1]);
                 order["synth_timestamp"] = synthTimestamp;
+                order["block_ts"] = timestamp;
 
                 // convert enums to their respective text values
                 order.side = orderEnumMappings.side[order.side];
@@ -616,6 +633,9 @@ const setConsumer = (kafkaConsumer) => {
 
             if (evt.Event.Order) {
             
+                // Ignore market orders
+                if (evt.Event.Order.type == orderEnums.type.TYPE_MARKET) return 
+
                 orderCount++
 
                 const order = evt.Event.Order;
@@ -630,6 +650,7 @@ const setConsumer = (kafkaConsumer) => {
                 const timestamp = busEventBlockMap[height].timestamp;
                 const synthTimestamp = BigInt(timestamp) + BigInt(idParts[1]);
                 order["synth_timestamp"] = synthTimestamp;
+                order["block_ts"] = timestamp;
     
                 // convert enums to their respective text values
                 order.side = orderEnumMappings.side[order.side];
@@ -673,6 +694,7 @@ const setConsumer = (kafkaConsumer) => {
                         remaining: 0,
                         type: 'TYPE_UNSPECIFIED',
                         created_at: 0,
+                        block_ts: timestamp,
                         synth_timestamp: synthTimestamp,
                         status: 'STATUS_EXPIRED',
                         version: "0"
@@ -797,7 +819,7 @@ const formatOrderUpdate = (order) => {
     // Convert to array format
     const formatted = [
         order.id, order.market_id, order.party_id, order.side, order.price, order.size, order.remaining,
-        order.type, order.created_at, order.synth_timestamp, order.status, order.version
+        order.type, order.created_at, order.block_ts, order.synth_timestamp, order.status, order.version
     ];
 
     // console.log(formatted)
@@ -807,7 +829,12 @@ const formatOrderUpdate = (order) => {
         formatted[5] = "0";
         formatted[6] = "0";
         formatted[7] = "TYPE_UNSPECIFIED";
-        formatted[11] = "0";
+        formatted[12] = "0";
+    }
+
+    // Set remaining for FILLED orders to 0
+    if (order.status == orderEnumMappings.status[orderEnums.status.STATUS_FILLED]) {
+        formatted[6] = "0";
     }
 
     return formatted;
@@ -819,7 +846,7 @@ const blockPersistOrderUpdates = (height, rows) => {
 
     const typeCastings = [
         '::text', '::text', '::text', '::text', '::numeric', '::numeric', '::numeric', '::text',
-        '::bigint', '::bigint', '::text', '::integer'
+        '::bigint', '::bigint', '::bigint', '::text', '::integer'
     ];
 
     let template = `(`;
@@ -860,7 +887,7 @@ const batchPersistOrderUpdates = (rows) => {
 
     const typeCastings = [
         '::text', '::text', '::text', '::text', '::numeric', '::numeric', '::numeric', '::text',
-        '::bigint', '::bigint', '::text', '::integer'
+        '::bigint', '::bigint', '::bigint', '::text', '::integer'
     ];
 
     let template = `(`;
