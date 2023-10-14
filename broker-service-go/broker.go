@@ -8,11 +8,11 @@ import (
 	"os"
 	"sync"
 	// "strings"
-	"encoding/json"
-	"strconv"
+	// "encoding/json"
+	// "strconv"
 	"time"
 
-	"github.com/tidwall/sjson"
+	// "github.com/tidwall/sjson"
 
 	// "go.nanomsg.org/mangos/v3"
 	// mangosErr "go.nanomsg.org/mangos/v3/errors"
@@ -108,11 +108,13 @@ func newBroker() *Broker {
 	}
 
 	busEventTopicMap := GetBusEventTopicMap()
+
 	topicSet := make(map[string]void)
+
 	for _, v := range busEventTopicMap {
-		if v == "blocks" {
-			continue
-		}
+		// if v == "blocks" {
+		// 	continue
+		// }
 		topicSet[v] = member
 	}
 
@@ -202,10 +204,28 @@ func (b Broker) decode(wg *sync.WaitGroup, inCh chan []byte) chan *eventspb.BusE
 func (b Broker) distribute(wg *sync.WaitGroup, deChan chan *eventspb.BusEvent) {
 
 	var (
-		height, blockCount, batchBytesCount, tradeCount, orderCount, posStateCount int
-		marketDataCount, assetCount, marketCount, ledgerMovementsCount             int
-		depositWithdrawalCount, accountCount, stakeLinkingCount                    int
+		height, blockCount, tradeCount, orderCount, posStateCount, assetCount, stakeLinkingCount int
+		marketDataCount, marketCount, ledgerMovementsCount, accountCount, depositWithdrawalCount int
 	)
+
+	ticker := time.NewTicker(time.Second * 1)
+
+	go func() {
+		for range ticker.C {
+			fmt.Println("Height: ", height)
+			fmt.Println("Blocks count: ", blockCount)
+			fmt.Println("Trade count: ", tradeCount)
+			fmt.Println("Order count: ", orderCount)
+			fmt.Println("Position state count: ", posStateCount)
+			fmt.Println("Market data count: ", marketDataCount)
+			fmt.Println("Asset count: ", assetCount)
+			fmt.Println("Market count: ", marketCount)
+			fmt.Println("Legder movements count: ", ledgerMovementsCount)
+			fmt.Println("Deposit withdrawal count: ", depositWithdrawalCount)
+			fmt.Println("Account count: ", accountCount)
+			fmt.Println("Stake Linking count: ", stakeLinkingCount)
+		}
+	}()
 
 	go func() {
 		defer wg.Done()
@@ -280,234 +300,27 @@ func (b Broker) distribute(wg *sync.WaitGroup, deChan chan *eventspb.BusEvent) {
 					channel <- evt
 				}
 			}
-
-			if len(batch) >= 1000 { // When batch is a certain size, send it
-				msgCh <- batch
-				batch = nil
-				// fmt.Println(string(jsonEvt))
-				fmt.Println(evt.Id)
-				fmt.Println("Height: ", height)
-				fmt.Println("Blocks count: ", blockCount)
-				fmt.Println("Bytes count: ", batchBytesCount)
-				fmt.Println("Trade count: ", tradeCount)
-				fmt.Println("Order count: ", orderCount)
-				fmt.Println("Position state count: ", posStateCount)
-				fmt.Println("Market data count: ", marketDataCount)
-				fmt.Println("Asset count: ", assetCount)
-				fmt.Println("Market count: ", marketCount)
-				fmt.Println("Legder movements count: ", ledgerMovementsCount)
-				fmt.Println("Deposit withdrawal count: ", depositWithdrawalCount)
-				fmt.Println("Account count: ", accountCount)
-				fmt.Println("Stake Linking count: ", stakeLinkingCount)
-				batchBytesCount = 0
-			}
 		}
 	}()
 
 }
 
-func (b Broker) format(wg *sync.WaitGroup, busEventTopicMap map[string]string, topicSet map[string]void, deCh chan *eventspb.BusEvent) chan []kafka.Message {
+// func (kc KafkaClient) send(wg *sync.WaitGroup, msgCh chan []kafka.Message) {
 
-	msgCh := make(chan []kafka.Message)
-	batch := []kafka.Message{}
-	height := 0
-	blockCount := 0
-	batchBytesCount := 0
-	tradeCount := 0
-	orderCount := 0
-	posStateCount := 0
-	marketDataCount := 0
-	assetCount := 0
-	marketCount := 0
-	ledgerMovementsCount := 0
-	depositWithdrawalCount := 0
-	accountCount := 0
-	stakeLinkingCount := 0
+// 	go func() {
+// 		ctx := context.Background()
+// 		count := 0
+// 		for batch := range msgCh {
+// 			err := kc.writer.WriteMessages(ctx, batch...)
+// 			if err != nil {
+// 				log.Fatal("Error writing messages: ", err)
+// 			}
 
-	// printEventCounts := func(evt *eventspb.BusEvent) {
-	// 	fmt.Println(evt.Id)
-	// 	fmt.Println("Height: ", height)
-	// 	fmt.Println("Blocks count: ", blockCount)
-	// 	fmt.Println("Bytes count: ", batchBytesCount)
-	// 	fmt.Println("Trade count: ", tradeCount)
-	// 	fmt.Println("Order count: ", orderCount)
-	// 	fmt.Println("Position state count: ", posStateCount)
-	// 	fmt.Println("Market data count: ", marketDataCount)
-	// 	fmt.Println("Asset count: ", assetCount)
-	// 	fmt.Println("Market count: ", marketCount)
-	// 	fmt.Println("Legder movements count: ", ledgerMovementsCount)
-	// 	fmt.Println("Deposit withdrawal count: ", depositWithdrawalCount)
-	// 	fmt.Println("Account count: ", accountCount)
-	// 	fmt.Println("Stake Linking count: ", stakeLinkingCount)
-	// }
-
-	go func() {
-		defer close(msgCh)
-		defer wg.Done()
-		for evt := range deCh {
-			// fmt.Printf("%+v\n", evt)
-			// fmt.Printf("%v\n", evt.Id)
-			evtType := evt.Type                    // Get type of evt
-			jsonEvtBytes, err := json.Marshal(evt) // Convert each event into JSON
-			if err != nil {
-				log.Fatal("Failed to marshal bus event to JSON: %w", err)
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_PROTOCOL_UPGRADE_STARTED" {
-				fmt.Println(evt)
-				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.ProtocolUpgradeStarted`, strconv.FormatInt(int64(evt.GetProtocolUpgradeStarted().LastBlockHeight), 10))
-				jsonEvtBytes = []byte(jsonEvt)
-				// Send msg to core to notify when ready for upgrade
-				ctx := context.TODO()
-				readyEvt := events.NewProtocolUpgradeDataNodeReady(ctx, int64(height))
-				b.ss.send(readyEvt)
-
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_TRADE" {
-				tradeCount += 1
-				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.Trade.timestamp`, strconv.FormatInt(evt.GetTrade().Timestamp, 10))
-				jsonEvtBytes = []byte(jsonEvt)
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_ORDER" {
-				// continue // Ignore event for now
-				orderCount += 1
-				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.Order.created_at`, strconv.FormatInt(evt.GetOrder().CreatedAt, 10))
-				jsonEvt, _ = sjson.Set(jsonEvt, `Event.Order.updated_at`, strconv.FormatInt(evt.GetOrder().UpdatedAt, 10))
-				jsonEvtBytes = []byte(jsonEvt)
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_POSITION_STATE" {
-				continue // Ignore event for now
-				posStateCount += 1
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_MARKET_DATA" {
-				marketDataCount += 1
-				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.MarketData.timestamp`, strconv.FormatInt(evt.GetMarketData().Timestamp, 10))
-				jsonEvt, _ = sjson.Set(jsonEvt, `Event.MarketData.next_mark_to_market`, strconv.FormatInt(evt.GetMarketData().NextMarkToMarket, 10))
-				jsonEvtBytes = []byte(jsonEvt)
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_ASSET" {
-				assetCount += 1
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_MARKET_CREATED" || evtType.String() == "BUS_EVENT_TYPE_MARKET_UPDATED" {
-				marketCount += 1
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_LEDGER_MOVEMENTS" {
-				ledgerMovementsCount += 1
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_DEPOSIT" {
-				continue // Ignore event for now
-				depositWithdrawalCount += 1
-				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.Deposit.created_timestamp`, strconv.FormatInt(evt.GetDeposit().CreatedTimestamp, 10))
-				jsonEvt, _ = sjson.Set(jsonEvt, `Event.Deposit.credited_timestamp`, strconv.FormatInt(evt.GetDeposit().CreditedTimestamp, 10))
-				jsonEvtBytes = []byte(jsonEvt)
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_WITHDRAWAL" {
-				continue // Ignore event for now
-				depositWithdrawalCount += 1
-				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.Withdrawal.created_timestamp`, strconv.FormatInt(evt.GetWithdrawal().CreatedTimestamp, 10))
-				jsonEvt, _ = sjson.Set(jsonEvt, `Event.Withdrawal.withdrawn_timestamp`, strconv.FormatInt(evt.GetWithdrawal().WithdrawnTimestamp, 10))
-				jsonEvtBytes = []byte(jsonEvt)
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_ACCOUNT" {
-				continue // Ignore event for now
-				accountCount += 1
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_STAKE_LINKING" {
-				stakeLinkingCount += 1
-				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), ``, strconv.FormatInt(evt.GetStakeLinking().Ts, 10))
-				jsonEvt, _ = sjson.Set(jsonEvt, ``, strconv.FormatInt(evt.GetStakeLinking().FinalizedAt, 10))
-				jsonEvtBytes = []byte(jsonEvt)
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_BEGIN_BLOCK" {
-				blockCount += 1
-				height = int(evt.GetBeginBlock().Height)
-				jsonEvt, _ := sjson.Set(string(jsonEvtBytes), `Event.BeginBlock.timestamp`, strconv.FormatInt(evt.GetBeginBlock().Timestamp, 10))
-				jsonEvtBytes = []byte(jsonEvt)
-				// Send BeginBlock event to all topics
-				for topic := range topicSet {
-					batch = append(batch, kafka.Message{
-						Topic: topic,
-						Value: jsonEvtBytes,
-					})
-					batchBytesCount += len(jsonEvtBytes)
-				}
-			} else if evtType.String() == "BUS_EVENT_TYPE_END_BLOCK" {
-				for topic := range topicSet {
-					batch = append(batch, kafka.Message{
-						Topic: topic,
-						Value: jsonEvtBytes,
-					})
-					batchBytesCount += len(jsonEvtBytes)
-
-					// Send a batch at the end of every block.
-					// msgCh <- batch
-					// batch = nil
-					// printEventCounts(evt)
-					// batchBytesCount = 0
-				}
-			} else {
-				if topic, ok := busEventTopicMap[evtType.String()]; ok {
-					batch = append(batch, kafka.Message{ // Batch messages
-						Topic: topic,        // Get the topic based on the evtType
-						Value: jsonEvtBytes, // Add JSON bytes to value field of kafka.Message.
-					})
-					batchBytesCount += len(jsonEvtBytes)
-					// if len(jsonEvtBytes) >= 7500 {
-					// 	fmt.Println(string(jsonEvtBytes))
-					// }
-				} else {
-					// Topic not found for event
-					if evtType.String() == "BUS_EVENT_TYPE_STAKE_LINKING" {
-						fmt.Printf("%v\n", topic)
-						fmt.Printf("%v\n", evtType.String())
-						log.Fatalf("Topic not Found for event!")
-					}
-
-				}
-			}
-
-			if len(batch) >= 1000 { // When batch is a certain size, send it
-				msgCh <- batch
-				batch = nil
-				// fmt.Println(string(jsonEvt))
-				fmt.Println(evt.Id)
-				fmt.Println("Height: ", height)
-				fmt.Println("Blocks count: ", blockCount)
-				fmt.Println("Bytes count: ", batchBytesCount)
-				fmt.Println("Trade count: ", tradeCount)
-				fmt.Println("Order count: ", orderCount)
-				fmt.Println("Position state count: ", posStateCount)
-				fmt.Println("Market data count: ", marketDataCount)
-				fmt.Println("Asset count: ", assetCount)
-				fmt.Println("Market count: ", marketCount)
-				fmt.Println("Legder movements count: ", ledgerMovementsCount)
-				fmt.Println("Deposit withdrawal count: ", depositWithdrawalCount)
-				fmt.Println("Account count: ", accountCount)
-				fmt.Println("Stake Linking count: ", stakeLinkingCount)
-				batchBytesCount = 0
-			}
-		}
-	}()
-
-	return msgCh
-}
-
-func (kc KafkaClient) send(wg *sync.WaitGroup, msgCh chan []kafka.Message) {
-
-	go func() {
-		ctx := context.Background()
-		count := 0
-		for batch := range msgCh {
-			err := kc.writer.WriteMessages(ctx, batch...)
-			if err != nil {
-				log.Fatal("Error writing messages: ", err)
-			}
-
-			count += len(batch)
-			fmt.Println(count)
-		}
-	}()
-
-}
+// 			count += len(batch)
+// 			fmt.Println(count)
+// 		}
+// 	}()
+// }
 
 func (b Broker) start() {
 
