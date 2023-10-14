@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+
 	// "runtime"
 	"os"
 	"sync"
+
 	// "strings"
 	// "encoding/json"
 	// "strconv"
@@ -137,7 +139,7 @@ func (s SocketServer) listen() error {
 
 	err := s.sock.Listen(s.addr)
 	if err != nil {
-		return fmt.Errorf("Unable to listen on %v: %w", s.addr, err)
+		return fmt.Errorf("unable to listen on %v: %w", s.addr, err)
 	}
 
 	return nil
