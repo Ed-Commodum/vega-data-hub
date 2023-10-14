@@ -1021,6 +1021,330 @@ const payloadParsers = {
                     return [ query, params ];
                 }
             }
+        },
+        replay: (payload) => {
+
+            const marketId = payload.marketId;
+            const partyId = payload.partyId;
+            const interval = payload.interval;
+            const startTimestamp = payload.startTimestamp;
+            const endTimestamp = payload.endTimestamp;
+
+            const validIntervals = [
+                "INTERVAL_1M", "INTERVAL_5M", "INTERVAL_15M", "INTERVAL_30M",
+                "INTERVAL_1H", "INTERVAL_2H", "INTERVAL_4H", "INTERVAL_6H",
+                "INTERVAL_12H", "INTERVAL_1D", "INTERVAL_3D", "INTERVAL_1W",
+                "INTERVAL_1MO"
+            ];
+
+            if (!validIntervals.includes(interval)) throw new Error("Invalid interval provided in payload.");
+
+            const partyTablePrefix = 'party_data';
+            const marketTablePrefix = 'market_data';
+
+            let marketTable, partyTable, intervalSize;
+            [ intervalSize, marketTable, partyTable ] = processInterval(interval, marketTablePrefix, partyTablePrefix);
+
+            // Queries will be for chunks/batches of data and will be run multiple times until the entire requested
+            // time window has been retrieved.
+            switch (true) {
+                case (marketId != undefined && partyId != undefined): {
+                    const fQuery = `
+                    
+                    `; 
+
+                    /*
+                    WITH base AS (
+                        SELECT
+                            time_bucket(300000000000::bigint, current_time_ns()) AS bucket,
+                            x.market_id,
+                            x.party_id
+                        FROM ( VALUES ( '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5',
+                                        '947a700141e3d175304ee176d0beecf9ee9f462e09330e33c386952caf21f679' )
+                            ) AS x(market_id, party_id)
+                    ), recent AS (
+                        SELECT
+                            bucket,
+                            market_id,
+                            last(timestamp, timestamp) AS timestamp,
+                            sum(volume) AS volume,
+                            sum(self_volume) AS self_volume
+                        FROM party_data_5m
+                        WHERE market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
+                        AND (buyer = '947a700141e3d175304ee176d0beecf9ee9f462e09330e33c386952caf21f679' or seller = '947a700141e3d175304ee176d0beecf9ee9f462e09330e33c386952caf21f679')
+                        AND bucket >= (select timestamp from trades where market_id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5' order by synth_timestamp desc limit 1) - 300000000000
+                        GROUP BY bucket, market_id
+                        ORDER BY bucket DESC
+                        LIMIT 1
+                    ), d AS (
+                        SELECT
+                            id,
+                            decimal_places,
+                            position_decimal_places
+                        FROM markets
+                        WHERE id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
+                    ), market AS (
+                        SELECT
+                            id,
+                            future_settlement_asset AS settlement_asset,
+                            future_quote_name AS quote_name
+                        FROM markets
+                        WHERE id = '2c2ea995d7366e423be7604f63ce047aa7186eb030ecc7b77395eae2fcbffcc5'
+                    )
+                    SELECT
+                        base.bucket AS bucket,
+                        base.market_id,
+                        base.party_id,
+                        recent.timestamp as timestamp,
+                        market.settlement_asset AS settlement_asset,
+                        market.quote_name AS quote_name,
+                        CASE WHEN recent.bucket < base.bucket - 300000000000::bigint
+                            THEN 0
+                            ELSE recent.volume + recent.self_volume
+                        END AS volume,
+                        CASE WHEN recent.bucket < base.bucket - 300000000000::bigint
+                            THEN 0
+                            ELSE (recent.volume + recent.self_volume) / 10^(d.decimal_places + d.position_decimal_places)
+                        END AS volume_quote
+                    FROM base LEFT JOIN recent ON base.market_id = recent.market_id
+                    LEFT JOIN market ON base.market_id = market.id
+                    LEFT JOIN d ON base.market_id = d.id;
+                    */
+
+                    const query = format(fQuery, partyTable);
+
+                    const params = [ marketId, partyId, intervalSize ];
+                    
+                    return [ query, params ];
+                }
+                case (marketId != undefined && partyId == undefined): {
+                    const fQuery = `
+                    
+                    `; 
+
+                    // AND (state = 'STATE_ACTIVE' OR state = 'STATE_SUSPENDED')
+
+                    /*
+                    WITH base AS (
+                        SELECT
+                            time_bucket(300000000000::bigint, current_time_ns()) AS bucket,
+                            id AS market_id,
+                            future_settlement_asset AS settlement_asset,
+                            future_quote_name AS quote_name
+                        FROM markets
+                        WHERE id = '5b05109662e7434fea498c4a1c91d3179b80e9b8950d6106cec60e1f342fc604'
+                    ), recent AS (
+                        SELECT
+                            bucket,
+                            market_id,
+                            last(timestamp, timestamp) AS timestamp,
+                            sum(volume) AS volume
+                        FROM market_data_5m
+                        WHERE market_id = '5b05109662e7434fea498c4a1c91d3179b80e9b8950d6106cec60e1f342fc604'
+                        AND bucket >= (select timestamp from trades where market_id = '5b05109662e7434fea498c4a1c91d3179b80e9b8950d6106cec60e1f342fc604' order by synth_timestamp desc limit 1) - 300000000000
+                        GROUP BY bucket, market_id
+                        ORDER BY bucket DESC
+                        LIMIT 1
+                    ), d AS (
+                        SELECT
+                            id,
+                            decimal_places,
+                            position_decimal_places
+                        FROM markets
+                        WHERE id = '5b05109662e7434fea498c4a1c91d3179b80e9b8950d6106cec60e1f342fc604'
+                    ), market AS (
+                        SELECT
+                            id,
+                            future_settlement_asset AS settlement_asset,
+                            future_quote_name AS quote_name
+                        FROM markets
+                        WHERE id = '5b05109662e7434fea498c4a1c91d3179b80e9b8950d6106cec60e1f342fc604'
+                    )
+                    SELECT
+                        base.bucket AS bucket,
+                        base.market_id,
+                        recent.timestamp as timestamp,
+                        market.settlement_asset AS settlement_asset,
+                        market.quote_name AS quote_name,
+                        CASE WHEN recent.bucket < base.bucket - 300000000000
+                            THEN 0
+                            ELSE recent.volume
+                        END AS volume,
+                        CASE WHEN recent.bucket < base.bucket - 300000000000
+                            THEN 0
+                            ELSE recent.volume / 10^(d.decimal_places + d.position_decimal_places)
+                        END AS volume_quote
+                    FROM base LEFT JOIN recent ON base.market_id = recent.market_id
+                    LEFT JOIN market ON base.market_id = market.id
+                    LEFT JOIN d ON base.market_id = d.id;
+                    */
+
+                    const query = format(fQuery, marketTable);
+
+                    const params = [ marketId, intervalSize ];
+                    
+                    return [ query, params ];
+                }
+                case (marketId == undefined && partyId != undefined): {
+                    const fQuery = `
+
+                    `;
+
+                    /*
+                    WITH base AS (
+                        SELECT
+                            time_bucket(300000000000::bigint, current_time_ns()) AS bucket,
+                            id AS market_id,
+                            y.party_id AS party_id,
+                            future_settlement_asset AS settlement_asset,
+                            future_quote_name AS quote_name
+                        FROM markets x CROSS JOIN ( VALUES ( '947a700141e3d175304ee176d0beecf9ee9f462e09330e33c386952caf21f679' ) ) AS y( party_id )
+                        WHERE (x.state = 'STATE_ACTIVE' OR x.state = 'STATE_SUSPENDED')
+                    ), recent AS (
+                        SELECT z.*
+                        FROM (
+                            SELECT DISTINCT market_id
+                            FROM trades
+                        ) x JOIN LATERAL (
+                            SELECT
+                                bucket,
+                                market_id,
+                                last(timestamp, timestamp) AS timestamp,
+                                sum(volume) AS volume,
+                                sum(self_volume) AS self_volume
+                            FROM party_data_5m y
+                            WHERE bucket >= (select timestamp from trades order by synth_timestamp desc limit 1) - 300000000000::bigint
+                            AND y.market_id = x.market_id
+                            AND (buyer = '947a700141e3d175304ee176d0beecf9ee9f462e09330e33c386952caf21f679' OR seller = '947a700141e3d175304ee176d0beecf9ee9f462e09330e33c386952caf21f679')
+                            GROUP BY market_id, bucket
+                            ORDER BY bucket DESC
+                            LIMIT 1
+                        ) z ON true
+                    ), d AS (
+                        SELECT
+                            id,
+                            decimal_places,
+                            position_decimal_places
+                        FROM markets
+                    ), markets AS (
+                        SELECT
+                            id,
+                            future_settlement_asset AS settlement_asset,
+                            future_quote_name AS quote_name
+                        FROM markets
+                    )
+                    SELECT
+                        base.bucket AS bucket,
+                        base.market_id,
+                        base.party_id,
+                        CASE WHEN recent.timestamp IS NULL THEN 0 ELSE recent.timestamp END AS timestamp,
+                        markets.settlement_asset AS settlement_asset,
+                        markets.quote_name AS quote_name,
+                        CASE 
+                            WHEN recent.bucket < base.bucket - 300000000000::bigint
+                                THEN 0
+                            WHEN recent.bucket IS NULL
+                                THEN 0
+                            ELSE (recent.volume + recent.self_volume)
+                        END AS volume,
+                        CASE
+                            WHEN recent.bucket < base.bucket - 300000000000::bigint
+                                THEN 0
+                            WHEN recent.bucket IS NULL
+                                THEN 0
+                            ELSE (recent.volume + recent.self_volume) / 10^(d.decimal_places + d.position_decimal_places)
+                        END AS volume_quote
+                    FROM base LEFT JOIN recent ON base.market_id = recent.market_id
+                    LEFT JOIN markets ON base.market_id = markets.id
+                    LEFT JOIN d ON base.market_id = d.id
+                    ORDER BY base.market_id ASC;
+                    */
+
+                    const query = format(fQuery, partyTable);
+
+                    const params = [ partyId, intervalSize ];
+                    
+                    return [ query, params ];
+                }
+                case (marketId == undefined && partyId == undefined): {
+                    const fQuery = `
+
+                    `; 
+
+                    /*
+                    WITH base AS (
+                        SELECT
+                            time_bucket(300000000000::bigint, current_time_ns()) AS bucket,
+                            id AS market_id,
+                            future_settlement_asset AS settlement_asset,
+                            future_quote_name AS quote_name
+                        FROM markets
+                        WHERE (state = 'STATE_ACTIVE' OR state = 'STATE_SUSPENDED')
+                    ), recent AS (
+                        SELECT z.*
+                        FROM (
+                            SELECT DISTINCT market_id
+                            FROM trades
+                        ) x JOIN LATERAL (
+                            SELECT
+                                bucket,
+                                market_id,
+                                last(timestamp, timestamp) AS timestamp,
+                                sum(volume) AS volume,
+                                sum(self_volume) AS self_volume
+                            FROM party_data_5m y
+                            WHERE bucket >= (select timestamp from trades order by synth_timestamp desc limit 1) - 300000000000::bigint
+                            AND y.market_id = x.market_id
+                            GROUP BY market_id, bucket
+                            ORDER BY bucket DESC
+                            LIMIT 1
+                        ) z ON true
+                    ), d AS (
+                        SELECT
+                            id,
+                            decimal_places,
+                            position_decimal_places
+                        FROM markets
+                    ), markets AS (
+                        SELECT
+                            id,
+                            future_settlement_asset AS settlement_asset,
+                            future_quote_name AS quote_name
+                        FROM markets
+                    )
+                    SELECT
+                        base.bucket AS bucket,
+                        base.market_id,
+                        CASE WHEN recent.timestamp IS NULL THEN 0 ELSE recent.timestamp END AS timestamp,
+                        markets.settlement_asset AS settlement_asset,
+                        markets.quote_name AS quote_name,
+                        CASE 
+                            WHEN recent.bucket < base.bucket - 300000000000::bigint
+                                THEN 0
+                            WHEN recent.bucket IS NULL
+                                THEN 0
+                            ELSE recent.volume
+                        END AS volume,
+                        CASE
+                            WHEN recent.bucket < base.bucket - 300000000000::bigint
+                                THEN 0
+                            WHEN recent.bucket IS NULL
+                                THEN 0
+                            ELSE recent.volume / 10^(d.decimal_places + d.position_decimal_places)
+                        END AS volume_quote
+                    FROM base LEFT JOIN recent ON base.market_id = recent.market_id
+                    LEFT JOIN markets ON base.market_id = markets.id
+                    LEFT JOIN d ON base.market_id = d.id;
+                    */
+
+                    const query = format(fQuery, marketTable);
+
+                    const params = [ intervalSize ];
+                    
+                    return [ query, params ];
+                }
+            }
+
         }
     },
     assetVolume: {

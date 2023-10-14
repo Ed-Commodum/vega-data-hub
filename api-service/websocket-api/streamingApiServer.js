@@ -19,12 +19,31 @@ class Subscriber {
         this.pendingData = [];
         this.resolvedData = [];
         this.updating = false;
+        this.replaying = false;
         this.lastSentHeight = -1;
     }
 
-    getData(pgPool) {
+    startReplay(payloads) {
+        // Mark subscriber as replaying to block live stream updates.
+        this.replaying = true;
+
+        // Replay API will query chunks of data to be sent as multiple messages, one message per interval.
+        for (let payload of payloads) {
+
+            
+        }
+
+
+        // If subscriber has no active streams after replay, close socket to delete subscriber.
+
+    }
+
+    getData(height, pgPool) {
         this.updating = true;
         for (let stream of this.streams) {
+            if (stream.recentHeight == height) {
+
+            }
             console.log("Subscriber.getData() block");
             this.pendingData.push(stream.getDataAsync(pgPool));
         }
@@ -63,7 +82,7 @@ class Subscriber {
             msg.push({ blockHeight: height },{ vegaTime: vegaTime });
             metadata.push({ type: 'Block height' }, { type: 'Vega time' });
             if (stream.data.length == 0) {
-                msg.push
+                msg.push({ [payloadType]: null });
             }
             for (let datum of stream.data) {
                 // Separate datapoint and metadata from raw data obj
@@ -183,6 +202,11 @@ class Stream {
 
         let str = '';
 
+        // Convert replay mode to historical.
+        if (payload.mode == 'replay') {
+            payload.mode == 'historical';
+        }
+
         const properties = [ 'type', 'mode', 'marketId', 'partyId', 'assetId', 'interval', 'limit', 'windowSize', 'confidenceInterval' ];
 
         for (let prop of properties) {
@@ -204,6 +228,11 @@ class Stream {
     buildStreamId(payload) {
 
         let str = '';
+
+        // Convert replay mode to historical.
+        if (payload.mode == 'replay') {
+            payload.mode = 'historical';
+        }
 
         const properties = [ 'type', 'mode', 'marketId', 'partyId', 'assetId', 'interval', 'limit', 'windowSize', 'confidenceInterval' ];
 
@@ -389,6 +418,7 @@ class StreamingAPIServer {
         // ----------------------------------------------- //
 
         const wsServer = new ws.Server({ server: expressServer, path: '/ws' });
+        const wsReplayServer = new ws.Server({server: expressServer, path: '/ws/replay' });
 
         wsServer.on('connection', (socket) => {
             console.log(`Connected clients: ${wsServer.clients.size}`);
@@ -405,7 +435,7 @@ class StreamingAPIServer {
                 // Update subscriber count on streams, deactivate unused streams, remove subscriber.
                 for (let stream of this.subscribers[socket.clientId].streams) {
                     stream.subCount--;
-                    if (stream.subCount == 0) {
+                    if (stream.subCount <= 0) {
                         const index = this.activeStreamIds.indexOf(stream.streamId);
                         this.activeStreamIds.splice(index, 1);
                         stream.active = false;
@@ -454,7 +484,7 @@ class StreamingAPIServer {
                         this.streams[streamId].active = true;
                         this.activeStreamIds.push(streamId);
                         this.subscribers[socket.clientId].streams.push(this.streams[streamId]);
-                        this.streams[streamId].numSubs++;
+                        this.streams[streamId].subCount++;
                     }
 
                 }
@@ -463,6 +493,94 @@ class StreamingAPIServer {
 
         });
 
+        wsReplayServer.on('connection', (socket) => {
+            console.log(`Connected clients: ${wsServer.clients.size}`);
+            
+            socket.on('close', () => {
+
+                // Update subscriber count on streams, deactivate unused streams, remove subscriber.
+                for (let stream of this.subscribers[socket.clientId].streams) {
+                    stream.subCount--;
+                    if (stream.subCount <= 0) {
+                        const index = this.activeStreamIds.indexOf(stream.streamId);
+                        this.activeStreamIds.splice(index, 1);
+                        stream.active = false;
+                    }
+                }
+
+                delete this.subscribers[socket.clientId];
+
+            });
+
+            socket.on('message', (msg) => {
+
+                if (socket.clientId === undefined) {
+                    // Create new subscriber for client.
+                    const clientId = crypto.randomBytes(16).toString('base64');
+                    socket.clientId = clientId;
+                    const subscriber = new Subscriber(socket);
+                    this.subscribers[clientId] = subscriber;
+                }
+
+                console.dir(JSON.parse(msg.toString()));
+
+                // Add functionality to fetch a stream from it's streamId instead of a payload.
+
+                const payloads = JSON.parse(msg.toString()).payloads;
+
+                // Parse the payloads to determine the requested streams.
+                for (let payload of payloads) {
+
+                    // The replay API only accepts payloads with mode = 'replay'.
+                    if (payload.mode != "replay") {
+                        // Send err to socket
+
+                        // Close socket
+
+                        console.log("Only \"replay\" mode is supported by the replay API.");
+                        return
+                    }
+
+                    const err = Stream.verifyPayload(payload);
+                    if (err) {
+                        // Send error message to socket.
+
+                        // Close socket
+
+                        console.log("Failed to verify payload...");
+                        return
+                    }
+                    
+                    // If there is an endTimestamp provided in the payload, we will NOT convert the replay to a
+                    // real time data stream.
+                    if (!payload.endTimestamp) {
+                        continue;
+                    }
+
+                    const streamId = Stream.getStreamId(payload);
+                    
+                    if (this.activeStreamIds.includes(streamId)) {
+                        // Allocate the stream to client
+                        this.subscribers[socket.clientId].streams.push(this.streams[streamId]);
+
+                    } else {
+                        // Create the stream then allocate it to client.
+                        this.streams[streamId] = new Stream(payload);
+
+                        // Set to active
+                        this.streams[streamId].active = true;
+                        this.activeStreamIds.push(streamId);
+                        this.subscribers[socket.clientId].streams.push(this.streams[streamId]);
+                        this.streams[streamId].subCount++;
+                    }
+
+                }
+
+                this.subscribers[socket.clientId].startReplay(payloads);
+
+            });
+
+        });
 
     }
 
@@ -589,7 +707,10 @@ class StreamingAPIServer {
 
         // For each subscriber, collect promises for each stream and await data.
         for (let subscriber of Object.values(this.subscribers)) {
-            subscriber.getData(this.pgPool);
+            if (subscriber.replaying) {
+                continue;
+            }
+            subscriber.getData(height, this.pgPool);
             subscriber.sendAsync(height, block.timestamp);
         }
 
