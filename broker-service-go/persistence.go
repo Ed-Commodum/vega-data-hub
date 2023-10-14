@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
+
+	eventspb "code.vegaprotocol.io/vega/protos/vega/events/v1"
 )
 
 type PgClient interface {
@@ -22,12 +25,22 @@ type pgClient struct {
 	pool  *pgxpool.Pool
 }
 
-type PersistanceManager interface {
+type PersistenceManager interface {
 	BlockPersist()
 	BatchPersist()
+	FormatEvent()
+
+	// Workflow for event persistence
+	//	- Get events from channel
+	//	- Format events
+	//	- Persist events either by block or by large batch (determined by replay)
+	//	- If persisting by block, emit event to block_persistence topic on kafka (or use gRPC)
+	//	-
 }
 
 type tradeManager struct {
+	broker *Broker
+	ch     chan *eventspb.BusEvent
 }
 
 type orderManager struct {
@@ -46,6 +59,26 @@ type marketDataManager struct {
 }
 
 type stakeManager struct {
+}
+
+func (tm *tradeManager) start() {
+
+	// Get events from channel
+	go func() {
+		for {
+			evt := <-tm.ch
+			fmt.Printf("Recieved event: %+v", evt)
+
+			fmt.Printf("evt.Type: %v", evt.Type)
+
+			// If event is trade
+			// if evt.Type ==
+
+			// If event is endBlock
+
+		}
+	}()
+
 }
 
 func newPostgresClient() PgClient {
