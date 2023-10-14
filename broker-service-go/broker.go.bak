@@ -29,21 +29,9 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-// Refactor broker:
-//	- Instead of the broker distributing the bus events to different kafka topics based on their type
-//	  we are going to distribute the bus events to different goroutines based on their type, each of these
-// 	  goroutines will persist the bus events into their corresponding tables in the db.
-//
-//	- Kafka will still be used but only to notify the API service of when a set of inserts for a particular
-//	  block is complete, this will allow the service to query up to date data and push it to all subscribers.
-//	  Realistically, kafka is probably overkill for this and we can probbaly use gRPC later on.
-
 type Broker struct {
-	ss               SocketServer
-	kc               KafkaClient
-	topicSet         map[string]void
-	busEventTopicMap map[string]string
-	topicChans       map[string]chan *eventspb.BusEvent
+	ss SocketServer
+	kc KafkaClient
 }
 
 type SocketServer struct {
@@ -63,7 +51,7 @@ func newSocketServer(addr string) (*SocketServer, error) {
 
 	sock, err := pair.NewSocket()
 	if err != nil {
-		return nil, fmt.Errorf("unable to create new socket %w", err)
+		return nil, fmt.Errorf("Unable to create new socket %w", err)
 	}
 
 	return &SocketServer{
@@ -107,26 +95,9 @@ func newBroker() *Broker {
 		log.Fatal("Failed to create new kafka client: %w", err)
 	}
 
-	busEventTopicMap := GetBusEventTopicMap()
-	topicSet := make(map[string]void)
-	for _, v := range busEventTopicMap {
-		if v == "blocks" {
-			continue
-		}
-		topicSet[v] = member
-	}
-
-	topicChans := make(map[string]chan *eventspb.BusEvent)
-	for k, _ := range topicSet {
-		topicChans[k] = make(chan *eventspb.BusEvent)
-	}
-
 	return &Broker{
-		ss:               *socketServer,
-		kc:               *kafkaClient,
-		topicSet:         topicSet,
-		busEventTopicMap: busEventTopicMap,
-		topicChans:       topicChans,
+		ss: *socketServer,
+		kc: *kafkaClient,
 	}
 
 }
@@ -196,113 +167,6 @@ func (b Broker) decode(wg *sync.WaitGroup, inCh chan []byte) chan *eventspb.BusE
 	}()
 
 	return deCh
-
-}
-
-func (b Broker) distribute(wg *sync.WaitGroup, deChan chan *eventspb.BusEvent) {
-
-	var (
-		height, blockCount, batchBytesCount, tradeCount, orderCount, posStateCount int
-		marketDataCount, assetCount, marketCount, ledgerMovementsCount             int
-		depositWithdrawalCount, accountCount, stakeLinkingCount                    int
-	)
-
-	go func() {
-		defer wg.Done()
-		for evt := range deChan {
-			// fmt.Printf("%v\n", evt.Id)
-			evtType := evt.Type // Get type of evt
-			// jsonEvtBytes, err := json.Marshal(evt) // Convert each event into JSON
-			// if err != nil {
-			// 	log.Fatal("Failed to marshal bus event to JSON: %w", err)
-			// }
-			if evtType.String() == "BUS_EVENT_TYPE_PROTOCOL_UPGRADE_STARTED" {
-				fmt.Println(evt)
-				// Send msg to core to notify when ready for upgrade
-				ctx := context.TODO()
-				readyEvt := events.NewProtocolUpgradeDataNodeReady(ctx, int64(height))
-				b.ss.send(readyEvt)
-
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_TRADE" {
-				tradeCount += 1
-				// b.topicChans["trades"] <- evt
-				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_ORDER" {
-				// continue // Ignore event for now
-				orderCount += 1
-				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_POSITION_STATE" {
-				continue // Ignore event for now
-				posStateCount += 1
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_MARKET_DATA" {
-				marketDataCount += 1
-				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_ASSET" {
-				assetCount += 1
-				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_MARKET_CREATED" || evtType.String() == "BUS_EVENT_TYPE_MARKET_UPDATED" {
-				marketCount += 1
-				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_LEDGER_MOVEMENTS" {
-				ledgerMovementsCount += 1
-				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_DEPOSIT" {
-				continue // Ignore event for now
-				depositWithdrawalCount += 1
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_WITHDRAWAL" {
-				continue // Ignore event for now
-				depositWithdrawalCount += 1
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_ACCOUNT" {
-				continue // Ignore event for now
-				accountCount += 1
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_STAKE_LINKING" {
-				stakeLinkingCount += 1
-				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_BEGIN_BLOCK" {
-				blockCount += 1
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_BEGIN_BLOCK" || evtType.String() == "BUS_EVENT_TYPE_END_BLOCK" {
-				// Send beginBlock and endBlock events to all topicChannels
-				for _, channel := range b.topicChans {
-					// It's fine to pass a pointer to multiple channels right? As long as we're not mutating the event.
-					channel <- evt
-				}
-			}
-
-			if len(batch) >= 1000 { // When batch is a certain size, send it
-				msgCh <- batch
-				batch = nil
-				// fmt.Println(string(jsonEvt))
-				fmt.Println(evt.Id)
-				fmt.Println("Height: ", height)
-				fmt.Println("Blocks count: ", blockCount)
-				fmt.Println("Bytes count: ", batchBytesCount)
-				fmt.Println("Trade count: ", tradeCount)
-				fmt.Println("Order count: ", orderCount)
-				fmt.Println("Position state count: ", posStateCount)
-				fmt.Println("Market data count: ", marketDataCount)
-				fmt.Println("Asset count: ", assetCount)
-				fmt.Println("Market count: ", marketCount)
-				fmt.Println("Legder movements count: ", ledgerMovementsCount)
-				fmt.Println("Deposit withdrawal count: ", depositWithdrawalCount)
-				fmt.Println("Account count: ", accountCount)
-				fmt.Println("Stake Linking count: ", stakeLinkingCount)
-				batchBytesCount = 0
-			}
-		}
-	}()
 
 }
 
@@ -511,31 +375,45 @@ func (kc KafkaClient) send(wg *sync.WaitGroup, msgCh chan []kafka.Message) {
 
 func (b Broker) start() {
 
+	busEventTopicMap := GetBusEventTopicMap()
+	topicSet := make(map[string]void)
+	for _, v := range busEventTopicMap {
+		// if v == "blocks" {
+		// 	continue
+		// }
+		topicSet[v] = member
+	}
+
+	fmt.Println(topicSet)
+
 	wg := &sync.WaitGroup{}
 	wg.Add(3)
 
 	err := b.ss.listen()
 	if err != nil {
-		log.Fatal(fmt.Errorf("failed to listen: %v", err))
+		log.Fatal(fmt.Errorf("Failed to listen: %v", err))
 	}
 
-	// Determine whether
+	inCh := b.ss.recieve(wg)
 
-	// Recieve to inChan
-	inChan := b.ss.recieve(wg)
-
-	// Decode to deChan
-	deChan := b.decode(wg, inChan)
-
-	// Distribute to topic channels
-	b.distribute(wg, deChan)
+	deCh := b.decode(wg, inCh)
 
 	// msgCh := b.format(wg, deCh)
-	// msgCh := b.format(wg, busEventTopicMap, topicSet, deCh)
+	msgCh := b.format(wg, busEventTopicMap, topicSet, deCh)
 
-	// b.kc.send(wg, msgCh)
+	b.kc.send(wg, msgCh)
 
 	wg.Wait()
+
+	// Pipeline:
+	// Get msg from inCh
+	// Decode(msg)
+	// Push msg to deCh
+	// Get msg from deCh
+	// Build kafka.Message
+	// Collect batch
+	// Push batch to msgBatchCh
+	// Get batch and send using kafka.Writer
 
 }
 
@@ -547,3 +425,93 @@ func main() {
 	broker.start()
 
 }
+
+// // Create a socket server and listen at the broker port and IP
+// func createSocketServer(ch chan []byte) {
+
+// 	sock, err := pair.NewSocket()
+// 	if err != nil {
+// 		fmt.Println(err)
+// 		log.Fatal(fmt.Errorf("Unable to create new socket %w", err))
+// 	}
+
+// 	addr := "tcp://0.0.0.0:3005"
+
+// 	// listenOptions := map[string]interface{}{mangos.OptionMaxRecvSize: 0}
+
+// 	// listener, err := sock.NewListener(addr, listenOptions)
+// 	// if err != nil {
+// 	// 	log.Fatal(fmt.Errorf("Unable to create new listener %w", err))
+// 	// 	return
+// 	// }
+
+// 	// if err := listener.Listen(); err != nil {
+// 	// 	log.Fatal(fmt.Errorf("Failed to listen on %v: %w", addr, err))
+// 	// 	return
+// 	// }
+
+// 	if err := sock.Listen(addr); err != nil {
+// 		log.Fatal(fmt.Errorf("Failed to listen on %v: %w", addr, err))
+// 	}
+
+// 	go func() {
+// 		for {
+// 			msg, err := sock.Recv()
+// 			fmt.Println("Recieved message")
+// 			if err != nil {
+// 				log.Fatal(err)
+// 				return
+// 			}
+// 			ch <- msg
+// 		}
+// 	}()
+
+// }
+
+// // Unmarshal raw events into bus events
+// func decode(msg []byte) (*eventspb.BusEvent, error) {
+// 	busEvent := &eventspb.BusEvent{}
+
+// 	if err := proto.Unmarshal(msg, busEvent); err != nil {
+// 		return nil, fmt.Errorf(`Failed to unmarshal Bus Event %w`, err)
+// 	}
+
+// 	return busEvent, nil
+// }
+
+// func main() {
+
+// 	// Event counter
+// 	count := 0;
+
+// 	// Waitgroup
+// 	wg := &sync.WaitGroup{}
+// 	wg.Add(1)
+
+// 	// Make channel
+// 	ch := make(chan []byte, 1000000)
+
+// 	createSocketServer(ch)
+
+// 	// Decode events from channel
+// 	go func() {
+// 		defer wg.Done()
+// 		for {
+// 			msg := <- ch
+// 			count++
+// 			busEvent, err := decode(msg)
+// 			if err != nil {
+// 				log.Fatal(fmt.Errorf("Failed to decode event: Error: %w", err))
+// 			}
+// 			fmt.Println(busEvent.Id)
+// 			parts := strings.Split(busEvent.Id, "-")
+// 			fmt.Println(parts)
+// 			fmt.Println(count)
+// 			// fmt.Println(busEvent)
+// 		}
+// 	}()
+
+// 	wg.Wait()
+
+// 	fmt.Println("End")
+// }
