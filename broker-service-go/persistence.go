@@ -1,108 +1,204 @@
-package main
+// package main
 
-import (
-	"context"
-	"fmt"
-	"log"
-	"os"
+// import (
+// 	"context"
+// 	"fmt"
+// 	"log"
+// 	"os"
 
-	"github.com/jackc/pgconn"
-	"github.com/jackc/pgx/v4"
-	"github.com/jackc/pgx/v4/pgxpool"
+// 	"github.com/jackc/pgconn"
+// 	"github.com/jackc/pgx/v4"
+// 	"github.com/jackc/pgx/v4/pgxpool"
 
-	eventspb "code.vegaprotocol.io/vega/protos/vega/events/v1"
-)
+// 	// vegapb "code.vegaprotocol.io/vega/protos/vega"
+// 	eventspb "code.vegaprotocol.io/vega/protos/vega/events/v1"
+// )
 
-type PgClient interface {
-	Connect()
-	Close()
-	Query(string, ...interface{}) (pgx.Rows, error)
-	Exec(string, ...interface{}) (pgconn.CommandTag, error)
-}
+// type PgClient interface {
+// 	Connect()
+// 	Close()
+// 	Query(string, ...interface{}) (pgx.Rows, error)
+// 	Exec(string, ...interface{}) (pgconn.CommandTag, error)
+// }
 
-type pgClient struct {
-	dbUrl string
-	pool  *pgxpool.Pool
-}
+// type pgClient struct {
+// 	dbUrl string
+// 	pool  *pgxpool.Pool
+// }
 
-type PersistenceManager interface {
-	BlockPersist()
-	BatchPersist()
-	FormatEvent()
+// // Potential architectures for bus event processing and persistence
+// //	- One persistence manager for each "topic" of bus event we are processing, each one of these
+// //	  will run in it's own goroutine.
+// //
+// //	- One persistance manager for processing all events, but will have separate loops and goroutines
+// //	  for each "topic".
+// //
+// //
 
-	// Workflow for event persistence
-	//	- Get events from channel
-	//	- Format events
-	//	- Persist events either by block or by large batch (determined by replay)
-	//	- If persisting by block, emit event to block_persistence topic on kafka (or use gRPC)
-	//	-
-}
+// type PersistenceManager interface {
+// 	BlockPersist()
+// 	BatchPersist()
+// 	FormatEvent()
 
-type tradeManager struct {
-	broker *Broker
-	ch     chan *eventspb.BusEvent
-}
+// 	// Workflow for event persistence
+// 	//	- Get events from channel
+// 	//	- Format events
+// 	//	- Persist events either by block or by large batch (determined by replay)
+// 	//	- If persisting by block, emit event to block_persistence topic on kafka (or use gRPC)
+// }
 
-type orderManager struct {
-}
+// type persistenceManager struct {
+// 	managerType  ManagerType
+// 	busEventType eventspb.BusEventType
+// 	broker       *Broker
+// 	recvCh       chan *eventspb.BusEvent
+// 	eventBatch   []*formattedEvent
+// 	blockBatch   blockBatch
+// }
 
-type ledgerMovementManager struct {
-}
+// type blockBatch struct {
+// 	height int64
+// 	events []*formattedEvent
+// }
 
-type assetManager struct {
-}
+// type ManagerType uint8
 
-type marketManager struct {
-}
+// const (
+// 	ManagerType_Unspecified FormattedEventType = iota
+// 	ManagerType_Trade
+// 	ManagerType_Order
+// 	ManagerType_LedgerMovement
+// 	ManagerType_Asset
+// 	ManagerType_Market
+// 	ManagerType_MarketData
+// 	ManagerType_Stake
+// )
 
-type marketDataManager struct {
-}
+// type FormattedEventType uint8
 
-type stakeManager struct {
-}
+// const (
+// 	FormattedEventType_Unspecified FormattedEventType = iota
+// 	FormattedEventType_Trade
+// 	FormattedEventType_Order
+// 	FormattedEventType_LedgerMovement
+// 	FormattedEventType_Asset
+// 	FormattedEventType_Market
+// 	FormattedEventType_MarketData
+// 	FormattedEventType_Stake
+// )
 
-func (tm *tradeManager) start() {
+// type FormattedEvent interface {
+// 	isFormattedEvent()
+// }
 
-	// Get events from channel
-	go func() {
-		for {
-			evt := <-tm.ch
-			fmt.Printf("Recieved event: %+v", evt)
+// type formattedEvent struct {
+// 	Type  FormattedEventType
+// 	Event FormattedEvent
+// }
 
-			fmt.Printf("evt.Type: %v", evt.Type)
+// func (f *formattedEvent) GetEvent() FormattedEvent {
+// 	if f != nil {
+// 		return f.Event
+// 	}
+// 	return nil
+// }
 
-			// If event is trade
-			// if evt.Type ==
+// type formattedTrade struct {
+// 	Trade *fTrade
+// }
 
-			// If event is endBlock
+// type fTrade struct {
+// 	Id                string
+// 	MarketId          string
+// 	Price             string
+// 	Size              uint64
+// 	Buyer             string
+// 	Seller            string
+// 	Aggressor         string
+// 	BuyOrder          string
+// 	SellOrder         string
+// 	Timestamp         int64
+// 	SynthTimestamp    int64
+// 	Type              string
+// 	BuyerFeeMaker     string
+// 	BuyerFeeInfra     string
+// 	BuyerFeeLiqudity  string
+// 	SellerFeeMaker    string
+// 	SellerFeeInfra    string
+// 	SellerFeeLiqudity string
+// }
 
-		}
-	}()
+// func (t *formattedTrade) isFormattedEvent() {}
 
-}
+// func (f *formattedEvent) GetFormattedTrade() *fTrade {
+// 	if evt, ok := f.GetEvent().(*formattedTrade); ok {
+// 		return evt.Trade
+// 	}
+// 	return nil
+// }
 
-func newPostgresClient() PgClient {
-	pgClient := &pgClient{dbUrl: os.Getenv("DB_URL")}
-	pgClient.Connect()
-	return pgClient
-}
+// func (m *persistenceManager) start() {
 
-func (client *pgClient) Connect() {
-	pool, err := pgxpool.Connect(context.Background(), os.Getenv("PG_URL"))
-	if err != nil {
-		log.Fatalf("Failed to connect to database: %v\n", err)
-	}
-	client.pool = pool
-}
+// 	persistCh := make(chan []*formattedEvent)
 
-func (client *pgClient) Close() {
-	client.pool.Close()
-}
+// 	// Get events from channel
+// 	go func() {
+// 		for {
+// 			evt := <-m.recvCh
+// 			fmt.Printf("Recieved event: %+v", evt)
 
-func (client *pgClient) Query(queryStr string, args ...interface{}) (pgx.Rows, error) {
-	return client.pool.Query(context.Background(), queryStr, args)
-}
+// 			fmt.Printf("evt.Type: %v", evt.Type)
 
-func (client *pgClient) Exec(queryStr string, args ...interface{}) (pgconn.CommandTag, error) {
-	return client.pool.Exec(context.Background(), queryStr, args)
-}
+// 			if !m.broker.isReplaying && evt.Type == m.busEventType {
+// 				m.blockBatch.events = append(m.blockBatch.events, m.FormatEvent(evt))
+// 			} else if evt.Type == m.busEventType {
+// 				m.eventBatch = append(m.eventBatch, m.FormatEvent(evt))
+// 			}
+
+// 			if !m.broker.isReplaying && evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_END_BLOCK {
+// 				// Perform block inserts
+
+// 			}
+
+// 		}
+// 	}()
+
+// 	// Persist loop
+// 	go func() {
+// 		for batch := range persistCh {
+
+// 		}
+// 	}()
+
+// }
+
+// func (m *persistenceManager) FormatEvent(evt *eventspb.BusEvent) (f *formattedEvent) {
+
+// 	return f
+// }
+
+// func newPostgresClient() PgClient {
+// 	pgClient := &pgClient{dbUrl: os.Getenv("DB_URL")}
+// 	pgClient.Connect()
+// 	return pgClient
+// }
+
+// func (client *pgClient) Connect() {
+// 	pool, err := pgxpool.Connect(context.Background(), os.Getenv("PG_URL"))
+// 	if err != nil {
+// 		log.Fatalf("Failed to connect to database: %v\n", err)
+// 	}
+// 	client.pool = pool
+// }
+
+// func (client *pgClient) Close() {
+// 	client.pool.Close()
+// }
+
+// func (client *pgClient) Query(queryStr string, args ...interface{}) (pgx.Rows, error) {
+// 	return client.pool.Query(context.Background(), queryStr, args)
+// }
+
+// func (client *pgClient) Exec(queryStr string, args ...interface{}) (pgconn.CommandTag, error) {
+// 	return client.pool.Exec(context.Background(), queryStr, args)
+// }

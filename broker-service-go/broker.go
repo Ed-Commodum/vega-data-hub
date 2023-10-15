@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 
 	// "runtime"
+	"net/http"
 	"os"
 	"sync"
 
@@ -46,6 +49,7 @@ type Broker struct {
 	topicSet         map[string]void
 	busEventTopicMap map[string]string
 	topicChans       map[string]chan *eventspb.BusEvent
+	isReplaying      bool
 }
 
 type SocketServer struct {
@@ -131,6 +135,7 @@ func newBroker() *Broker {
 		topicSet:         topicSet,
 		busEventTopicMap: busEventTopicMap,
 		topicChans:       topicChans,
+		isReplaying:      true,
 	}
 
 }
@@ -179,6 +184,43 @@ func (s SocketServer) recieve(wg *sync.WaitGroup) chan []byte {
 	}()
 
 	return inCh
+
+}
+
+func (b Broker) monitorCoreNodeChainStatus() {
+
+	ticker := time.NewTicker(time.Second * 5)
+
+	go func() {
+		// Periodically call the statistics endpoint on the Vega Core node to check for replay.
+		for range ticker.C {
+			fmt.Printf("http://%v/statistics", os.Getenv("VEGA_NODE_REST_API"))
+			res, err := http.Get(fmt.Sprintf("http://%v/statistics", os.Getenv("VEGA_NODE_REST_API")))
+			if err != nil {
+				log.Printf("Could not get statistics endpoint: %v", err)
+			}
+
+			body, err := io.ReadAll(res.Body)
+			if err != nil {
+				log.Printf("Failed to read response body: %v", err)
+			}
+			res.Body.Close()
+
+			data := make(map[string]any)
+			json.Unmarshal(body, &data)
+
+			chainStatus := data["statistics"].(map[string]any)["status"].(string)
+			fmt.Printf("Chain Status: %v", chainStatus)
+
+			if chainStatus == "CHAIN_STATUS_REPLAYING" {
+				fmt.Printf("Core node is replaying the chain...")
+			} else if chainStatus == "CHAIN_STATUS_CONNECTED" {
+				fmt.Printf("Chain has finished replaying.")
+				b.isReplaying = false
+			}
+		}
+
+	}()
 
 }
 

@@ -265,6 +265,19 @@ spec:
           value: "$(KAFKA_SERVICE_MAINNET_SERVICE_HOST):9092"
 ---
 apiVersion: v1
+kind: Service
+metadata:
+  name: vega-node-service-mainnet
+  labels:
+    app: vega-node-service-mainnet
+spec:
+  ports:
+    - port: 3003
+      targetPort: 3003 
+  selector:
+    app: vega-node-pod-mainnet
+---
+apiVersion: v1
 kind: Pod
 metadata:
   name: vega-node-pod-mainnet
@@ -362,6 +375,9 @@ spec:
     env:
     - name: KAFKA_BROKERS
       value: "$(KAFKA_SERVICE_MAINNET_SERVICE_HOST):9092"
+      env:
+    - name: VEGA_NODE_REST_API
+      value: "$(VEGA_NODE_MAINNET_SERVICE_HOST):3002"
 ---
 apiVersion: v1
 kind: Pod
