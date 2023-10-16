@@ -189,6 +189,10 @@ func (s SocketServer) recieve(wg *sync.WaitGroup) chan []byte {
 
 func (b Broker) monitorCoreNodeChainStatus() {
 
+	// Maybe we should refactor this to send an event to a channel to notify every time the chain
+	// status has changed. This way we can switch the persistence logic back and forth between
+	// replaying/notReplaying instead of just from reaplaying -> notReplaying.
+
 	ticker := time.NewTicker(time.Second * 5)
 
 	go func() {
@@ -215,7 +219,7 @@ func (b Broker) monitorCoreNodeChainStatus() {
 			if chainStatus == "CHAIN_STATUS_REPLAYING" {
 				fmt.Printf("Core node is replaying the chain...")
 			} else if chainStatus == "CHAIN_STATUS_CONNECTED" {
-				fmt.Printf("Chain has finished replaying.")
+				fmt.Printf("Core node has finished replaying.")
 				b.isReplaying = false
 			}
 		}

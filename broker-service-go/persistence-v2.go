@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -74,10 +77,14 @@ type PersistenceManager interface {
 }
 
 type persistenceManager struct {
-	broker      *Broker
-	recvChs     map[string]chan *eventspb.BusEvent
-	eventBatchs map[string][]*formattedEvent
-	blockBatchs map[string]blockBatch
+	broker              *Broker
+	pgClient            *pgClient
+	recvChs             map[string]chan *eventspb.BusEvent
+	blockPersistChs     map[string]chan *blockBatch
+	batchPersistChs     map[string]chan []*formattedEvent
+	replayConfirmations map[string]bool
+	eventBatches        map[string][]*formattedEvent
+	blockBatches        map[string]map[string]*blockBatch
 }
 
 type blockBatch struct {
@@ -135,27 +142,6 @@ type formattedTrade struct {
 	SellerFeeLiqudity string
 }
 
-type fTrade struct {
-	Id                string
-	MarketId          string
-	Price             string
-	Size              uint64
-	Buyer             string
-	Seller            string
-	Aggressor         string
-	BuyOrder          string
-	SellOrder         string
-	Timestamp         int64
-	SynthTimestamp    int64
-	Type              string
-	BuyerFeeMaker     string
-	BuyerFeeInfra     string
-	BuyerFeeLiqudity  string
-	SellerFeeMaker    string
-	SellerFeeInfra    string
-	SellerFeeLiqudity string
-}
-
 func (t *formattedTrade) isFormattedEvent() {}
 
 func (f *formattedEvent) GetFormattedTrade() *formattedTrade {
@@ -170,38 +156,60 @@ func (m *persistenceManager) start() {
 	persistCh := make(chan []*formattedEvent)
 
 	for topic, _ := range m.broker.topicSet {
-		// For each topic
 
 		// Spawn a goroutine to fetch events for that topic.
 		go func() {
 			for {
 				evt := <-m.recvChs[topic]
 				fmt.Printf("Recieved event: %+v", evt)
-
 				fmt.Printf("evt.Type: %v", evt.Type)
+				idParts := strings.Split(evt.Id, "-")
+				height := idParts[0]
+				fmt.Printf("evt Height: %v", height)
+				fmt.Printf("evt Index: %v", idParts[1])
 
-				if !m.broker.isReplaying && evt.Type == m.busEventType {
-					m.blockBatch.events = append(m.blockBatch.events, m.FormatEvent(evt))
-				} else if evt.Type == m.busEventType {
-					m.eventBatch = append(m.eventBatch, m.FormatEvent(evt))
+				if m.broker.isReplaying {
+					m.eventBatches[topic] = append(m.eventBatches[topic], m.FormatEvent(evt))
+				} else {
+					m.blockBatches[topic][height].events = append(m.blockBatches[topic][height].events, m.FormatEvent(evt))
 				}
 
 				if !m.broker.isReplaying && evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_END_BLOCK {
-					// Perform block inserts
-
+					// Queue for block inserts
+					m.blockPersistChs[topic] <- m.blockBatches[topic][height]
 				}
 
 			}
 		}()
 
-		// Spawn a goroutine with a loop for persistance
+		batchPersistTicker := time.NewTicker(time.Millisecond * 200)
+		// Spawn a goroutine for batch persistence
 		go func() {
-			for batch := range persistCh {
+			for {
+				select {
+				case <-batchPersistTicker.C:
+					// Flush the batch
+					m.batchPersistChs[topic] <- m.eventBatches[topic]
+					m.eventBatches[topic] = nil
+				case batch := <-m.batchPersistChs[topic]:
+					m.BatchPersist(batch)
+				}
+			}
+		}()
+
+		// Spawn a goroutine for block persistence
+		go func() {
+
+			for batch := range m.blockPersistChs[topic] {
 
 			}
 		}()
 
 	}
+
+}
+
+func (m *persistenceManager) BatchPersist(batch []*formattedEvent) (pgconn.CommandTag, error) {
 
 }
 
