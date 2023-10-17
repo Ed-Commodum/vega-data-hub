@@ -36,7 +36,7 @@ func newPostgresClient() PgClient {
 }
 
 func (client *pgClient) Connect() {
-	pool, err := pgxpool.Connect(context.Background(), os.Getenv("PG_URL"))
+	pool, err := pgxpool.Connect(context.Background(), client.dbUrl)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v\n", err)
 	}
@@ -65,9 +65,7 @@ func (client *pgClient) Exec(queryStr string, args ...interface{}) (pgconn.Comma
 //
 
 type PersistenceManager interface {
-	BlockPersist()
-	BatchPersist()
-	FormatEvent()
+	FormatEvent(*eventspb.BusEvent) *formattedEvent
 
 	// Workflow for event persistence
 	//	- Get events from channel
@@ -80,14 +78,11 @@ type persistenceManager struct {
 	broker                *Broker
 	pgClient              *pgClient
 	recvChs               map[string]chan *eventspb.BusEvent
-	blockPersistChs       map[string]chan *blockBatch
-	batchPersistChs       map[string]chan []*formattedEvent
 	eventBatches          map[string][]*formattedEvent
 	blockBatches          map[string]map[int64]*blockBatch
 	blockPersistenceReady map[string]bool
-	blockPersistStartChan chan struct{}
-	blockPersistStopChan  chan struct{}
-	blockPersistIsRunning bool
+	batchPersisters       map[string]*batchPersister
+	blockPersisters       map[string]*blockPersister
 }
 
 type blockBatch struct {
@@ -95,22 +90,88 @@ type blockBatch struct {
 	events []*formattedEvent
 }
 
+type BatchPersister interface {
+	Start()
+	Pause()
+	Unpause()
+	Persist([]*formattedEvent)
+}
+
 type BlockPersister interface {
 	Start()
 	Pause()
 	Unpause()
+	Persist(*blockBatch)
+}
+
+type batchPersister struct {
+	pm        *persistenceManager
+	status    string
+	controlCh chan string
+	persistCh chan []*formattedEvent
 }
 
 type blockPersister struct {
-	topic     string
+	pm        *persistenceManager
 	status    string
 	controlCh chan string
+	persistCh chan *blockBatch
 }
 
-func newBlockPersister(topic string) BlockPersister {
-	return &blockPersister{
-		topic:     topic,
+func newPersistenceManager(b *Broker) PersistenceManager {
+	pm := &persistenceManager{
+		broker:                b,
+		pgClient:              newPostgresClient().(*pgClient),
+		recvChs:               make(map[string]chan *eventspb.BusEvent),
+		eventBatches:          make(map[string][]*formattedEvent),
+		blockBatches:          make(map[string]map[int64]*blockBatch),
+		blockPersistenceReady: make(map[string]bool),
+		batchPersisters:       make(map[string]*batchPersister),
+		blockPersisters:       make(map[string]*blockPersister),
+	}
+
+	for topic := range b.topicSet {
+		pm.batchPersisters[topic] = newBatchPersister(pm).(*batchPersister)
+		pm.blockPersisters[topic] = newBlockPersister(pm).(*blockPersister)
+	}
+
+}
+
+func newBatchPersister(pm *persistenceManager) BatchPersister {
+	return &batchPersister{
+		pm:        pm,
 		controlCh: make(chan string),
+		persistCh: make(chan []*formattedEvent),
+	}
+}
+
+func newBlockPersister(pm *persistenceManager) BlockPersister {
+	return &blockPersister{
+		pm:        pm,
+		controlCh: make(chan string),
+		persistCh: make(chan *blockBatch),
+	}
+}
+
+func (bp *batchPersister) Start() {
+	bp.status = "running"
+	for {
+		select {
+		case cmd := <-bp.controlCh:
+			switch cmd {
+			case "pause":
+				bp.status = "paused"
+			case "unpause":
+				bp.status = "running"
+			default:
+				bp.status = "running"
+			}
+		default:
+			if bp.status == "running" {
+				// Do work here
+				bp.Persist(<-bp.persistCh)
+			}
+		}
 	}
 }
 
@@ -130,17 +191,48 @@ func (bp *blockPersister) Start() {
 		default:
 			if bp.status == "running" {
 				// Do work here
+				bp.Persist(<-bp.persistCh)
 			}
 		}
 	}
+}
+
+func (bp *batchPersister) Pause() {
+	bp.controlCh <- "pause"
 }
 
 func (bp *blockPersister) Pause() {
 	bp.controlCh <- "pause"
 }
 
+func (bp *batchPersister) Unpause() {
+	bp.controlCh <- "unpause"
+}
+
 func (bp *blockPersister) Unpause() {
 	bp.controlCh <- "unpause"
+}
+
+func (bp *batchPersister) IsRunning() bool {
+	if bp.status == "running" {
+		return true
+	}
+	return false
+}
+
+func (bp *blockPersister) IsRunning() bool {
+	if bp.status == "running" {
+		return true
+	}
+	return false
+}
+
+func (bp *batchPersister) Persist(batch []*formattedEvent) {
+
+}
+
+func (bp *blockPersister) Persist(batch *blockBatch) {
+
 }
 
 type FormattedEventType uint8
@@ -225,7 +317,7 @@ func (m *persistenceManager) start() {
 				if m.broker.isReplaying {
 					m.eventBatches[topic] = append(m.eventBatches[topic], m.FormatEvent(evt))
 					if len(m.eventBatches[topic]) >= 1000 {
-						m.batchPersistChs[topic] <- m.eventBatches[topic]
+						m.batchPersisters[topic].persistCh <- m.eventBatches[topic]
 						m.eventBatches[topic] = nil
 					}
 				} else {
@@ -241,7 +333,7 @@ func (m *persistenceManager) start() {
 
 				if !m.broker.isReplaying && evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_END_BLOCK {
 					// Queue for block inserts
-					m.blockPersistChs[topic] <- m.blockBatches[topic][height]
+					m.blockPersisters[topic].persistCh <- m.blockBatches[topic][height]
 					delete(m.blockBatches, topic)
 				}
 
@@ -254,17 +346,17 @@ func (m *persistenceManager) start() {
 				select {
 				case <-batchPersistTicker.C:
 					// Flush the batch, if no batch, set block persistence ready for that topic.
-					if len(m.batchPersistChs[topic]) == 0 && !m.broker.isReplaying && len(m.eventBatches[topic]) == 0 {
+					if len(m.batchPersisters[topic].persistCh) == 0 && !m.broker.isReplaying && len(m.eventBatches[topic]) == 0 {
 						m.blockPersistenceReady[topic] = true
 					}
 					if len(m.eventBatches[topic]) == 0 {
 						continue
 					}
-					m.batchPersistChs[topic] <- m.eventBatches[topic]
+					m.batchPersisters[topic].persistCh <- m.eventBatches[topic]
 					m.eventBatches[topic] = nil
-				case batch := <-m.batchPersistChs[topic]:
-					if m.blockPersistIsRunning {
-						m.blockPersistStopChan <- struct{}{}
+				case batch := <-m.batchPersisters[topic].persistCh:
+					if m.blockPersisters[topic].IsRunning() {
+						m.blockPersisters[topic].Pause()
 					}
 					commandTag, err := m.BatchPersist(batch)
 					if err != nil {
