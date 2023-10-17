@@ -94,18 +94,19 @@ type BatchPersister interface {
 	Start()
 	Pause()
 	Unpause()
-	Persist([]*formattedEvent)
+	Persist([]*formattedEvent) (pgconn.CommandTag, error)
 }
 
 type BlockPersister interface {
 	Start()
 	Pause()
 	Unpause()
-	Persist(*blockBatch)
+	Persist(*blockBatch) (pgconn.CommandTag, error)
 }
 
 type batchPersister struct {
 	pm        *persistenceManager
+	topic     string
 	status    string
 	controlCh chan string
 	persistCh chan []*formattedEvent
@@ -113,6 +114,7 @@ type batchPersister struct {
 
 type blockPersister struct {
 	pm        *persistenceManager
+	topic     string
 	status    string
 	controlCh chan string
 	persistCh chan *blockBatch
@@ -131,23 +133,26 @@ func newPersistenceManager(b *Broker) PersistenceManager {
 	}
 
 	for topic := range b.topicSet {
-		pm.batchPersisters[topic] = newBatchPersister(pm).(*batchPersister)
-		pm.blockPersisters[topic] = newBlockPersister(pm).(*blockPersister)
+		pm.batchPersisters[topic] = newBatchPersister(pm, topic).(*batchPersister)
+		pm.blockPersisters[topic] = newBlockPersister(pm, topic).(*blockPersister)
 	}
 
+	return pm
 }
 
-func newBatchPersister(pm *persistenceManager) BatchPersister {
+func newBatchPersister(pm *persistenceManager, topic string) BatchPersister {
 	return &batchPersister{
 		pm:        pm,
+		topic:     topic,
 		controlCh: make(chan string),
 		persistCh: make(chan []*formattedEvent),
 	}
 }
 
-func newBlockPersister(pm *persistenceManager) BlockPersister {
+func newBlockPersister(pm *persistenceManager, topic string) BlockPersister {
 	return &blockPersister{
 		pm:        pm,
+		topic:     topic,
 		controlCh: make(chan string),
 		persistCh: make(chan *blockBatch),
 	}
@@ -227,11 +232,27 @@ func (bp *blockPersister) IsRunning() bool {
 	return false
 }
 
-func (bp *batchPersister) Persist(batch []*formattedEvent) {
+func (bp *batchPersister) Persist(batch []*formattedEvent) (pgconn.CommandTag, error) {
+
+	queryStr := bp.GetInsertQuery(batch)
+
+	commandTag, err := bp.pm.pgClient.Exec(queryStr)
+	if err != nil {
+		log.Printf("failed to persist batch for %v topic: %v\n", bp.topic, err)
+	}
+	fmt.Printf("Batch persisted for %v topic. %v batches waiting for persistence.\n", bp.topic, len(bp.persistCh))
+	fmt.Printf("Postgres command tag: %v\n", commandTag)
+
+	return pgconn.CommandTag{}, nil
 
 }
 
-func (bp *blockPersister) Persist(batch *blockBatch) {
+func (bp *blockPersister) Persist(batch *blockBatch) (pgconn.CommandTag, error) {
+
+	return pgconn.CommandTag{}, nil
+}
+
+func (bp *batchPersister) GetInsertQuery(batch []*formattedEvent) string {
 
 }
 
@@ -298,6 +319,10 @@ func (m *persistenceManager) start() {
 
 	for topic, _ := range m.broker.topicSet {
 
+		m.batchPersisters[topic].Start()
+		m.blockPersisters[topic].Start()
+		m.blockPersisters[topic].Pause() // Pause until Vega node done replaying and previous batches are inserted.
+
 		batchPersistTicker := time.NewTicker(time.Millisecond * 500)
 
 		// Spawn a goroutine to fetch events for that topic.
@@ -358,13 +383,8 @@ func (m *persistenceManager) start() {
 					if m.blockPersisters[topic].IsRunning() {
 						m.blockPersisters[topic].Pause()
 					}
-					commandTag, err := m.BatchPersist(batch)
-					if err != nil {
-						log.Printf("failed to persist batch for %v topic: %v\n", topic, err)
-					}
-					fmt.Printf("Batch persisted for %v topic. %v batches waiting for persistence.\n", topic, len(m.batchPersistChs[topic]))
-					fmt.Printf("Postgres command tag: %v\n", commandTag)
-					if len(m.batchPersistChs[topic]) == 0 && !m.broker.isReplaying && len(m.eventBatches[topic]) == 0 {
+					m.batchPersisters[topic].persistCh <- batch
+					if len(m.batchPersisters[topic].persistCh) == 0 && !m.broker.isReplaying && len(m.eventBatches[topic]) == 0 {
 						// Finished inserting all batch events, start block by block inserts.
 						m.blockPersistenceReady[topic] = true
 						ready := true
@@ -374,35 +394,14 @@ func (m *persistenceManager) start() {
 							}
 						}
 						if ready {
-							m.blockPersistStartChan <- struct{}{}
+							m.blockPersisters[topic].Unpause()
 						}
 					}
 				}
 			}
 		}()
 
-		// Spawn a goroutine for block persistence
-		go func() {
-			for {
-				select {
-				case <-m.blockPersistStartChan:
-
-				case <-m.blockPersistStopChan:
-
-				}
-			}
-
-		}()
-
-		go func() {
-
-		}()
-
 	}
-
-}
-
-func (m *persistenceManager) BatchPersist(batch []*formattedEvent) (pgconn.CommandTag, error) {
 
 }
 

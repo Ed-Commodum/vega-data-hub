@@ -205,7 +205,9 @@ func (b Broker) monitorCoreNodeChainStatus() {
 				log.Printf("Could not get statistics endpoint: %v", err)
 				// Set replaying to true to prevent block inserts of events once vega node comes online.
 				b.isReplaying = true
-				b.pm.blockPersistStopChan <- struct{}{} // In the future we could provide a reason in the struct.
+				for topic := range b.topicSet {
+					b.pm.blockPersisters[topic].Pause()
+				}
 			}
 
 			body, err := io.ReadAll(res.Body)
@@ -223,9 +225,9 @@ func (b Broker) monitorCoreNodeChainStatus() {
 			if chainStatus == "CHAIN_STATUS_REPLAYING" {
 				fmt.Printf("Core node is replaying the chain...\n")
 				b.isReplaying = true
-				b.pm.blockPersistStopChan <- struct{}{}
 				for topic := range b.topicSet {
 					b.pm.blockPersistenceReady[topic] = false
+					b.pm.blockPersisters[topic].Pause()
 				}
 			} else if chainStatus == "CHAIN_STATUS_CONNECTED" {
 				fmt.Printf("Core node has finished replaying.\n")
@@ -233,9 +235,9 @@ func (b Broker) monitorCoreNodeChainStatus() {
 			} else if chainStatus == "CHAIN_STATUS_DISCONNECTED" {
 				fmt.Printf("Core node is disconnected.")
 				b.isReplaying = true
-				b.pm.blockPersistStopChan <- struct{}{}
 				for topic := range b.topicSet {
 					b.pm.blockPersistenceReady[topic] = false
+					b.pm.blockPersisters[topic].Pause()
 				}
 			}
 		}
@@ -270,6 +272,7 @@ func (b Broker) distribute(wg *sync.WaitGroup, deChan chan *eventspb.BusEvent) {
 	var (
 		height, blockCount, tradeCount, orderCount, posStateCount, assetCount, stakeLinkingCount int
 		marketDataCount, marketCount, ledgerMovementsCount, accountCount, depositWithdrawalCount int
+		expiredOrdersCount                                                                       int
 	)
 
 	ticker := time.NewTicker(time.Second * 1)
@@ -280,6 +283,7 @@ func (b Broker) distribute(wg *sync.WaitGroup, deChan chan *eventspb.BusEvent) {
 			fmt.Println("Blocks count: ", blockCount)
 			fmt.Println("Trade count: ", tradeCount)
 			fmt.Println("Order count: ", orderCount)
+			fmt.Println("Expired orders count: ", expiredOrdersCount)
 			fmt.Println("Position state count: ", posStateCount)
 			fmt.Println("Market data count: ", marketDataCount)
 			fmt.Println("Asset count: ", assetCount)
@@ -316,6 +320,11 @@ func (b Broker) distribute(wg *sync.WaitGroup, deChan chan *eventspb.BusEvent) {
 			if evtType.String() == "BUS_EVENT_TYPE_ORDER" {
 				// continue // Ignore event for now
 				orderCount += 1
+				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
+			}
+			if evtType.String() == "BUS_EVENT_TYPE_EXPIRED_ORDERS" {
+				// continue // Ignore event for now
+				expiredOrdersCount += 1
 				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_POSITION_STATE" {
