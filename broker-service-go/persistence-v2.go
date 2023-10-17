@@ -77,19 +77,70 @@ type PersistenceManager interface {
 }
 
 type persistenceManager struct {
-	broker              *Broker
-	pgClient            *pgClient
-	recvChs             map[string]chan *eventspb.BusEvent
-	blockPersistChs     map[string]chan *blockBatch
-	batchPersistChs     map[string]chan []*formattedEvent
-	replayConfirmations map[string]bool
-	eventBatches        map[string][]*formattedEvent
-	blockBatches        map[string]map[string]*blockBatch
+	broker                *Broker
+	pgClient              *pgClient
+	recvChs               map[string]chan *eventspb.BusEvent
+	blockPersistChs       map[string]chan *blockBatch
+	batchPersistChs       map[string]chan []*formattedEvent
+	eventBatches          map[string][]*formattedEvent
+	blockBatches          map[string]map[int64]*blockBatch
+	blockPersistenceReady map[string]bool
+	blockPersistStartChan chan struct{}
+	blockPersistStopChan  chan struct{}
+	blockPersistIsRunning bool
 }
 
 type blockBatch struct {
 	height int64
 	events []*formattedEvent
+}
+
+type BlockPersister interface {
+	Start()
+	Pause()
+	Unpause()
+}
+
+type blockPersister struct {
+	topic     string
+	status    string
+	controlCh chan string
+}
+
+func newBlockPersister(topic string) BlockPersister {
+	return &blockPersister{
+		topic:     topic,
+		controlCh: make(chan string),
+	}
+}
+
+func (bp *blockPersister) Start() {
+	bp.status = "running"
+	for {
+		select {
+		case cmd := <-bp.controlCh:
+			switch cmd {
+			case "pause":
+				bp.status = "paused"
+			case "unpause":
+				bp.status = "running"
+			default:
+				bp.status = "running"
+			}
+		default:
+			if bp.status == "running" {
+				// Do work here
+			}
+		}
+	}
+}
+
+func (bp *blockPersister) Pause() {
+	bp.controlCh <- "pause"
+}
+
+func (bp *blockPersister) Unpause() {
+	bp.controlCh <- "unpause"
 }
 
 type FormattedEventType uint8
@@ -153,56 +204,106 @@ func (f *formattedEvent) GetFormattedTrade() *formattedTrade {
 
 func (m *persistenceManager) start() {
 
-	persistCh := make(chan []*formattedEvent)
-
 	for topic, _ := range m.broker.topicSet {
+
+		batchPersistTicker := time.NewTicker(time.Millisecond * 500)
 
 		// Spawn a goroutine to fetch events for that topic.
 		go func() {
 			for {
 				evt := <-m.recvChs[topic]
-				fmt.Printf("Recieved event: %+v", evt)
-				fmt.Printf("evt.Type: %v", evt.Type)
+				fmt.Printf("Recieved event: %+v\n", evt)
+				fmt.Printf("evt.Type: %v\n", evt.Type)
 				idParts := strings.Split(evt.Id, "-")
-				height := idParts[0]
-				fmt.Printf("evt Height: %v", height)
-				fmt.Printf("evt Index: %v", idParts[1])
+				height, err := strconv.ParseInt(idParts[0], 10, 64)
+				if err != nil {
+					log.Printf("Could not convert height to int64: %v", err)
+				}
+				fmt.Printf("evt Height: %v\n", height)
+				fmt.Printf("evt Index: %v\n", idParts[1])
 
 				if m.broker.isReplaying {
 					m.eventBatches[topic] = append(m.eventBatches[topic], m.FormatEvent(evt))
+					if len(m.eventBatches[topic]) >= 1000 {
+						m.batchPersistChs[topic] <- m.eventBatches[topic]
+						m.eventBatches[topic] = nil
+					}
 				} else {
 					m.blockBatches[topic][height].events = append(m.blockBatches[topic][height].events, m.FormatEvent(evt))
+				}
+
+				if !m.broker.isReplaying && evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_BEGIN_BLOCK {
+					m.blockBatches[topic][height] = &blockBatch{
+						height: height,
+						events: []*formattedEvent{},
+					}
 				}
 
 				if !m.broker.isReplaying && evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_END_BLOCK {
 					// Queue for block inserts
 					m.blockPersistChs[topic] <- m.blockBatches[topic][height]
+					delete(m.blockBatches, topic)
 				}
 
 			}
 		}()
 
-		batchPersistTicker := time.NewTicker(time.Millisecond * 200)
 		// Spawn a goroutine for batch persistence
 		go func() {
 			for {
 				select {
 				case <-batchPersistTicker.C:
-					// Flush the batch
+					// Flush the batch, if no batch, set block persistence ready for that topic.
+					if len(m.batchPersistChs[topic]) == 0 && !m.broker.isReplaying && len(m.eventBatches[topic]) == 0 {
+						m.blockPersistenceReady[topic] = true
+					}
+					if len(m.eventBatches[topic]) == 0 {
+						continue
+					}
 					m.batchPersistChs[topic] <- m.eventBatches[topic]
 					m.eventBatches[topic] = nil
 				case batch := <-m.batchPersistChs[topic]:
-					m.BatchPersist(batch)
+					if m.blockPersistIsRunning {
+						m.blockPersistStopChan <- struct{}{}
+					}
+					commandTag, err := m.BatchPersist(batch)
+					if err != nil {
+						log.Printf("failed to persist batch for %v topic: %v\n", topic, err)
+					}
+					fmt.Printf("Batch persisted for %v topic. %v batches waiting for persistence.\n", topic, len(m.batchPersistChs[topic]))
+					fmt.Printf("Postgres command tag: %v\n", commandTag)
+					if len(m.batchPersistChs[topic]) == 0 && !m.broker.isReplaying && len(m.eventBatches[topic]) == 0 {
+						// Finished inserting all batch events, start block by block inserts.
+						m.blockPersistenceReady[topic] = true
+						ready := true
+						for _, v := range m.blockPersistenceReady {
+							if v == false {
+								ready = false
+							}
+						}
+						if ready {
+							m.blockPersistStartChan <- struct{}{}
+						}
+					}
 				}
 			}
 		}()
 
 		// Spawn a goroutine for block persistence
 		go func() {
+			for {
+				select {
+				case <-m.blockPersistStartChan:
 
-			for batch := range m.blockPersistChs[topic] {
+				case <-m.blockPersistStopChan:
 
+				}
 			}
+
+		}()
+
+		go func() {
+
 		}()
 
 	}

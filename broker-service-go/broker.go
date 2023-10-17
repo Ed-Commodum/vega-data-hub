@@ -50,6 +50,7 @@ type Broker struct {
 	busEventTopicMap map[string]string
 	topicChans       map[string]chan *eventspb.BusEvent
 	isReplaying      bool
+	pm               *persistenceManager
 }
 
 type SocketServer struct {
@@ -202,6 +203,9 @@ func (b Broker) monitorCoreNodeChainStatus() {
 			res, err := http.Get(fmt.Sprintf("http://%v/statistics", os.Getenv("VEGA_NODE_REST_API")))
 			if err != nil {
 				log.Printf("Could not get statistics endpoint: %v", err)
+				// Set replaying to true to prevent block inserts of events once vega node comes online.
+				b.isReplaying = true
+				b.pm.blockPersistStopChan <- struct{}{} // In the future we could provide a reason in the struct.
 			}
 
 			body, err := io.ReadAll(res.Body)
@@ -217,10 +221,22 @@ func (b Broker) monitorCoreNodeChainStatus() {
 			fmt.Printf("Chain Status: %v", chainStatus)
 
 			if chainStatus == "CHAIN_STATUS_REPLAYING" {
-				fmt.Printf("Core node is replaying the chain...")
+				fmt.Printf("Core node is replaying the chain...\n")
+				b.isReplaying = true
+				b.pm.blockPersistStopChan <- struct{}{}
+				for topic := range b.topicSet {
+					b.pm.blockPersistenceReady[topic] = false
+				}
 			} else if chainStatus == "CHAIN_STATUS_CONNECTED" {
-				fmt.Printf("Core node has finished replaying.")
+				fmt.Printf("Core node has finished replaying.\n")
 				b.isReplaying = false
+			} else if chainStatus == "CHAIN_STATUS_DISCONNECTED" {
+				fmt.Printf("Core node is disconnected.")
+				b.isReplaying = true
+				b.pm.blockPersistStopChan <- struct{}{}
+				for topic := range b.topicSet {
+					b.pm.blockPersistenceReady[topic] = false
+				}
 			}
 		}
 
