@@ -254,6 +254,72 @@ func (bp *blockPersister) Persist(batch *blockBatch) (pgconn.CommandTag, error) 
 
 func (bp *batchPersister) GetInsertQuery(batch []*formattedEvent) string {
 
+	evtType := batch[0].Type
+	for _, evt := range batch {
+		if evt.Type != evtType {
+			log.Fatalf("Event type mismatch in formatted event batch.\n")
+		}
+	}
+
+	switch evtType {
+	case FormattedEventType_Trade:
+		return ""
+	case FormattedEventType_OrderUpdate:
+		return ""
+	case FormattedEventType_LedgerMovement:
+		return ""
+	case FormattedEventType_Asset:
+		return ""
+	case FormattedEventType_MarketUpdate:
+		return ""
+	case FormattedEventType_MarketData:
+		return ""
+	case FormattedEventType_StakeLinking:
+		return ""
+	}
+
+	return ""
+}
+
+func getBatchInsertTradeQuery(batch []*formattedEvent) {
+	baseStr := `INSERT INTO trades (
+		id,
+		market_id,
+		price,
+		size,
+		buyer,
+		seller,
+		aggressor,
+		buy_order,
+		sell_order,
+		timestamp,
+		synth_timestamp,
+		type,
+		buyer_fee_maker,
+		buyer_fee_infrastructure,
+		buyer_fee_liquidity,
+		seller_fee_maker,
+		seller_fee_infrastructure,
+		seller_fee_liquidity,
+		is_first_in_bucket
+	) SELECT DISTINCT * FROM ( VALUES %s ) t ON CONFLICT DO NOTHING;`
+
+	typeCastings := []string{"::text", "::text", "::bigint", "::bigint", "::text", "::text", "::text", "::text",
+		"::text", "::bigint", "::bigint", "::text", "::numeric(40)", "::numeric(40)", "::numeric(40)",
+		"::numeric(40)", "::numeric(40)", "::numeric(40)", "::integer"}
+
+	firstRow := `( $1::text, $2::text, $3::bigint, $4::bigint, $5::text, $6::text, $7::text, $8::text,
+	$9::text, $10::bigint, $11::bigint, $12::text, $13::numeric(40), $14::numeric(40), $15::numeric(40),
+	$16::numeric(40), $17::numeric(40), $18::numeric(40), $19::integer )`
+
+	subsequentRows := "( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19 )"
+
+	queryStr := fmt.Sprintf(baseStr, valuesStr)
+
+	// (text 'v1', text 'v2')
+	// , ('v3','v4')
+	// , ('v3','v4')
+
 }
 
 type FormattedEventType uint8
@@ -261,13 +327,35 @@ type FormattedEventType uint8
 const (
 	FormattedEventType_Unspecified FormattedEventType = iota
 	FormattedEventType_Trade
-	FormattedEventType_Order
+	FormattedEventType_OrderUpdate
 	FormattedEventType_LedgerMovement
 	FormattedEventType_Asset
-	FormattedEventType_Market
+	FormattedEventType_MarketUpdate
 	FormattedEventType_MarketData
 	FormattedEventType_StakeLinking
 )
+
+func (f FormattedEventType) String() string {
+	switch f {
+	case FormattedEventType_Unspecified:
+		return "FormattedEventType_Unspecified"
+	case FormattedEventType_Trade:
+		return "FormattedEventType_Trade"
+	case FormattedEventType_OrderUpdate:
+		return "FormattedEventType_OrderUpdate"
+	case FormattedEventType_LedgerMovement:
+		return "FormattedEventType_LedgerMovement"
+	case FormattedEventType_Asset:
+		return "FormattedEventType_Asset"
+	case FormattedEventType_MarketUpdate:
+		return "FormattedEventType_MarketUpdate"
+	case FormattedEventType_MarketData:
+		return "FormattedEventType_MarketData"
+	case FormattedEventType_StakeLinking:
+		return "FormattedEventType_StakeLinking"
+	}
+	return "FormattedEventType_Unspecified"
+}
 
 type FormattedEvent interface {
 	isFormattedEvent()
