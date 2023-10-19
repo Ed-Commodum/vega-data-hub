@@ -55,14 +55,38 @@ func (client *pgClient) Exec(queryStr string, args ...interface{}) (pgconn.Comma
 	return client.pool.Exec(context.Background(), queryStr, args)
 }
 
-// Potential architectures for bus event processing and persistence
-//	- One persistence manager for each "topic" of bus event we are processing, each one of these
-//	  will run in it's own goroutine.
-//
-//	- One persistance manager for processing all events, but will have separate loops and goroutines
-//	  for each "topic".
-//
-//
+func (client *pgClient) InitDb() pgconn.CommandTag {
+
+	// List existing tables
+	listTablesQuery := "SELECT * FROM information_schema.tables"
+
+	rows, err := client.Query(listTablesQuery)
+	if err != nil {
+		log.Fatalf("Failed to get tables from DB: %v\n", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		values, err := rows.Values()
+		if err != nil {
+			log.Printf("Failed to get row values: %v\n", err)
+		}
+		fmt.Printf("listTablesQuery result row values: %v\n", values)
+	}
+
+	if rows.Err() != nil {
+		log.Printf("Error reading rows: %v\n", rows.Err())
+	}
+
+	// Create all required hypertables, skipping tables that are already present.
+
+	// Create indexes
+
+	// Set integer time for new hypertables
+
+	// Create continuous aggregates for new hypertables
+
+}
 
 type PersistenceManager interface {
 	FormatEvent(*eventspb.BusEvent) *formattedEvent
@@ -78,11 +102,21 @@ type persistenceManager struct {
 	broker                *Broker
 	pgClient              *pgClient
 	recvChs               map[string]chan *eventspb.BusEvent
-	eventBatches          map[string][]*formattedEvent
+	eventBatches          map[string][]FormattedEvent
 	blockBatches          map[string]map[int64]*blockBatch
 	blockPersistenceReady map[string]bool
 	batchPersisters       map[string]*batchPersister
 	blockPersisters       map[string]*blockPersister
+	recentBlocks          map[string]*recentBlock
+}
+
+type recentBlock struct {
+	height    string
+	timestamp int64
+}
+
+type formattedEventBatch struct {
+	batch []*formattedEvent
 }
 
 type blockBatch struct {
@@ -94,14 +128,14 @@ type BatchPersister interface {
 	Start()
 	Pause()
 	Unpause()
-	Persist([]*formattedEvent) (pgconn.CommandTag, error)
+	Persist([]FormattedEvent) (int64, error)
 }
 
 type BlockPersister interface {
 	Start()
 	Pause()
 	Unpause()
-	Persist(*blockBatch) (pgconn.CommandTag, error)
+	Persist(*blockBatch) (int64, error)
 }
 
 type batchPersister struct {
@@ -109,7 +143,7 @@ type batchPersister struct {
 	topic     string
 	status    string
 	controlCh chan string
-	persistCh chan []*formattedEvent
+	persistCh chan []FormattedEvent
 }
 
 type blockPersister struct {
@@ -125,7 +159,7 @@ func newPersistenceManager(b *Broker) PersistenceManager {
 		broker:                b,
 		pgClient:              newPostgresClient().(*pgClient),
 		recvChs:               make(map[string]chan *eventspb.BusEvent),
-		eventBatches:          make(map[string][]*formattedEvent),
+		eventBatches:          make(map[string][]FormattedEvent),
 		blockBatches:          make(map[string]map[int64]*blockBatch),
 		blockPersistenceReady: make(map[string]bool),
 		batchPersisters:       make(map[string]*batchPersister),
@@ -145,7 +179,7 @@ func newBatchPersister(pm *persistenceManager, topic string) BatchPersister {
 		pm:        pm,
 		topic:     topic,
 		controlCh: make(chan string),
-		persistCh: make(chan []*formattedEvent),
+		persistCh: make(chan []FormattedEvent),
 	}
 }
 
@@ -174,7 +208,11 @@ func (bp *batchPersister) Start() {
 		default:
 			if bp.status == "running" {
 				// Do work here
-				bp.Persist(<-bp.persistCh)
+				rowCount, err := bp.Persist(<-bp.persistCh)
+				if err != nil {
+					log.Printf("Error persisting batch for %v topic: %v\n", bp.topic, err)
+				}
+				fmt.Printf("Count of rows inserted: %v", rowCount)
 			}
 		}
 	}
@@ -196,7 +234,11 @@ func (bp *blockPersister) Start() {
 		default:
 			if bp.status == "running" {
 				// Do work here
-				bp.Persist(<-bp.persistCh)
+				rowCount, err := bp.Persist(<-bp.persistCh)
+				if err != nil {
+					log.Printf("Error persisting block batch for %v topic: %v\n", bp.topic, err)
+				}
+				fmt.Printf("Count of rows inserted: %v", rowCount)
 			}
 		}
 	}
@@ -232,24 +274,75 @@ func (bp *blockPersister) IsRunning() bool {
 	return false
 }
 
-func (bp *batchPersister) Persist(batch []*formattedEvent) (pgconn.CommandTag, error) {
+func (bp *batchPersister) Persist(batch []FormattedEvent) (int64, error) {
 
-	queryStr := bp.GetInsertQuery(batch)
+	evtType := batch[0].GetType()
 
-	commandTag, err := bp.pm.pgClient.Exec(queryStr)
-	if err != nil {
-		log.Printf("failed to persist batch for %v topic: %v\n", bp.topic, err)
+	switch evtType {
+	case FormattedEventType_Trade:
+		formattedTrades := []*formattedTrade{}
+		for i, evt := range batch {
+			if evt.GetType() != evtType {
+				log.Fatalf("Event type mismatch in formatted event batch: %v and %v\n", evtType.String(), evt.GetType().String())
+			}
+			// batch[i] = batch[i].(*formattedEvent).GetFormattedTrade()
+			formattedTrades = append(formattedTrades, batch[i].(*formattedTrade))
+		}
+		copyCount, err := bp.InsertTrades(formattedTrades)
+		if err != nil {
+			err = fmt.Errorf("error during CopyFrom operation: %v", err)
+		}
+		return copyCount, err
+	case FormattedEventType_OrderUpdate:
+		return 0, nil
+	case FormattedEventType_LedgerMovements:
+		return 0, nil
+	case FormattedEventType_Asset:
+		return 0, nil
+	case FormattedEventType_MarketUpdate:
+		return 0, nil
+	case FormattedEventType_MarketData:
+		return 0, nil
+	case FormattedEventType_StakeLinking:
+		return 0, nil
 	}
-	fmt.Printf("Batch persisted for %v topic. %v batches waiting for persistence.\n", bp.topic, len(bp.persistCh))
-	fmt.Printf("Postgres command tag: %v\n", commandTag)
 
-	return pgconn.CommandTag{}, nil
+	// queryStr := bp.GetInsertQuery(batch)
+	// commandTag, err := bp.pm.pgClient.Exec(queryStr)
+	// if err != nil {
+	// 	log.Printf("failed to persist batch for %v topic: %v\n", bp.topic, err)
+	// }
+	// fmt.Printf("Batch persisted for %v topic. %v batches waiting for persistence.\n", bp.topic, len(bp.persistCh))
+	// fmt.Printf("Postgres command tag: %v\n", commandTag)
+
+	return 0, nil
 
 }
 
-func (bp *blockPersister) Persist(batch *blockBatch) (pgconn.CommandTag, error) {
+func (bp *blockPersister) Persist(batch *blockBatch) (int64, error) {
 
-	return pgconn.CommandTag{}, nil
+	return 0, nil
+}
+
+func (bp *batchPersister) InsertTrades(batch []*formattedTrade) (int64, error) {
+	// Using postgres copy protocol
+	return bp.pm.pgClient.pool.CopyFrom(
+		context.Background(),
+		pgx.Identifier{"trades"},
+		[]string{
+			"id", "market_id", "price", "size", "buyer", "seller", "aggressor", "buy_order", "sell_order", "timestamp",
+			"synth_timestamp", "type", "buyer_fee_maker", "buyer_fee_infrastructure", "buyer_fee_liquidity",
+			"seller_fee_maker", "seller_fee_infrastructure", "seller_fee_liquidity",
+		},
+		pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
+			t := batch[i]
+			return []interface{}{
+				t.Id, t.MarketId, t.Price, t.Size, t.Buyer, t.Seller, t.Aggressor, t.BuyOrder,
+				t.SellOrder, t.Timestamp, t.SynthTimestamp, t.Type, t.BuyerFeeMaker, t.BuyerFeeInfra,
+				t.BuyerFeeLiqudity, t.SellerFeeMaker, t.SellerFeeInfra, t.SellerFeeLiqudity,
+			}, nil
+		}),
+	)
 }
 
 func (bp *batchPersister) GetInsertQuery(batch []*formattedEvent) string {
@@ -266,7 +359,9 @@ func (bp *batchPersister) GetInsertQuery(batch []*formattedEvent) string {
 		return ""
 	case FormattedEventType_OrderUpdate:
 		return ""
-	case FormattedEventType_LedgerMovement:
+	case FormattedEventType_ExpiredOrders:
+		return ""
+	case FormattedEventType_LedgerMovements:
 		return ""
 	case FormattedEventType_Asset:
 		return ""
@@ -281,46 +376,46 @@ func (bp *batchPersister) GetInsertQuery(batch []*formattedEvent) string {
 	return ""
 }
 
-func getBatchInsertTradeQuery(batch []*formattedEvent) {
-	baseStr := `INSERT INTO trades (
-		id,
-		market_id,
-		price,
-		size,
-		buyer,
-		seller,
-		aggressor,
-		buy_order,
-		sell_order,
-		timestamp,
-		synth_timestamp,
-		type,
-		buyer_fee_maker,
-		buyer_fee_infrastructure,
-		buyer_fee_liquidity,
-		seller_fee_maker,
-		seller_fee_infrastructure,
-		seller_fee_liquidity,
-		is_first_in_bucket
-	) SELECT DISTINCT * FROM ( VALUES %s ) t ON CONFLICT DO NOTHING;`
-
-	typeCastings := []string{"::text", "::text", "::bigint", "::bigint", "::text", "::text", "::text", "::text",
-		"::text", "::bigint", "::bigint", "::text", "::numeric(40)", "::numeric(40)", "::numeric(40)",
-		"::numeric(40)", "::numeric(40)", "::numeric(40)", "::integer"}
-
-	firstRow := `( $1::text, $2::text, $3::bigint, $4::bigint, $5::text, $6::text, $7::text, $8::text,
-	$9::text, $10::bigint, $11::bigint, $12::text, $13::numeric(40), $14::numeric(40), $15::numeric(40),
-	$16::numeric(40), $17::numeric(40), $18::numeric(40), $19::integer )`
-
-	subsequentRows := "( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19 )"
-
-	queryStr := fmt.Sprintf(baseStr, valuesStr)
-
-	// (text 'v1', text 'v2')
-	// , ('v3','v4')
-	// , ('v3','v4')
-
-}
+// func getBatchInsertTradeQuery(batch []*formattedEvent) {
+// 	baseStr := `INSERT INTO trades (
+// 		id,
+// 		market_id,
+// 		price,
+// 		size,
+// 		buyer,
+// 		seller,
+// 		aggressor,
+// 		buy_order,
+// 		sell_order,
+// 		timestamp,
+// 		synth_timestamp,
+// 		type,
+// 		buyer_fee_maker,
+// 		buyer_fee_infrastructure,
+// 		buyer_fee_liquidity,
+// 		seller_fee_maker,
+// 		seller_fee_infrastructure,
+// 		seller_fee_liquidity,
+// 		is_first_in_bucket
+// 	) SELECT DISTINCT * FROM ( VALUES %s ) t ON CONFLICT DO NOTHING;`
+//
+// 	typeCastings := []string{"::text", "::text", "::bigint", "::bigint", "::text", "::text", "::text", "::text",
+// 		"::text", "::bigint", "::bigint", "::text", "::numeric(40)", "::numeric(40)", "::numeric(40)",
+// 		"::numeric(40)", "::numeric(40)", "::numeric(40)", "::integer"}
+//
+// 	firstRow := `( $1::text, $2::text, $3::bigint, $4::bigint, $5::text, $6::text, $7::text, $8::text,
+// 	$9::text, $10::bigint, $11::bigint, $12::text, $13::numeric(40), $14::numeric(40), $15::numeric(40),
+// 	$16::numeric(40), $17::numeric(40), $18::numeric(40), $19::integer )`
+//
+// 	subsequentRows := "( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19 )"
+//
+// 	queryStr := fmt.Sprintf(baseStr, valuesStr)
+//
+// 	// (text 'v1', text 'v2')
+// 	// , ('v3','v4')
+// 	// , ('v3','v4')
+//
+// }
 
 type FormattedEventType uint8
 
@@ -328,7 +423,8 @@ const (
 	FormattedEventType_Unspecified FormattedEventType = iota
 	FormattedEventType_Trade
 	FormattedEventType_OrderUpdate
-	FormattedEventType_LedgerMovement
+	FormattedEventType_ExpiredOrders
+	FormattedEventType_LedgerMovements
 	FormattedEventType_Asset
 	FormattedEventType_MarketUpdate
 	FormattedEventType_MarketData
@@ -343,8 +439,10 @@ func (f FormattedEventType) String() string {
 		return "FormattedEventType_Trade"
 	case FormattedEventType_OrderUpdate:
 		return "FormattedEventType_OrderUpdate"
-	case FormattedEventType_LedgerMovement:
-		return "FormattedEventType_LedgerMovement"
+	case FormattedEventType_ExpiredOrders:
+		return "FormattedEventType_ExpiredOrders"
+	case FormattedEventType_LedgerMovements:
+		return "FormattedEventType_LedgerMovements"
 	case FormattedEventType_Asset:
 		return "FormattedEventType_Asset"
 	case FormattedEventType_MarketUpdate:
@@ -358,12 +456,19 @@ func (f FormattedEventType) String() string {
 }
 
 type FormattedEvent interface {
+	GetType() FormattedEventType
 	isFormattedEvent()
 }
 
 type formattedEvent struct {
 	Type  FormattedEventType
 	Event FormattedEvent
+}
+
+func (f *formattedEvent) isFormattedEvent() {}
+
+func (f *formattedEvent) GetType() FormattedEventType {
+	return f.Type
 }
 
 func (f *formattedEvent) GetEvent() FormattedEvent {
@@ -394,14 +499,69 @@ type formattedTrade struct {
 	SellerFeeLiqudity string
 }
 
-func (t *formattedTrade) isFormattedEvent() {}
-
-func (f *formattedEvent) GetFormattedTrade() *formattedTrade {
-	if evt, ok := f.GetEvent().(*formattedTrade); ok {
-		return evt
-	}
-	return nil
+type formattedOrderUpdate struct {
+	Id             string
+	MarketId       string
+	PartyId        string
+	Side           string
+	Price          string
+	Size           uint64
+	Remaining      uint64
+	Type           string
+	CreatedAt      int64
+	BlockTs        int64
+	SynthTimestamp int64
+	Status         string
+	Version        uint32
 }
+
+type formattedExpiredOrders struct{}
+type formattedLedgerMovements struct{}
+type formattedAsset struct{}
+type formattedMarketUpdate struct{}
+type formattedMarketData struct{}
+type formattedStakeLinking struct{}
+
+func (t *formattedTrade) isFormattedEvent()           {}
+func (t *formattedOrderUpdate) isFormattedEvent()     {}
+func (t *formattedExpiredOrders) isFormattedEvent()   {}
+func (t *formattedLedgerMovements) isFormattedEvent() {}
+func (t *formattedAsset) isFormattedEvent()           {}
+func (t *formattedMarketUpdate) isFormattedEvent()    {}
+func (t *formattedMarketData) isFormattedEvent()      {}
+func (t *formattedStakeLinking) isFormattedEvent()    {}
+
+func (t *formattedTrade) GetType() FormattedEventType {
+	return FormattedEventType_Trade
+}
+func (o *formattedOrderUpdate) GetType() FormattedEventType {
+	return FormattedEventType_OrderUpdate
+}
+func (eo *formattedExpiredOrders) GetType() FormattedEventType {
+	return FormattedEventType_ExpiredOrders
+}
+func (lm *formattedLedgerMovements) GetType() FormattedEventType {
+	return FormattedEventType_LedgerMovements
+}
+func (a *formattedAsset) GetType() FormattedEventType {
+	return FormattedEventType_Asset
+}
+func (mu *formattedMarketUpdate) GetType() FormattedEventType {
+	return FormattedEventType_MarketUpdate
+}
+func (md *formattedMarketData) GetType() FormattedEventType {
+	return FormattedEventType_MarketData
+}
+func (sl *formattedStakeLinking) GetType() FormattedEventType {
+	return FormattedEventType_StakeLinking
+}
+
+// func (f *formattedEvent) GetFormattedTrade() *formattedTrade {
+// 	if evt, ok := f.GetEvent().(*formattedTrade); ok {
+// 		return evt
+// 	}
+// 	return nil
+// }
 
 func (m *persistenceManager) start() {
 
@@ -442,6 +602,10 @@ func (m *persistenceManager) start() {
 						height: height,
 						events: []*formattedEvent{},
 					}
+				} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_BEGIN_BLOCK {
+					bb := evt.GetBeginBlock()
+					m.recentBlocks[idParts[0]] = &recentBlock{height: idParts[0], timestamp: bb.Timestamp}
+					delete(m.recentBlocks, strconv.Itoa(int(height-100000)))
 				}
 
 				if !m.broker.isReplaying && evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_END_BLOCK {
@@ -498,29 +662,48 @@ func (m *persistenceManager) FormatEvent(evt *eventspb.BusEvent) (f *formattedEv
 	// Will call a different formatting func depending on the type of BusEvent that is passed.
 	switch true {
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_TRADE):
-		return formatTrade(evt.GetTrade())
+		return m.formatTrade(evt)
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_ORDER):
-		return formatOrderUpdate(evt.GetOrder())
+		return m.formatOrderUpdate(evt)
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_EXPIRED_ORDERS):
-		return formatOrderUpdate(evt.GetExpiredOrders())
+		// Handle this differently, probably will create a formattedExpiredOrders type and handle the
+		// individual updates at persist time.
+		return m.formatExpiredOrders(evt)
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_LEDGER_MOVEMENTS):
-		return formatLedgerMovements(evt.GetLedgerMovements())
+		// Handle this differently, probably will create a formattedLedgerMovements type and handle the
+		// individual ledger movements at persist time.
+		for _, lm := range evt.GetLedgerMovements().LedgerMovements {
+			// formatLedgerMovement(lm)
+			_ = lm
+		}
+		m.formatLedgerMovements(evt)
+		return nil
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_ASSET):
-		return formatAsset(evt.GetAsset())
+		return m.formatAsset(evt)
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_MARKET_CREATED):
-		return formatMarketUpdate(evt.GetMarketCreated())
+		return m.formatMarketUpdate(evt)
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_MARKET_UPDATED):
-		return formatMarketUpdate(evt.GetMarketUpdated())
+		return m.formatMarketUpdate(evt)
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_MARKET_DATA):
-		return formatMarketData(evt.GetMarketData())
+		return m.formatMarketData(evt)
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_STAKE_LINKING):
-		return formatStakeLinking(evt.GetStakeLinking())
+		return m.formatStakeLinking(evt)
 	}
 
 	return f
 }
 
-func formatTrade(t *vegapb.Trade) (f *formattedEvent) {
+func (m *persistenceManager) formatTrade(evt *eventspb.BusEvent) (f *formattedEvent) {
+
+	t := evt.GetTrade()
+
+	// Get synth_timestamp
+	evtIndex, err := strconv.ParseInt(strings.Split(evt.Id, "-")[1], 10, 64)
+	if err != nil {
+		log.Printf("Could not convert evtIndex to int64: %v", err)
+	}
+	synthtimestamp := t.Timestamp + evtIndex
+
 	return &formattedEvent{
 		Type: FormattedEventType_Trade,
 		Event: &formattedTrade{
@@ -534,7 +717,7 @@ func formatTrade(t *vegapb.Trade) (f *formattedEvent) {
 			BuyOrder:          t.BuyOrder,
 			SellOrder:         t.SellOrder,
 			Timestamp:         t.Timestamp,
-			SynthTimestamp:    int64,
+			SynthTimestamp:    synthtimestamp,
 			Type:              t.Type.String(),
 			BuyerFeeMaker:     t.BuyerFee.MakerFee,
 			BuyerFeeInfra:     t.BuyerFee.InfrastructureFee,
@@ -543,5 +726,103 @@ func formatTrade(t *vegapb.Trade) (f *formattedEvent) {
 			SellerFeeInfra:    t.SellerFee.InfrastructureFee,
 			SellerFeeLiqudity: t.SellerFee.LiquidityFee,
 		},
+	}
+}
+
+func (m *persistenceManager) formatOrderUpdate(evt *eventspb.BusEvent) (f *formattedEvent) {
+
+	o := evt.GetOrder()
+
+	// Get synth_timestamp
+	idParts := strings.Split(evt.Id, "-")
+	evtIndex, err := strconv.ParseInt(idParts[1], 10, 64)
+	if err != nil {
+		log.Printf("Could not convert evtIndex to int64: %v", err)
+	}
+	blockTs := m.recentBlocks[idParts[0]].timestamp
+	synthTimestamp := blockTs + evtIndex
+
+	return &formattedEvent{
+		Type: FormattedEventType_OrderUpdate,
+		Event: &formattedOrderUpdate{
+			Id:             o.Id,
+			MarketId:       o.MarketId,
+			PartyId:        o.PartyId,
+			Side:           o.Side.String(),
+			Price:          o.Price,
+			Size:           o.Size,
+			Remaining:      o.Remaining,
+			Type:           o.Type.String(),
+			CreatedAt:      o.CreatedAt,
+			BlockTs:        blockTs,
+			SynthTimestamp: synthTimestamp,
+			Status:         o.Status.String(),
+			Version:        uint32(o.Version),
+		},
+	}
+}
+
+func (m *persistenceManager) formatExpiredOrders(evt *eventspb.BusEvent) (f *formattedEvent) {
+
+	eo := evt.GetExpiredOrders()
+
+	return &formattedEvent{
+		Type:  FormattedEventType_ExpiredOrders,
+		Event: &formattedExpiredOrders{},
+	}
+}
+
+func (m *persistenceManager) formatLedgerMovements(evt *eventspb.BusEvent) (f *formattedEvent) {
+
+	lm := evt.GetLedgerMovements().LedgerMovements
+
+	return &formattedEvent{
+		Type:  FormattedEventType_LedgerMovements,
+		Event: &formattedLedgerMovements{},
+	}
+}
+
+func (m *persistenceManager) formatAsset(evt *eventspb.BusEvent) (f *formattedEvent) {
+
+	a := evt.GetAsset()
+
+	return &formattedEvent{
+		Type:  FormattedEventType_Asset,
+		Event: &formattedAsset{},
+	}
+}
+
+func (m *persistenceManager) formatMarketUpdate(evt *eventspb.BusEvent) (f *formattedEvent) {
+
+	var m *vegapb.Market
+	if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_MARKET_CREATED {
+		m = evt.GetMarketCreated()
+	} else {
+		m = evt.GetMarketUpdated()
+	}
+
+	return &formattedEvent{
+		Type:  FormattedEventType_MarketUpdate,
+		Event: &formattedMarketUpdate{},
+	}
+}
+
+func (m *persistenceManager) formatMarketData(evt *eventspb.BusEvent) (f *formattedEvent) {
+
+	md := evt.GetMarketData()
+
+	return &formattedEvent{
+		Type:  FormattedEventType_MarketData,
+		Event: &formattedMarketData{},
+	}
+}
+
+func (m *persistenceManager) formatStakeLinking(evt *eventspb.BusEvent) (f *formattedEvent) {
+
+	sl := evt.GetStakeLinking()
+
+	return &formattedEvent{
+		Type:  FormattedEventType_StakeLinking,
+		Event: &formattedStakeLinking{},
 	}
 }
