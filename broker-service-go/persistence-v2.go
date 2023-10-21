@@ -17,6 +17,17 @@ import (
 	eventspb "code.vegaprotocol.io/vega/protos/vega/events/v1"
 )
 
+type pgQueryType uint8
+
+const (
+	// Each query will be a set of multiple queries to be executed in a transaction
+	pgQueryType_Unspecified  pgQueryType = iota
+	pgQueryType_CreateTables             // Creates hypertables and indexes
+	pgQueryType_CreateContinuousAggregates
+	pgQueryType_Upsert   // Upserts from temp table to main table
+	pgQueryType_Truncate // Truncates temp table
+)
+
 type PgClient interface {
 	Connect()
 	Close()
@@ -25,12 +36,21 @@ type PgClient interface {
 }
 
 type pgClient struct {
-	dbUrl string
-	pool  *pgxpool.Pool
+	dbUrl   string
+	queries map[pgQueryType]map[string]string
+	pool    *pgxpool.Pool
+}
+
+func getDbQueries() map[pgQueryType]map[string]string {
+
+	return nil
 }
 
 func newPostgresClient() PgClient {
-	pgClient := &pgClient{dbUrl: os.Getenv("DB_URL")}
+	pgClient := &pgClient{
+		dbUrl:   os.Getenv("DB_URL"),
+		queries: getDbQueries(),
+	}
 	pgClient.Connect()
 	return pgClient
 }
@@ -78,7 +98,7 @@ func (client *pgClient) InitDb() pgconn.CommandTag {
 		log.Printf("Error reading rows: %v\n", rows.Err())
 	}
 
-	// Create all required hypertables, skipping tables that are already present.
+	// Create all required hypertables and temp tables, skipping tables that are already present.
 
 	// Create indexes
 
@@ -86,10 +106,11 @@ func (client *pgClient) InitDb() pgconn.CommandTag {
 
 	// Create continuous aggregates for new hypertables
 
+	return nil
 }
 
 type PersistenceManager interface {
-	FormatEvent(*eventspb.BusEvent) *formattedEvent
+	FormatBusEvent(*eventspb.BusEvent) []FormattedEvent
 
 	// Workflow for event persistence
 	//	- Get events from channel
@@ -111,8 +132,9 @@ type persistenceManager struct {
 }
 
 type recentBlock struct {
-	height    string
-	timestamp int64
+	height              string
+	timestamp           int64
+	ledgerMovementCount int64
 }
 
 type formattedEventBatch struct {
@@ -121,21 +143,21 @@ type formattedEventBatch struct {
 
 type blockBatch struct {
 	height int64
-	events []*formattedEvent
+	events []FormattedEvent
 }
 
 type BatchPersister interface {
 	Start()
 	Pause()
 	Unpause()
-	Persist([]FormattedEvent) (int64, error)
+	Persist([]FormattedEvent) (pgconn.CommandTag, int64, error)
 }
 
 type BlockPersister interface {
 	Start()
 	Pause()
 	Unpause()
-	Persist(*blockBatch) (int64, error)
+	Persist(*blockBatch) (pgconn.CommandTag, int64, error)
 }
 
 type batchPersister struct {
@@ -208,11 +230,12 @@ func (bp *batchPersister) Start() {
 		default:
 			if bp.status == "running" {
 				// Do work here
-				rowCount, err := bp.Persist(<-bp.persistCh)
+				commandTag, rowCount, err := bp.Persist(<-bp.persistCh)
 				if err != nil {
 					log.Printf("Error persisting batch for %v topic: %v\n", bp.topic, err)
 				}
 				fmt.Printf("Count of rows inserted: %v", rowCount)
+				fmt.Printf("Count of rows affected: %v", commandTag.RowsAffected())
 			}
 		}
 	}
@@ -234,11 +257,12 @@ func (bp *blockPersister) Start() {
 		default:
 			if bp.status == "running" {
 				// Do work here
-				rowCount, err := bp.Persist(<-bp.persistCh)
+				commandTag, copyCount, err := bp.Persist(<-bp.persistCh)
 				if err != nil {
 					log.Printf("Error persisting block batch for %v topic: %v\n", bp.topic, err)
 				}
-				fmt.Printf("Count of rows inserted: %v", rowCount)
+				fmt.Printf("Count of rows copied: %v", copyCount)
+				fmt.Printf("Count of rows affected: %v", commandTag.RowsAffected())
 			}
 		}
 	}
@@ -274,7 +298,7 @@ func (bp *blockPersister) IsRunning() bool {
 	return false
 }
 
-func (bp *batchPersister) Persist(batch []FormattedEvent) (int64, error) {
+func (bp *batchPersister) Persist(batch []FormattedEvent) (pgconn.CommandTag, int64, error) {
 
 	evtType := batch[0].GetType()
 
@@ -286,25 +310,91 @@ func (bp *batchPersister) Persist(batch []FormattedEvent) (int64, error) {
 				log.Fatalf("Event type mismatch in formatted event batch: %v and %v\n", evtType.String(), evt.GetType().String())
 			}
 			// batch[i] = batch[i].(*formattedEvent).GetFormattedTrade()
-			formattedTrades = append(formattedTrades, batch[i].(*formattedTrade))
+			formattedTrades = append(formattedTrades, batch[i].(*formattedEvent).Event.(*formattedTrade))
 		}
-		copyCount, err := bp.InsertTrades(formattedTrades)
+		commandTag, copyCount, err := bp.InsertTrades(formattedTrades)
 		if err != nil {
-			err = fmt.Errorf("error during CopyFrom operation: %v", err)
+			err = fmt.Errorf("error during CopyFrom operation for trades: %v", err)
 		}
-		return copyCount, err
+		return commandTag, copyCount, err
 	case FormattedEventType_OrderUpdate:
-		return 0, nil
-	case FormattedEventType_LedgerMovements:
-		return 0, nil
-	case FormattedEventType_Asset:
-		return 0, nil
+		formattedOrderUpdates := []*formattedOrderUpdate{}
+		for i, evt := range batch {
+			if evt.GetType() != evtType {
+				log.Fatalf("Event type mismatch in formatted event batch: %v and %v\n", evtType.String(), evt.GetType().String())
+			}
+			formattedOrderUpdates = append(formattedOrderUpdates, batch[i].(*formattedEvent).Event.(*formattedOrderUpdate))
+		}
+		commandTag, copyCount, err := bp.InsertOrderUpdates(formattedOrderUpdates)
+		if err != nil {
+			err = fmt.Errorf("error during CopyFrom operation for order updates: %v", err)
+		}
+		return commandTag, copyCount, err
+	case FormattedEventType_LedgerMovement:
+		formattedLedgerMovements := []*formattedLedgerMovement{}
+		for i, evt := range batch {
+			if evt.GetType() != evtType {
+				log.Fatalf("Event type mismatch in formatted event batch: %v and %v\n", evtType.String(), evt.GetType().String())
+			}
+			formattedLedgerMovements = append(formattedLedgerMovements, batch[i].(*formattedEvent).Event.(*formattedLedgerMovement))
+		}
+		commandTag, copyCount, err := bp.InsertLedgerMovements(formattedLedgerMovements)
+		if err != nil {
+			err = fmt.Errorf("error during CopyFrom operation for ledger movements: %v", err)
+		}
+		return commandTag, copyCount, err
+	case FormattedEventType_AssetUpdate:
+		formattedAssetUpdates := []*formattedAssetUpdate{}
+		for i, evt := range batch {
+			if evt.GetType() != evtType {
+				log.Fatalf("Event type mismatch in formatted event batch: %v and %v\n", evtType.String(), evt.GetType().String())
+			}
+			formattedAssetUpdates = append(formattedAssetUpdates, batch[i].(*formattedEvent).Event.(*formattedAssetUpdate))
+		}
+		commandTag, copyCount, err := bp.InsertAssetUpdates(formattedAssetUpdates)
+		if err != nil {
+			err = fmt.Errorf("error during CopyFrom operation for asset updates: %v", err)
+		}
+		return commandTag, copyCount, err
 	case FormattedEventType_MarketUpdate:
-		return 0, nil
+		formattedMarketUpdates := []*formattedMarketUpdate{}
+		for i, evt := range batch {
+			if evt.GetType() != evtType {
+				log.Fatalf("Event type mismatch in formatted event batch: %v and %v\n", evtType.String(), evt.GetType().String())
+			}
+			formattedMarketUpdates = append(formattedMarketUpdates, batch[i].(*formattedEvent).Event.(*formattedMarketUpdate))
+		}
+		commandTag, copyCount, err := bp.InsertMarketUpdates(formattedMarketUpdates)
+		if err != nil {
+			err = fmt.Errorf("error during CopyFrom operation for market updates: %v", err)
+		}
+		return commandTag, copyCount, err
 	case FormattedEventType_MarketData:
-		return 0, nil
+		fmd := []*formattedMarketData{}
+		for i, evt := range batch {
+			if evt.GetType() != evtType {
+				log.Fatalf("Event type mismatch in formatted event batch: %v and %v\n", evtType.String(), evt.GetType().String())
+			}
+			fmd = append(fmd, batch[i].(*formattedEvent).Event.(*formattedMarketData))
+		}
+		commandTag, copyCount, err := bp.InsertMarketData(fmd)
+		if err != nil {
+			err = fmt.Errorf("error during CopyFrom operation for market data: %v", err)
+		}
+		return commandTag, copyCount, err
 	case FormattedEventType_StakeLinking:
-		return 0, nil
+		fsl := []*formattedStakeLinking{}
+		for i, evt := range batch {
+			if evt.GetType() != evtType {
+				log.Fatalf("Event type mismatch in formatted event batch: %v and %v\n", evtType.String(), evt.GetType().String())
+			}
+			fsl = append(fsl, batch[i].(*formattedEvent).Event.(*formattedStakeLinking))
+		}
+		commandTag, copyCount, err := bp.InsertStakeLinkings(fsl)
+		if err != nil {
+			err = fmt.Errorf("error during CopyFrom operation for stake linkings: %v", err)
+		}
+		return commandTag, copyCount, err
 	}
 
 	// queryStr := bp.GetInsertQuery(batch)
@@ -315,20 +405,24 @@ func (bp *batchPersister) Persist(batch []FormattedEvent) (int64, error) {
 	// fmt.Printf("Batch persisted for %v topic. %v batches waiting for persistence.\n", bp.topic, len(bp.persistCh))
 	// fmt.Printf("Postgres command tag: %v\n", commandTag)
 
-	return 0, nil
+	return pgconn.CommandTag{}, 0, nil
 
 }
 
-func (bp *blockPersister) Persist(batch *blockBatch) (int64, error) {
+func (bp *blockPersister) Persist(batch *blockBatch) (pgconn.CommandTag, int64, error) {
 
-	return 0, nil
+	return nil, 0, nil
 }
 
-func (bp *batchPersister) InsertTrades(batch []*formattedTrade) (int64, error) {
-	// Using postgres copy protocol
-	return bp.pm.pgClient.pool.CopyFrom(
-		context.Background(),
-		pgx.Identifier{"trades"},
+func (bp *batchPersister) InsertTrades(batch []*formattedTrade) (pgconn.CommandTag, int64, error) {
+	// Using copy protocol
+
+	ctx := context.Background()
+
+	// Copy to temp table (create temp tables in initdb)
+	copyCount, err := bp.pm.pgClient.pool.CopyFrom(
+		ctx,
+		pgx.Identifier{"trades_temp"},
 		[]string{
 			"id", "market_id", "price", "size", "buyer", "seller", "aggressor", "buy_order", "sell_order", "timestamp",
 			"synth_timestamp", "type", "buyer_fee_maker", "buyer_fee_infrastructure", "buyer_fee_liquidity",
@@ -343,38 +437,317 @@ func (bp *batchPersister) InsertTrades(batch []*formattedTrade) (int64, error) {
 			}, nil
 		}),
 	)
-}
 
-func (bp *batchPersister) GetInsertQuery(batch []*formattedEvent) string {
+	// Begin transaction
+	tx, err := bp.pm.pgClient.pool.Begin(ctx)
 
-	evtType := batch[0].Type
-	for _, evt := range batch {
-		if evt.Type != evtType {
-			log.Fatalf("Event type mismatch in formatted event batch.\n")
-		}
+	// Upsert to main table
+	commandTag, err := tx.Exec(ctx, bp.pm.pgClient.queries["upsert"][bp.topic])
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to upsert trades: %v", err)
 	}
 
-	switch evtType {
-	case FormattedEventType_Trade:
-		return ""
-	case FormattedEventType_OrderUpdate:
-		return ""
-	case FormattedEventType_ExpiredOrders:
-		return ""
-	case FormattedEventType_LedgerMovements:
-		return ""
-	case FormattedEventType_Asset:
-		return ""
-	case FormattedEventType_MarketUpdate:
-		return ""
-	case FormattedEventType_MarketData:
-		return ""
-	case FormattedEventType_StakeLinking:
-		return ""
+	// Truncate temp table
+	_, err = tx.Exec(ctx, bp.pm.pgClient.queries["truncate"][bp.topic])
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to truncate temp trades table: %v", err)
 	}
 
-	return ""
+	// Commit transaction transaction
+	err = tx.Commit(ctx)
+	if err != nil {
+		log.Fatalf("error: tx.Commit failed: failed to commit tx for trades persistence: %v", err)
+	}
+
+	return commandTag, copyCount, err
 }
+
+func (bp *batchPersister) InsertOrderUpdates(batch []*formattedOrderUpdate) (pgconn.CommandTag, int64, error) {
+
+	ctx := context.Background()
+
+	copyCount, err := bp.pm.pgClient.pool.CopyFrom(
+		context.Background(),
+		pgx.Identifier{"orders_temp"},
+		[]string{
+			"id", "market_id", "party_id", "side", "price", "size", "remaining", "type",
+			"created_at", "block_ts", "synth_timestamp", "status", "version",
+		},
+		pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
+			o := batch[i]
+			return []interface{}{
+				o.Id, o.MarketId, o.PartyId, o.Side, o.Price, o.Size, o.Remaining, o.Type,
+				o.CreatedAt, o.BlockTs, o.SynthTimestamp, o.Status, o.Version,
+			}, nil
+		}),
+	)
+
+	// Begin transaction
+	tx, err := bp.pm.pgClient.pool.Begin(ctx)
+
+	// Upsert to main table
+	commandTag, err := tx.Exec(ctx, bp.pm.pgClient.queries["upsert"][bp.topic])
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to upsert order updates: %v", err)
+	}
+
+	// Truncate temp table
+	_, err = tx.Exec(ctx, bp.pm.pgClient.queries["truncate"][bp.topic])
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to truncate temp order updates table: %v", err)
+	}
+
+	// Commit transaction transaction
+	err = tx.Commit(ctx)
+	if err != nil {
+		log.Fatalf("error: tx.Commit failed: failed to commit tx for order updates persistence: %v", err)
+	}
+
+	return commandTag, copyCount, err
+
+}
+
+func (bp *batchPersister) InsertLedgerMovements(batch []*formattedLedgerMovement) (pgconn.CommandTag, int64, error) {
+
+	copyCount, err := bp.pm.pgClient.pool.CopyFrom(
+		context.Background(),
+		pgx.Identifier{"ledger_movements_temp"},
+		[]string{
+			"from_account_asset", "from_account_owner", "from_account_type", "from_account_market", "to_account_asset",
+			"to_account_owner", "to_account_type", "to_account_market", "amount", "type", "timestamp",
+			"synth_timestamp", "from_balance", "to_balance",
+		},
+		pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
+			l := batch[i]
+			return []interface{}{
+				l.FromAccountAsset, l.FromAccountOwner, l.FromAccountType, l.FromAccountMarket, l.ToAccountAsset,
+				l.ToAccountOwner, l.ToAccountType, l.ToAccountMarket, l.Amount, l.Type, l.Timestamp,
+				l.SynthTimestamp, l.FromAccountBalance, l.ToAccountBalance,
+			}, nil
+		}),
+	)
+
+	// Begin transaction
+	tx, err := bp.pm.pgClient.pool.Begin(context.Background())
+
+	// Upsert to main table
+	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries["upsert"][bp.topic])
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to upsert ledger movements: %v", err)
+	}
+
+	// Truncate temp table
+	_, err = tx.Exec(context.Background(), bp.pm.pgClient.queries["truncate"][bp.topic])
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to truncate temp ledger movements table: %v", err)
+	}
+
+	// Commit transaction transaction
+	err = tx.Commit(context.Background())
+	if err != nil {
+		log.Fatalf("error: tx.Commit failed: failed to commit tx for ledger movements persistence: %v", err)
+	}
+
+	return commandTag, copyCount, err
+}
+
+func (bp *batchPersister) InsertAssetUpdates(batch []*formattedAssetUpdate) (pgconn.CommandTag, int64, error) {
+
+	copyCount, err := bp.pm.pgClient.pool.CopyFrom(
+		context.Background(),
+		pgx.Identifier{"assets_temp"},
+		[]string{
+			"id", "status", "name", "symbol", "decimals", "quantum",
+			"erc20_contract_addr", "erc20_lifetime_limit", "erc20_withdraw_threshold",
+		},
+		pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
+			a := batch[i]
+			return []interface{}{
+				a.Id, a.Status, a.Name, a.Symbol, a.Decimals, a.Quantum,
+				a.Erc20ContractAddr, a.Erc20LifetimeLimit, a.Erc20WithdrawThreshold,
+			}, nil
+		}),
+	)
+
+	// Begin transaction
+	tx, err := bp.pm.pgClient.pool.Begin(context.Background())
+
+	// Upsert to main table
+	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries["upsert"][bp.topic])
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to upsert asset updates: %v", err)
+	}
+
+	// Truncate temp table
+	_, err = tx.Exec(context.Background(), bp.pm.pgClient.queries["truncate"][bp.topic])
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to truncate temp assets table: %v", err)
+	}
+
+	// Commit transaction transaction
+	err = tx.Commit(context.Background())
+	if err != nil {
+		log.Fatalf("error: tx.Commit failed: failed to commit tx for asset updates persistence: %v", err)
+	}
+
+	return commandTag, copyCount, err
+
+}
+
+func (bp *batchPersister) InsertMarketUpdates(batch []*formattedMarketUpdate) (pgconn.CommandTag, int64, error) {
+
+	copyCount, err := bp.pm.pgClient.pool.CopyFrom(
+		context.Background(),
+		pgx.Identifier{"markets_temp"},
+		[]string{
+			"id", "instrument_code", "instrument_name", "instrument_metadata_tags", "future_settlement_asset",
+			"future_quote_name", "margin_search_level", "margin_initial_margin", "margin_collateral_release",
+			"decimal_places", "trading_mode", "state", "position_decimal_places",
+		},
+		pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
+			m := batch[i]
+			return []interface{}{
+				m.Id, m.InstrumentCode, m.InstrumentName, m.InstrumentMetadataTags, m.FutureSettlementAsset,
+				m.FutureQuoteName, m.MarginSearchLevel, m.MarginInitialMargin, m.MarginCollateralRelease,
+				m.DecimalPlaces, m.TradingMode, m.State, m.PositionDecimalPlaces,
+			}, nil
+		}),
+	)
+
+	// Begin transaction
+	tx, err := bp.pm.pgClient.pool.Begin(context.Background())
+
+	// Upsert to main table
+	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries["upsert"][bp.topic])
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to upsert market updates: %v", err)
+	}
+
+	// Truncate temp table
+	_, err = tx.Exec(context.Background(), bp.pm.pgClient.queries["truncate"][bp.topic])
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to truncate temp markets table: %v", err)
+	}
+
+	// Commit transaction transaction
+	err = tx.Commit(context.Background())
+	if err != nil {
+		log.Fatalf("error: tx.Commit failed: failed to commit tx for market updates persistence: %v", err)
+	}
+
+	return commandTag, copyCount, err
+}
+
+func (bp *batchPersister) InsertMarketData(batch []*formattedMarketData) (pgconn.CommandTag, int64, error) {
+
+	copyCount, err := bp.pm.pgClient.pool.CopyFrom(
+		context.Background(),
+		pgx.Identifier{"market_data_temp"},
+		[]string{
+			"market_id", "mark_price", "best_bid_price", "best_bid_volume", "best_ask_price",
+			"best_ask_volume", "mid_price", "timestamp", "open_interest", "last_traded_price",
+		},
+		pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
+			md := batch[i]
+			return []interface{}{
+				md.MarketId, md.MarkPrice, md.BestBidPrice, md.BestBidVolume, md.BestAskPrice,
+				md.BestAskVolume, md.MidPrice, md.Timestamp, md.OpenInterest, md.LastTradedPrice,
+			}, nil
+		}),
+	)
+
+	// Begin transaction
+	tx, err := bp.pm.pgClient.pool.Begin(context.Background())
+
+	// Upsert to main table
+	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries["upsert"][bp.topic])
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to upsert market data: %v", err)
+	}
+
+	// Truncate temp table
+	_, err = tx.Exec(context.Background(), bp.pm.pgClient.queries["truncate"][bp.topic])
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to truncate temp market_data table: %v", err)
+	}
+
+	// Commit transaction transaction
+	err = tx.Commit(context.Background())
+	if err != nil {
+		log.Fatalf("error: tx.Commit failed: failed to commit tx for market data persistence: %v", err)
+	}
+
+	return commandTag, copyCount, err
+}
+
+func (bp *batchPersister) InsertStakeLinkings(batch []*formattedStakeLinking) (pgconn.CommandTag, int64, error) {
+
+	copyCount, err := bp.pm.pgClient.pool.CopyFrom(
+		context.Background(),
+		pgx.Identifier{"market_data"},
+		[]string{
+			"id", "type", "ts", "finalized_timestamp", "party_id", "amount", "status", "eth_adr",
+		},
+		pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
+			sl := batch[i]
+			return []interface{}{
+				sl.Id, sl.Type, sl.Timestamp, sl.FinalizedTimestamp, sl.PartyId, sl.Amount, sl.Status, sl.EthAddr,
+			}, nil
+		}),
+	)
+
+	// Begin transaction
+	tx, err := bp.pm.pgClient.pool.Begin(context.Background())
+
+	// Upsert to main table
+	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries["upsert"][bp.topic])
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to upsert stake linkings: %v", err)
+	}
+
+	// Truncate temp table
+	_, err = tx.Exec(context.Background(), bp.pm.pgClient.queries["truncate"][bp.topic])
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to truncate temp stake linkings table: %v", err)
+	}
+
+	// Commit transaction transaction
+	err = tx.Commit(context.Background())
+	if err != nil {
+		log.Fatalf("error: tx.Commit failed: failed to commit tx for stake linkings persistence: %v", err)
+	}
+
+	return commandTag, copyCount, err
+}
+
+// func (bp *batchPersister) GetInsertQuery(batch []*formattedEvent) string {
+
+// 	evtType := batch[0].Type
+// 	for _, evt := range batch {
+// 		if evt.Type != evtType {
+// 			log.Fatalf("Event type mismatch in formatted event batch.\n")
+// 		}
+// 	}
+
+// 	switch evtType {
+// 	case FormattedEventType_Trade:
+// 		return ""
+// 	case FormattedEventType_OrderUpdate:
+// 		return ""
+// 	case FormattedEventType_LedgerMovement:
+// 		return ""
+// 	case FormattedEventType_AssetUpdate:
+// 		return ""
+// 	case FormattedEventType_MarketUpdate:
+// 		return ""
+// 	case FormattedEventType_MarketData:
+// 		return ""
+// 	case FormattedEventType_StakeLinking:
+// 		return ""
+// 	}
+
+// 	return ""
+// }
 
 // func getBatchInsertTradeQuery(batch []*formattedEvent) {
 // 	baseStr := `INSERT INTO trades (
@@ -423,9 +796,8 @@ const (
 	FormattedEventType_Unspecified FormattedEventType = iota
 	FormattedEventType_Trade
 	FormattedEventType_OrderUpdate
-	FormattedEventType_ExpiredOrders
-	FormattedEventType_LedgerMovements
-	FormattedEventType_Asset
+	FormattedEventType_LedgerMovement
+	FormattedEventType_AssetUpdate
 	FormattedEventType_MarketUpdate
 	FormattedEventType_MarketData
 	FormattedEventType_StakeLinking
@@ -439,12 +811,10 @@ func (f FormattedEventType) String() string {
 		return "FormattedEventType_Trade"
 	case FormattedEventType_OrderUpdate:
 		return "FormattedEventType_OrderUpdate"
-	case FormattedEventType_ExpiredOrders:
-		return "FormattedEventType_ExpiredOrders"
-	case FormattedEventType_LedgerMovements:
-		return "FormattedEventType_LedgerMovements"
-	case FormattedEventType_Asset:
-		return "FormattedEventType_Asset"
+	case FormattedEventType_LedgerMovement:
+		return "FormattedEventType_LedgerMovement"
+	case FormattedEventType_AssetUpdate:
+		return "FormattedEventType_AssetUpdate"
 	case FormattedEventType_MarketUpdate:
 		return "FormattedEventType_MarketUpdate"
 	case FormattedEventType_MarketData:
@@ -453,6 +823,24 @@ func (f FormattedEventType) String() string {
 		return "FormattedEventType_StakeLinking"
 	}
 	return "FormattedEventType_Unspecified"
+}
+
+type FormattedEvt interface {
+	formattedTrade | formattedOrderUpdate | formattedLedgerMovement | formattedAssetUpdate |
+		formattedMarketUpdate | formattedMarketData | formattedStakeLinking
+}
+
+type formattedEvt[T FormattedEventType, E formattedTrade | formattedOrderUpdate] struct {
+	Type  T
+	Event *E
+}
+
+func (fe *formattedEvt[T, E]) GetEvent() *E {
+	return fe.Event
+}
+
+func (fe *formattedEvt[T, E]) GetType() T {
+	return fe.Type
 }
 
 type FormattedEvent interface {
@@ -515,21 +903,84 @@ type formattedOrderUpdate struct {
 	Version        uint32
 }
 
-type formattedExpiredOrders struct{}
-type formattedLedgerMovements struct{}
-type formattedAsset struct{}
-type formattedMarketUpdate struct{}
-type formattedMarketData struct{}
-type formattedStakeLinking struct{}
+type formattedLedgerMovement struct {
+	FromAccountAsset   string
+	FromAccountOwner   string
+	FromAccountType    string
+	FromAccountMarket  string
+	ToAccountAsset     string
+	ToAccountOwner     string
+	ToAccountType      string
+	ToAccountMarket    string
+	Amount             string
+	Type               string
+	Timestamp          int64
+	SynthTimestamp     int64
+	FromAccountBalance string
+	ToAccountBalance   string
+}
 
-func (t *formattedTrade) isFormattedEvent()           {}
-func (t *formattedOrderUpdate) isFormattedEvent()     {}
-func (t *formattedExpiredOrders) isFormattedEvent()   {}
-func (t *formattedLedgerMovements) isFormattedEvent() {}
-func (t *formattedAsset) isFormattedEvent()           {}
-func (t *formattedMarketUpdate) isFormattedEvent()    {}
-func (t *formattedMarketData) isFormattedEvent()      {}
-func (t *formattedStakeLinking) isFormattedEvent()    {}
+type formattedAssetUpdate struct {
+	Id                     string
+	Status                 string
+	Name                   string
+	Symbol                 string
+	Decimals               int32
+	Quantum                string
+	Erc20ContractAddr      string
+	Erc20LifetimeLimit     string
+	Erc20WithdrawThreshold string
+}
+
+type formattedMarketUpdate struct {
+	// We're going to have to refactor this later to support multiple products because right now the
+	// schema only includes futures. Maybe have a product code column and a separate products table.
+	Id                      string
+	InstrumentCode          string
+	InstrumentName          string
+	InstrumentMetadataTags  string
+	FutureSettlementAsset   string
+	FutureQuoteName         string
+	MarginSearchLevel       string
+	MarginInitialMargin     string
+	MarginCollateralRelease string
+	DecimalPlaces           int32
+	TradingMode             string
+	State                   string
+	PositionDecimalPlaces   int32
+}
+
+type formattedMarketData struct {
+	MarketId        string
+	MarkPrice       string
+	BestBidPrice    string
+	BestBidVolume   uint64
+	BestAskPrice    string
+	BestAskVolume   uint64
+	MidPrice        string
+	Timestamp       int64
+	OpenInterest    uint64
+	LastTradedPrice string
+}
+
+type formattedStakeLinking struct {
+	Id                 string
+	Type               string
+	Timestamp          int64
+	FinalizedTimestamp int64
+	PartyId            string
+	Amount             string
+	Status             string
+	EthAddr            string
+}
+
+func (t *formattedTrade) isFormattedEvent()          {}
+func (t *formattedOrderUpdate) isFormattedEvent()    {}
+func (t *formattedLedgerMovement) isFormattedEvent() {}
+func (t *formattedAssetUpdate) isFormattedEvent()    {}
+func (t *formattedMarketUpdate) isFormattedEvent()   {}
+func (t *formattedMarketData) isFormattedEvent()     {}
+func (t *formattedStakeLinking) isFormattedEvent()   {}
 
 func (t *formattedTrade) GetType() FormattedEventType {
 	return FormattedEventType_Trade
@@ -537,14 +988,11 @@ func (t *formattedTrade) GetType() FormattedEventType {
 func (o *formattedOrderUpdate) GetType() FormattedEventType {
 	return FormattedEventType_OrderUpdate
 }
-func (eo *formattedExpiredOrders) GetType() FormattedEventType {
-	return FormattedEventType_ExpiredOrders
+func (lm *formattedLedgerMovement) GetType() FormattedEventType {
+	return FormattedEventType_LedgerMovement
 }
-func (lm *formattedLedgerMovements) GetType() FormattedEventType {
-	return FormattedEventType_LedgerMovements
-}
-func (a *formattedAsset) GetType() FormattedEventType {
-	return FormattedEventType_Asset
+func (a *formattedAssetUpdate) GetType() FormattedEventType {
+	return FormattedEventType_AssetUpdate
 }
 func (mu *formattedMarketUpdate) GetType() FormattedEventType {
 	return FormattedEventType_MarketUpdate
@@ -588,24 +1036,24 @@ func (m *persistenceManager) start() {
 				fmt.Printf("evt Index: %v\n", idParts[1])
 
 				if m.broker.isReplaying {
-					m.eventBatches[topic] = append(m.eventBatches[topic], m.FormatEvent(evt))
+					m.eventBatches[topic] = append(m.eventBatches[topic], m.FormatBusEvent(evt)...)
 					if len(m.eventBatches[topic]) >= 1000 {
 						m.batchPersisters[topic].persistCh <- m.eventBatches[topic]
 						m.eventBatches[topic] = nil
 					}
 				} else {
-					m.blockBatches[topic][height].events = append(m.blockBatches[topic][height].events, m.FormatEvent(evt))
+					m.blockBatches[topic][height].events = append(m.blockBatches[topic][height].events, m.FormatBusEvent(evt)...)
 				}
 
 				if !m.broker.isReplaying && evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_BEGIN_BLOCK {
 					m.blockBatches[topic][height] = &blockBatch{
 						height: height,
-						events: []*formattedEvent{},
+						events: []FormattedEvent{},
 					}
 				} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_BEGIN_BLOCK {
 					bb := evt.GetBeginBlock()
-					m.recentBlocks[idParts[0]] = &recentBlock{height: idParts[0], timestamp: bb.Timestamp}
-					delete(m.recentBlocks, strconv.Itoa(int(height-100000)))
+					m.recentBlocks[idParts[0]] = &recentBlock{height: idParts[0], timestamp: bb.Timestamp, ledgerMovementCount: 0}
+					delete(m.recentBlocks, strconv.Itoa(int(height-50000)))
 				}
 
 				if !m.broker.isReplaying && evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_END_BLOCK {
@@ -657,41 +1105,67 @@ func (m *persistenceManager) start() {
 
 }
 
-func (m *persistenceManager) FormatEvent(evt *eventspb.BusEvent) (f *formattedEvent) {
+func (m *persistenceManager) FormatBusEvent(evt *eventspb.BusEvent) (f []FormattedEvent) {
 
 	// Will call a different formatting func depending on the type of BusEvent that is passed.
 	switch true {
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_TRADE):
-		return m.formatTrade(evt)
+		return []FormattedEvent{m.formatTrade(evt)}
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_ORDER):
-		return m.formatOrderUpdate(evt)
+		return []FormattedEvent{m.formatOrderUpdate(evt)}
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_EXPIRED_ORDERS):
-		// Handle this differently, probably will create a formattedExpiredOrders type and handle the
-		// individual updates at persist time.
+		// Returns formattedExpiredOrders type
+		// Handle the individual updates at persist time.
 		return m.formatExpiredOrders(evt)
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_LEDGER_MOVEMENTS):
-		// Handle this differently, probably will create a formattedLedgerMovements type and handle the
-		// individual ledger movements at persist time.
-		for _, lm := range evt.GetLedgerMovements().LedgerMovements {
-			// formatLedgerMovement(lm)
-			_ = lm
-		}
-		m.formatLedgerMovements(evt)
-		return nil
+		// Returns a formattedLedgerMovements type.
+		// Handle the individual ledger movements at persist time.
+		return m.formatLedgerMovements(evt)
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_ASSET):
-		return m.formatAsset(evt)
+		return []FormattedEvent{m.formatAssetUpdate(evt)}
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_MARKET_CREATED):
-		return m.formatMarketUpdate(evt)
+		return []FormattedEvent{m.formatMarketUpdate(evt)}
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_MARKET_UPDATED):
-		return m.formatMarketUpdate(evt)
+		return []FormattedEvent{m.formatMarketUpdate(evt)}
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_MARKET_DATA):
-		return m.formatMarketData(evt)
+		return []FormattedEvent{m.formatMarketData(evt)}
 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_STAKE_LINKING):
-		return m.formatStakeLinking(evt)
+		return []FormattedEvent{m.formatStakeLinking(evt)}
 	}
 
 	return f
 }
+
+// func (m *persistenceManager) FormatEvent(evt *eventspb.BusEvent) (f *formattedEvent) {
+
+// 	// Will call a different formatting func depending on the type of BusEvent that is passed.
+// 	switch true {
+// 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_TRADE):
+// 		return m.formatTrade(evt)
+// 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_ORDER):
+// 		return m.formatOrderUpdate(evt)
+// 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_EXPIRED_ORDERS):
+// 		// Returns formattedExpiredOrders type
+// 		// Handle the individual updates at persist time.
+// 		return m.formatExpiredOrders(evt)
+// 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_LEDGER_MOVEMENTS):
+// 		// Returns a formattedLedgerMovements type.
+// 		// Handle the individual ledger movements at persist time.
+// 		return m.formatLedgerMovements(evt)
+// 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_ASSET):
+// 		return m.formatAsset(evt)
+// 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_MARKET_CREATED):
+// 		return m.formatMarketUpdate(evt)
+// 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_MARKET_UPDATED):
+// 		return m.formatMarketUpdate(evt)
+// 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_MARKET_DATA):
+// 		return m.formatMarketData(evt)
+// 	case (evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_STAKE_LINKING):
+// 		return m.formatStakeLinking(evt)
+// 	}
+
+// 	return f
+// }
 
 func (m *persistenceManager) formatTrade(evt *eventspb.BusEvent) (f *formattedEvent) {
 
@@ -762,49 +1236,142 @@ func (m *persistenceManager) formatOrderUpdate(evt *eventspb.BusEvent) (f *forma
 	}
 }
 
-func (m *persistenceManager) formatExpiredOrders(evt *eventspb.BusEvent) (f *formattedEvent) {
+func (m *persistenceManager) formatExpiredOrders(evt *eventspb.BusEvent) (formattedEvents []FormattedEvent) {
 
 	eo := evt.GetExpiredOrders()
 
-	return &formattedEvent{
-		Type:  FormattedEventType_ExpiredOrders,
-		Event: &formattedExpiredOrders{},
+	// Get synth_timestamp
+	idParts := strings.Split(evt.Id, "-")
+	evtIndex, err := strconv.ParseInt(idParts[1], 10, 64)
+	if err != nil {
+		log.Printf("Could not convert evtIndex to int64: %v", err)
 	}
+	blockTs := m.recentBlocks[idParts[0]].timestamp
+	synthTimestamp := blockTs + evtIndex
+
+	for _, id := range eo.OrderIds {
+		formattedEvents = append(formattedEvents, &formattedEvent{
+			Type: FormattedEventType_OrderUpdate,
+			Event: &formattedOrderUpdate{
+				Id:             id,
+				MarketId:       eo.MarketId,
+				PartyId:        "UNSPECIFIED",
+				Side:           "SIDE_UNSPECIFIED",
+				Price:          "0",
+				Size:           0,
+				Remaining:      0,
+				Type:           "TYPE_UNSPECIFIED",
+				CreatedAt:      0,
+				BlockTs:        blockTs,
+				SynthTimestamp: synthTimestamp,
+				Status:         "STATUS_EXPIRED",
+				Version:        0,
+			},
+		})
+	}
+
+	return formattedEvents
 }
 
-func (m *persistenceManager) formatLedgerMovements(evt *eventspb.BusEvent) (f *formattedEvent) {
+func (m *persistenceManager) formatLedgerMovements(evt *eventspb.BusEvent) (formattedEvents []FormattedEvent) {
 
 	lm := evt.GetLedgerMovements().LedgerMovements
+	height := strings.Split(evt.Id, "-")[0]
 
-	return &formattedEvent{
-		Type:  FormattedEventType_LedgerMovements,
-		Event: &formattedLedgerMovements{},
+	for _, elem := range lm {
+		for _, e := range elem.Entries {
+			synthTimestamp := e.Timestamp + m.recentBlocks[height].ledgerMovementCount
+			m.recentBlocks[height].ledgerMovementCount++
+			formattedEvents = append(formattedEvents, &formattedEvent{
+				Type: FormattedEventType_LedgerMovement,
+				Event: &formattedLedgerMovement{
+					FromAccountAsset:   e.FromAccount.AssetId,
+					FromAccountOwner:   *e.FromAccount.Owner,
+					FromAccountType:    e.FromAccount.Type.String(),
+					FromAccountMarket:  *e.FromAccount.MarketId,
+					ToAccountAsset:     e.ToAccount.AssetId,
+					ToAccountOwner:     *e.ToAccount.Owner,
+					ToAccountType:      e.ToAccount.Type.String(),
+					ToAccountMarket:    *e.ToAccount.MarketId,
+					Amount:             e.Amount,
+					Type:               e.Type.String(),
+					Timestamp:          e.Timestamp,
+					SynthTimestamp:     synthTimestamp,
+					FromAccountBalance: e.FromAccountBalance,
+					ToAccountBalance:   e.ToAccountBalance,
+				},
+			})
+		}
 	}
+
+	return formattedEvents
 }
 
-func (m *persistenceManager) formatAsset(evt *eventspb.BusEvent) (f *formattedEvent) {
+func (m *persistenceManager) formatAssetUpdate(evt *eventspb.BusEvent) (f *formattedEvent) {
 
 	a := evt.GetAsset()
 
 	return &formattedEvent{
-		Type:  FormattedEventType_Asset,
-		Event: &formattedAsset{},
+		Type: FormattedEventType_AssetUpdate,
+		Event: &formattedAssetUpdate{
+			Id:                     a.Id,
+			Status:                 a.Status.String(),
+			Name:                   a.Details.Name,
+			Symbol:                 a.Details.Symbol,
+			Decimals:               int32(a.Details.Decimals),
+			Quantum:                a.Details.Quantum,
+			Erc20ContractAddr:      a.Details.GetErc20().ContractAddress,
+			Erc20LifetimeLimit:     a.Details.GetErc20().LifetimeLimit,
+			Erc20WithdrawThreshold: a.Details.GetErc20().WithdrawThreshold,
+		},
 	}
 }
 
 func (m *persistenceManager) formatMarketUpdate(evt *eventspb.BusEvent) (f *formattedEvent) {
 
-	var m *vegapb.Market
+	var market *vegapb.Market
 	if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_MARKET_CREATED {
-		m = evt.GetMarketCreated()
+		market = evt.GetMarketCreated()
 	} else {
-		m = evt.GetMarketUpdated()
+		market = evt.GetMarketUpdated()
 	}
 
+	i := market.GetTradableInstrument().Instrument
+	fut := i.GetFuture()
+	sf := market.GetTradableInstrument().MarginCalculator.ScalingFactors
+
 	return &formattedEvent{
-		Type:  FormattedEventType_MarketUpdate,
-		Event: &formattedMarketUpdate{},
+		Type: FormattedEventType_MarketUpdate,
+		Event: &formattedMarketUpdate{
+			Id:                      market.Id,
+			InstrumentCode:          i.Code,
+			InstrumentName:          i.Name,
+			InstrumentMetadataTags:  i.Metadata.String(),
+			FutureSettlementAsset:   fut.SettlementAsset,
+			FutureQuoteName:         fut.QuoteName,
+			MarginSearchLevel:       strconv.FormatFloat(sf.SearchLevel, 'f', -1, 64),
+			MarginInitialMargin:     strconv.FormatFloat(sf.InitialMargin, 'f', -1, 64),
+			MarginCollateralRelease: strconv.FormatFloat(sf.CollateralRelease, 'f', -1, 64),
+			DecimalPlaces:           int32(market.DecimalPlaces),
+			TradingMode:             market.TradingMode.String(),
+			State:                   market.State.String(),
+			PositionDecimalPlaces:   int32(market.PositionDecimalPlaces),
+		},
 	}
+
+	// evt.id,
+	// evt.tradable_instrument.instrument.code,
+	// evt.tradable_instrument.instrument.name,
+	// JSON.stringify(evt.tradable_instrument.instrument.metadata.tags),
+	// evt.tradable_instrument.instrument.Product.Future.settlement_asset,
+	// evt.tradable_instrument.instrument.Product.Future.quote_name,
+	// evt.tradable_instrument.margin_calculator.scaling_factors.search_level,
+	// evt.tradable_instrument.margin_calculator.scaling_factors.initial_margin,
+	// evt.tradable_instrument.margin_calculator.scaling_factors.collateral_release,
+	// parseInt(evt.decimal_places),
+	// evt.trading_mode,
+	// evt.state,
+	// parseInt(evt.position_decimal_places)
 }
 
 func (m *persistenceManager) formatMarketData(evt *eventspb.BusEvent) (f *formattedEvent) {
@@ -812,8 +1379,19 @@ func (m *persistenceManager) formatMarketData(evt *eventspb.BusEvent) (f *format
 	md := evt.GetMarketData()
 
 	return &formattedEvent{
-		Type:  FormattedEventType_MarketData,
-		Event: &formattedMarketData{},
+		Type: FormattedEventType_MarketData,
+		Event: &formattedMarketData{
+			MarketId:        md.Market,
+			MarkPrice:       md.MarkPrice,
+			BestBidPrice:    md.BestBidPrice,
+			BestBidVolume:   md.BestBidVolume,
+			BestAskPrice:    md.BestOfferPrice,
+			BestAskVolume:   md.BestOfferVolume,
+			MidPrice:        md.MidPrice,
+			Timestamp:       md.Timestamp,
+			OpenInterest:    md.OpenInterest,
+			LastTradedPrice: md.LastTradedPrice,
+		},
 	}
 }
 
@@ -822,7 +1400,16 @@ func (m *persistenceManager) formatStakeLinking(evt *eventspb.BusEvent) (f *form
 	sl := evt.GetStakeLinking()
 
 	return &formattedEvent{
-		Type:  FormattedEventType_StakeLinking,
-		Event: &formattedStakeLinking{},
+		Type: FormattedEventType_StakeLinking,
+		Event: &formattedStakeLinking{
+			Id:                 sl.Id,
+			Type:               sl.Type.String(),
+			Timestamp:          sl.Ts,
+			FinalizedTimestamp: sl.FinalizedAt,
+			PartyId:            sl.Party,
+			Amount:             sl.Amount,
+			Status:             sl.Status.String(),
+			EthAddr:            sl.EthereumAddress,
+		},
 	}
 }
