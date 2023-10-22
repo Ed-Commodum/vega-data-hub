@@ -28,6 +28,20 @@ const (
 	pgQueryType_Truncate // Truncates temp table
 )
 
+var pgQueryTypes = []pgQueryType{
+	pgQueryType_CreateTables,
+	pgQueryType_CreateContinuousAggregates,
+	pgQueryType_Upsert,
+	pgQueryType_Truncate,
+}
+
+func (client *pgClient) GetDbQueries() map[pgQueryType]map[string]string {
+
+	queries := make(map[pgQueryType]map[string]string)
+
+	return nil
+}
+
 type PgClient interface {
 	Connect()
 	Close()
@@ -36,21 +50,18 @@ type PgClient interface {
 }
 
 type pgClient struct {
+	b       *Broker
 	dbUrl   string
 	queries map[pgQueryType]map[string]string
 	pool    *pgxpool.Pool
 }
 
-func getDbQueries() map[pgQueryType]map[string]string {
-
-	return nil
-}
-
-func newPostgresClient() PgClient {
+func newPostgresClient(b *Broker) PgClient {
 	pgClient := &pgClient{
-		dbUrl:   os.Getenv("DB_URL"),
-		queries: getDbQueries(),
+		b:     b,
+		dbUrl: os.Getenv("DB_URL"),
 	}
+	pgClient.GetDbQueries()
 	pgClient.Connect()
 	return pgClient
 }
@@ -179,7 +190,7 @@ type blockPersister struct {
 func newPersistenceManager(b *Broker) PersistenceManager {
 	pm := &persistenceManager{
 		broker:                b,
-		pgClient:              newPostgresClient().(*pgClient),
+		pgClient:              newPostgresClient(b).(*pgClient),
 		recvChs:               make(map[string]chan *eventspb.BusEvent),
 		eventBatches:          make(map[string][]FormattedEvent),
 		blockBatches:          make(map[string]map[int64]*blockBatch),
@@ -441,14 +452,14 @@ func (bp *batchPersister) InsertTrades(batch []*formattedTrade) (pgconn.CommandT
 	// Begin transaction
 	tx, err := bp.pm.pgClient.pool.Begin(ctx)
 
-	// Upsert to main table
-	commandTag, err := tx.Exec(ctx, bp.pm.pgClient.queries["upsert"][bp.topic])
+	// Insert to main table
+	commandTag, err := tx.Exec(ctx, bp.pm.pgClient.queries[pgQueryType_Upsert][bp.topic])
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to upsert trades: %v", err)
 	}
 
 	// Truncate temp table
-	_, err = tx.Exec(ctx, bp.pm.pgClient.queries["truncate"][bp.topic])
+	_, err = tx.Exec(ctx, bp.pm.pgClient.queries[pgQueryType_Truncate][bp.topic])
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to truncate temp trades table: %v", err)
 	}
@@ -468,7 +479,7 @@ func (bp *batchPersister) InsertOrderUpdates(batch []*formattedOrderUpdate) (pgc
 
 	copyCount, err := bp.pm.pgClient.pool.CopyFrom(
 		context.Background(),
-		pgx.Identifier{"orders_temp"},
+		pgx.Identifier{"order_updates_temp"},
 		[]string{
 			"id", "market_id", "party_id", "side", "price", "size", "remaining", "type",
 			"created_at", "block_ts", "synth_timestamp", "status", "version",
@@ -485,14 +496,14 @@ func (bp *batchPersister) InsertOrderUpdates(batch []*formattedOrderUpdate) (pgc
 	// Begin transaction
 	tx, err := bp.pm.pgClient.pool.Begin(ctx)
 
-	// Upsert to main table
-	commandTag, err := tx.Exec(ctx, bp.pm.pgClient.queries["upsert"][bp.topic])
+	// Insert to main table
+	commandTag, err := tx.Exec(ctx, bp.pm.pgClient.queries[pgQueryType_Upsert][bp.topic])
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to upsert order updates: %v", err)
 	}
 
 	// Truncate temp table
-	_, err = tx.Exec(ctx, bp.pm.pgClient.queries["truncate"][bp.topic])
+	_, err = tx.Exec(ctx, bp.pm.pgClient.queries[pgQueryType_Truncate][bp.topic])
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to truncate temp order updates table: %v", err)
 	}
@@ -530,14 +541,14 @@ func (bp *batchPersister) InsertLedgerMovements(batch []*formattedLedgerMovement
 	// Begin transaction
 	tx, err := bp.pm.pgClient.pool.Begin(context.Background())
 
-	// Upsert to main table
-	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries["upsert"][bp.topic])
+	// Insert to main table
+	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Upsert][bp.topic])
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to upsert ledger movements: %v", err)
 	}
 
 	// Truncate temp table
-	_, err = tx.Exec(context.Background(), bp.pm.pgClient.queries["truncate"][bp.topic])
+	_, err = tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Truncate][bp.topic])
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to truncate temp ledger movements table: %v", err)
 	}
@@ -553,89 +564,94 @@ func (bp *batchPersister) InsertLedgerMovements(batch []*formattedLedgerMovement
 
 func (bp *batchPersister) InsertAssetUpdates(batch []*formattedAssetUpdate) (pgconn.CommandTag, int64, error) {
 
-	copyCount, err := bp.pm.pgClient.pool.CopyFrom(
-		context.Background(),
-		pgx.Identifier{"assets_temp"},
-		[]string{
-			"id", "status", "name", "symbol", "decimals", "quantum",
-			"erc20_contract_addr", "erc20_lifetime_limit", "erc20_withdraw_threshold",
-		},
-		pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
-			a := batch[i]
-			return []interface{}{
-				a.Id, a.Status, a.Name, a.Symbol, a.Decimals, a.Quantum,
-				a.Erc20ContractAddr, a.Erc20LifetimeLimit, a.Erc20WithdrawThreshold,
-			}, nil
-		}),
-	)
+	// We actually probably don't need to use the copy protocol for assets because there will be very few
+	// and infrequent asset updates.
 
-	// Begin transaction
-	tx, err := bp.pm.pgClient.pool.Begin(context.Background())
+	// copyCount, err := bp.pm.pgClient.pool.CopyFrom(
+	// 	context.Background(),
+	// 	pgx.Identifier{"assets_temp"},
+	// 	[]string{
+	// 		"id", "status", "name", "symbol", "decimals", "quantum",
+	// 		"erc20_contract_addr", "erc20_lifetime_limit", "erc20_withdraw_threshold",
+	// 	},
+	// 	pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
+	// 		a := batch[i]
+	// 		return []interface{}{
+	// 			a.Id, a.Status, a.Name, a.Symbol, a.Decimals, a.Quantum,
+	// 			a.Erc20ContractAddr, a.Erc20LifetimeLimit, a.Erc20WithdrawThreshold,
+	// 		}, nil
+	// 	}),
+	// )
 
-	// Upsert to main table
-	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries["upsert"][bp.topic])
-	if err != nil {
-		log.Fatalf("error: tx.Exec failed: failed to upsert asset updates: %v", err)
-	}
+	// // Begin transaction
+	// tx, err := bp.pm.pgClient.pool.Begin(context.Background())
 
-	// Truncate temp table
-	_, err = tx.Exec(context.Background(), bp.pm.pgClient.queries["truncate"][bp.topic])
-	if err != nil {
-		log.Fatalf("error: tx.Exec failed: failed to truncate temp assets table: %v", err)
-	}
+	// // Upsert to main table
+	// commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Upsert][bp.topic])
+	// if err != nil {
+	// 	log.Fatalf("error: tx.Exec failed: failed to upsert asset updates: %v", err)
+	// }
 
-	// Commit transaction transaction
-	err = tx.Commit(context.Background())
-	if err != nil {
-		log.Fatalf("error: tx.Commit failed: failed to commit tx for asset updates persistence: %v", err)
-	}
+	// // Truncate temp table
+	// _, err = tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Truncate][bp.topic])
+	// if err != nil {
+	// 	log.Fatalf("error: tx.Exec failed: failed to truncate temp assets table: %v", err)
+	// }
 
-	return commandTag, copyCount, err
+	// // Commit transaction transaction
+	// err = tx.Commit(context.Background())
+	// if err != nil {
+	// 	log.Fatalf("error: tx.Commit failed: failed to commit tx for asset updates persistence: %v", err)
+	// }
+
+	// return commandTag, copyCount, err
 
 }
 
 func (bp *batchPersister) InsertMarketUpdates(batch []*formattedMarketUpdate) (pgconn.CommandTag, int64, error) {
 
-	copyCount, err := bp.pm.pgClient.pool.CopyFrom(
-		context.Background(),
-		pgx.Identifier{"markets_temp"},
-		[]string{
-			"id", "instrument_code", "instrument_name", "instrument_metadata_tags", "future_settlement_asset",
-			"future_quote_name", "margin_search_level", "margin_initial_margin", "margin_collateral_release",
-			"decimal_places", "trading_mode", "state", "position_decimal_places",
-		},
-		pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
-			m := batch[i]
-			return []interface{}{
-				m.Id, m.InstrumentCode, m.InstrumentName, m.InstrumentMetadataTags, m.FutureSettlementAsset,
-				m.FutureQuoteName, m.MarginSearchLevel, m.MarginInitialMargin, m.MarginCollateralRelease,
-				m.DecimalPlaces, m.TradingMode, m.State, m.PositionDecimalPlaces,
-			}, nil
-		}),
-	)
+	// We are unlikely to need to use the copy protocol for market updates because these will be infrequent.
 
-	// Begin transaction
-	tx, err := bp.pm.pgClient.pool.Begin(context.Background())
+	// copyCount, err := bp.pm.pgClient.pool.CopyFrom(
+	// 	context.Background(),
+	// 	pgx.Identifier{"market_data_updates_temp"},
+	// 	[]string{
+	// 		"id", "instrument_code", "instrument_name", "instrument_metadata_tags", "future_settlement_asset",
+	// 		"future_quote_name", "margin_search_level", "margin_initial_margin", "margin_collateral_release",
+	// 		"decimal_places", "trading_mode", "state", "position_decimal_places",
+	// 	},
+	// 	pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
+	// 		m := batch[i]
+	// 		return []interface{}{
+	// 			m.Id, m.InstrumentCode, m.InstrumentName, m.InstrumentMetadataTags, m.FutureSettlementAsset,
+	// 			m.FutureQuoteName, m.MarginSearchLevel, m.MarginInitialMargin, m.MarginCollateralRelease,
+	// 			m.DecimalPlaces, m.TradingMode, m.State, m.PositionDecimalPlaces,
+	// 		}, nil
+	// 	}),
+	// )
 
-	// Upsert to main table
-	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries["upsert"][bp.topic])
-	if err != nil {
-		log.Fatalf("error: tx.Exec failed: failed to upsert market updates: %v", err)
-	}
+	// // Begin transaction
+	// tx, err := bp.pm.pgClient.pool.Begin(context.Background())
 
-	// Truncate temp table
-	_, err = tx.Exec(context.Background(), bp.pm.pgClient.queries["truncate"][bp.topic])
-	if err != nil {
-		log.Fatalf("error: tx.Exec failed: failed to truncate temp markets table: %v", err)
-	}
+	// // Upsert to main table
+	// commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Upsert][bp.topic])
+	// if err != nil {
+	// 	log.Fatalf("error: tx.Exec failed: failed to upsert market updates: %v", err)
+	// }
 
-	// Commit transaction transaction
-	err = tx.Commit(context.Background())
-	if err != nil {
-		log.Fatalf("error: tx.Commit failed: failed to commit tx for market updates persistence: %v", err)
-	}
+	// // Truncate temp table
+	// _, err = tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Truncate][bp.topic])
+	// if err != nil {
+	// 	log.Fatalf("error: tx.Exec failed: failed to truncate temp markets table: %v", err)
+	// }
 
-	return commandTag, copyCount, err
+	// // Commit transaction transaction
+	// err = tx.Commit(context.Background())
+	// if err != nil {
+	// 	log.Fatalf("error: tx.Commit failed: failed to commit tx for market updates persistence: %v", err)
+	// }
+
+	// return commandTag, copyCount, err
 }
 
 func (bp *batchPersister) InsertMarketData(batch []*formattedMarketData) (pgconn.CommandTag, int64, error) {
@@ -659,14 +675,14 @@ func (bp *batchPersister) InsertMarketData(batch []*formattedMarketData) (pgconn
 	// Begin transaction
 	tx, err := bp.pm.pgClient.pool.Begin(context.Background())
 
-	// Upsert to main table
-	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries["upsert"][bp.topic])
+	// Insert to main table
+	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Upsert][bp.topic])
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to upsert market data: %v", err)
 	}
 
 	// Truncate temp table
-	_, err = tx.Exec(context.Background(), bp.pm.pgClient.queries["truncate"][bp.topic])
+	_, err = tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Truncate][bp.topic])
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to truncate temp market_data table: %v", err)
 	}
@@ -682,113 +698,45 @@ func (bp *batchPersister) InsertMarketData(batch []*formattedMarketData) (pgconn
 
 func (bp *batchPersister) InsertStakeLinkings(batch []*formattedStakeLinking) (pgconn.CommandTag, int64, error) {
 
-	copyCount, err := bp.pm.pgClient.pool.CopyFrom(
-		context.Background(),
-		pgx.Identifier{"market_data"},
-		[]string{
-			"id", "type", "ts", "finalized_timestamp", "party_id", "amount", "status", "eth_adr",
-		},
-		pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
-			sl := batch[i]
-			return []interface{}{
-				sl.Id, sl.Type, sl.Timestamp, sl.FinalizedTimestamp, sl.PartyId, sl.Amount, sl.Status, sl.EthAddr,
-			}, nil
-		}),
-	)
+	// We probably don't need to use the copy protocol for stake linkings because they will be infrequent.
 
-	// Begin transaction
-	tx, err := bp.pm.pgClient.pool.Begin(context.Background())
+	// copyCount, err := bp.pm.pgClient.pool.CopyFrom(
+	// 	context.Background(),
+	// 	pgx.Identifier{"market_data"},
+	// 	[]string{
+	// 		"id", "type", "ts", "finalized_timestamp", "party_id", "amount", "status", "eth_adr",
+	// 	},
+	// 	pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
+	// 		sl := batch[i]
+	// 		return []interface{}{
+	// 			sl.Id, sl.Type, sl.Timestamp, sl.FinalizedTimestamp, sl.PartyId, sl.Amount, sl.Status, sl.EthAddr,
+	// 		}, nil
+	// 	}),
+	// )
 
-	// Upsert to main table
-	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries["upsert"][bp.topic])
-	if err != nil {
-		log.Fatalf("error: tx.Exec failed: failed to upsert stake linkings: %v", err)
-	}
+	// // Begin transaction
+	// tx, err := bp.pm.pgClient.pool.Begin(context.Background())
 
-	// Truncate temp table
-	_, err = tx.Exec(context.Background(), bp.pm.pgClient.queries["truncate"][bp.topic])
-	if err != nil {
-		log.Fatalf("error: tx.Exec failed: failed to truncate temp stake linkings table: %v", err)
-	}
+	// // Upsert to main table
+	// commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Upsert][bp.topic])
+	// if err != nil {
+	// 	log.Fatalf("error: tx.Exec failed: failed to upsert stake linkings: %v", err)
+	// }
 
-	// Commit transaction transaction
-	err = tx.Commit(context.Background())
-	if err != nil {
-		log.Fatalf("error: tx.Commit failed: failed to commit tx for stake linkings persistence: %v", err)
-	}
+	// // Truncate temp table
+	// _, err = tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Truncate][bp.topic])
+	// if err != nil {
+	// 	log.Fatalf("error: tx.Exec failed: failed to truncate temp stake linkings table: %v", err)
+	// }
 
-	return commandTag, copyCount, err
+	// // Commit transaction transaction
+	// err = tx.Commit(context.Background())
+	// if err != nil {
+	// 	log.Fatalf("error: tx.Commit failed: failed to commit tx for stake linkings persistence: %v", err)
+	// }
+
+	// return commandTag, copyCount, err
 }
-
-// func (bp *batchPersister) GetInsertQuery(batch []*formattedEvent) string {
-
-// 	evtType := batch[0].Type
-// 	for _, evt := range batch {
-// 		if evt.Type != evtType {
-// 			log.Fatalf("Event type mismatch in formatted event batch.\n")
-// 		}
-// 	}
-
-// 	switch evtType {
-// 	case FormattedEventType_Trade:
-// 		return ""
-// 	case FormattedEventType_OrderUpdate:
-// 		return ""
-// 	case FormattedEventType_LedgerMovement:
-// 		return ""
-// 	case FormattedEventType_AssetUpdate:
-// 		return ""
-// 	case FormattedEventType_MarketUpdate:
-// 		return ""
-// 	case FormattedEventType_MarketData:
-// 		return ""
-// 	case FormattedEventType_StakeLinking:
-// 		return ""
-// 	}
-
-// 	return ""
-// }
-
-// func getBatchInsertTradeQuery(batch []*formattedEvent) {
-// 	baseStr := `INSERT INTO trades (
-// 		id,
-// 		market_id,
-// 		price,
-// 		size,
-// 		buyer,
-// 		seller,
-// 		aggressor,
-// 		buy_order,
-// 		sell_order,
-// 		timestamp,
-// 		synth_timestamp,
-// 		type,
-// 		buyer_fee_maker,
-// 		buyer_fee_infrastructure,
-// 		buyer_fee_liquidity,
-// 		seller_fee_maker,
-// 		seller_fee_infrastructure,
-// 		seller_fee_liquidity,
-// 		is_first_in_bucket
-// 	) SELECT DISTINCT * FROM ( VALUES %s ) t ON CONFLICT DO NOTHING;`
-//
-// 	typeCastings := []string{"::text", "::text", "::bigint", "::bigint", "::text", "::text", "::text", "::text",
-// 		"::text", "::bigint", "::bigint", "::text", "::numeric(40)", "::numeric(40)", "::numeric(40)",
-// 		"::numeric(40)", "::numeric(40)", "::numeric(40)", "::integer"}
-//
-// 	firstRow := `( $1::text, $2::text, $3::bigint, $4::bigint, $5::text, $6::text, $7::text, $8::text,
-// 	$9::text, $10::bigint, $11::bigint, $12::text, $13::numeric(40), $14::numeric(40), $15::numeric(40),
-// 	$16::numeric(40), $17::numeric(40), $18::numeric(40), $19::integer )`
-//
-// 	subsequentRows := "( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19 )"
-//
-// 	queryStr := fmt.Sprintf(baseStr, valuesStr)
-//
-// 	// (text 'v1', text 'v2')
-// 	// , ('v3','v4')
-// 	// , ('v3','v4')
-//
-// }
 
 type FormattedEventType uint8
 

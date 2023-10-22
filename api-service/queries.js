@@ -700,10 +700,10 @@ const marketQueries = {
 
 
 
-        // Experiments below have all failed, attempt with window functions instead. Run the window function
+        // Most experiments below have failed, attempt with window functions instead. Run the window function
         // queries using a trigger on insertion of an EndBlock event. Also experiment with a single
         // window function query to aggregate an entire history of order updates. This could be called 
-        // one after replay or periodically during replay.
+        // once after replay or periodically during replay.
         // case when STATUS_CANCELLED  0 - remaining
         // case when STATUS_STOPPED    0 - prev_remaining
         // case when STATUS_EXPIRED    0 - prev_remaining

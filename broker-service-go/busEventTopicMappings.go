@@ -1,5 +1,24 @@
 package main
 
+type EventTopicType uint8
+
+const (
+	Topic_Trades EventTopicType = iota
+	Topic_Orders
+	Topic_PositionUpdates
+	Topic_Accounts
+	Topic_Assets
+	Topic_Markets
+	Topic_MarketData
+	Topic_LedgerMovements
+	Topic_Transfers
+	Topic_Validators
+	Topic_Blocks
+	Topic_TimeUpdates
+	Topic_Liquidations
+	Topic_StakeLinkings
+)
+
 func GetBusEventTopicMap() map[string]string {
 
 	return map[string]string{
@@ -23,7 +42,7 @@ func GetBusEventTopicMap() map[string]string {
 		"BUS_EVENT_TYPE_VALIDATOR_RANKING":        "validators",
 		"BUS_EVENT_TYPE_VALIDATOR_SCORE":          "validators",
 		"BUS_EVENT_TYPE_VALIDATOR_UPDATE":         "validators",
-		"BUS_EVENT_TYPE_LEDGER_MOVEMENTS":         "transfers",
+		"BUS_EVENT_TYPE_LEDGER_MOVEMENTS":         "ledger_movements",
 		"BUS_EVENT_TYPE_TRANSFER":                 "transfers",
 		"BUS_EVENT_TYPE_BEGIN_BLOCK":              "blocks",
 		"BUS_EVENT_TYPE_END_BLOCK":                "blocks",

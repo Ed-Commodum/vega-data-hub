@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS stake_linkings (
     amount NUMERIC(40),
     status TEXT NOT NULL,
     eth_addr TEXT NOT NULL,
-    PRIMARY KEY (ts, id)
+    PRIMARY KEY (id, ts)
 );
 
 

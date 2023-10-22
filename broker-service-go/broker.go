@@ -130,7 +130,7 @@ func newBroker() *Broker {
 		topicChans[k] = make(chan *eventspb.BusEvent)
 	}
 
-	return &Broker{
+	broker := &Broker{
 		ss:               *socketServer,
 		kc:               *kafkaClient,
 		topicSet:         topicSet,
@@ -139,6 +139,9 @@ func newBroker() *Broker {
 		isReplaying:      true,
 	}
 
+	broker.pm = newPersistenceManager(broker).(*persistenceManager)
+
+	return broker
 }
 
 func (s SocketServer) listen() error {
