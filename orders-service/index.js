@@ -192,9 +192,6 @@ const continuousAggregates = {
     order_book_diffs: {
         interval_1m: {
             createMatView: `
-            CREATE METERIALIZED VIEW order_book_diffs_1m
-            with (timescaledb.continuous) AS
-            SELECT 
             
             `,
             addRefreshPolicy: {

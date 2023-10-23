@@ -313,7 +313,6 @@ const enums = {
     },
 
     timeInterval: {
-        INTERVAL_5M: 66,
         "INTERVAL_1M": 0,
         "INTERVAL_5M": 1,
         "INTERVAL_15M": 2,
@@ -465,7 +464,7 @@ const typeMappings = {
             [enums.busEvent.type.BUS_EVENT_TYPE_VALIDATOR_RANKING]: "validators",
             [enums.busEvent.type.BUS_EVENT_TYPE_VALIDATOR_SCORE]: "validators",
             [enums.busEvent.type.BUS_EVENT_TYPE_VALIDATOR_UPDATE]: "validators",
-            [enums.busEvent.type.BUS_EVENT_TYPE_LEDGER_MOVEMENTS]: "transfers",
+            [enums.busEvent.type.BUS_EVENT_TYPE_LEDGER_MOVEMENTS]: "ledger_movements",
             [enums.busEvent.type.BUS_EVENT_TYPE_TRANSFER]: "transfers",
             [enums.busEvent.type.BUS_EVENT_TYPE_BEGIN_BLOCK]: "blocks",
             [enums.busEvent.type.BUS_EVENT_TYPE_END_BLOCK]: "blocks",
@@ -486,7 +485,8 @@ const typeMappings = {
             "market_data": [ enums.busEvent.type.BUS_EVENT_TYPE_MARKET_DATA ],
             "governance": [ enums.busEvent.type.BUS_EVENT_TYPE_PROPOSAL, enums.busEvent.type.BUS_EVENT_TYPE_VOTE, enums.busEvent.type.BUS_EVENT_TYPE_STATE_VAR, enums.busEvent.type.BUS_EVENT_TYPE_NETWORK_LIMITS, enums.busEvent.type.BUS_EVENT_TYPE_NETWORK_PARAMETER ],
             "validators": [ enums.busEvent.type.BUS_EVENT_TYPE_VALIDATOR_RANKING, enums.busEvent.type.BUS_EVENT_TYPE_VALIDATOR_SCORE, enums.busEvent.type.BUS_EVENT_TYPE_VALIDATOR_UPDATE ],
-            "transfers": [ enums.busEvent.type.BUS_EVENT_TYPE_LEDGER_MOVEMENTS, enums.busEvent.type.BUS_EVENT_TYPE_TRANSFER ],
+            "transfers": [ enums.busEvent.type.BUS_EVENT_TYPE_TRANSFER ],
+            "ledger_movements": [ enums.busEvent.type.BUS_EVENT_TYPE_LEDGER_MOVEMENTS ],
             "blocks": [ enums.busEvent.type.BUS_EVENT_TYPE_BEGIN_BLOCK, enums.busEvent.type.BUS_EVENT_TYPE_END_BLOCK ],
             "time_updates": [ enums.busEvent.type.BUS_EVENT_TYPE_TIME_UPDATE ],
             "liquidations": [ enums.busEvent.type.BUS_EVENT_TYPE_DISTRESSED_ORDERS_CLOSED, enums.busEvent.type.BUS_EVENT_TYPE_SETTLE_DISTRESSED ],

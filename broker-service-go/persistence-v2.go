@@ -17,29 +17,8 @@ import (
 	eventspb "code.vegaprotocol.io/vega/protos/vega/events/v1"
 )
 
-type pgQueryType uint8
-
-const (
-	// Each query will be a set of multiple queries to be executed in a transaction
-	pgQueryType_Unspecified  pgQueryType = iota
-	pgQueryType_CreateTables             // Creates hypertables and indexes
-	pgQueryType_CreateContinuousAggregates
-	pgQueryType_Upsert   // Upserts from temp table to main table
-	pgQueryType_Truncate // Truncates temp table
-)
-
-var pgQueryTypes = []pgQueryType{
-	pgQueryType_CreateTables,
-	pgQueryType_CreateContinuousAggregates,
-	pgQueryType_Upsert,
-	pgQueryType_Truncate,
-}
-
-func (client *pgClient) GetDbQueries() map[pgQueryType]map[string]string {
-
-	queries := make(map[pgQueryType]map[string]string)
-
-	return nil
+func (client *pgClient) GetQueries() {
+	client.topicQueries, client.generalQueries = GetPgQueries()
 }
 
 type PgClient interface {
@@ -50,10 +29,11 @@ type PgClient interface {
 }
 
 type pgClient struct {
-	b       *Broker
-	dbUrl   string
-	queries map[pgQueryType]map[string]string
-	pool    *pgxpool.Pool
+	b              *Broker
+	dbUrl          string
+	topicQueries   map[pgQueryType]map[string]pgTopicQuery
+	generalQueries map[pgQueryType]pgGeneralQuery
+	pool           *pgxpool.Pool
 }
 
 func newPostgresClient(b *Broker) PgClient {
@@ -61,7 +41,7 @@ func newPostgresClient(b *Broker) PgClient {
 		b:     b,
 		dbUrl: os.Getenv("DB_URL"),
 	}
-	pgClient.GetDbQueries()
+	pgClient.GetQueries()
 	pgClient.Connect()
 	return pgClient
 }
@@ -88,6 +68,8 @@ func (client *pgClient) Exec(queryStr string, args ...interface{}) (pgconn.Comma
 
 func (client *pgClient) InitDb() pgconn.CommandTag {
 
+	// Create helper functions
+
 	// List existing tables
 	listTablesQuery := "SELECT * FROM information_schema.tables"
 
@@ -110,10 +92,6 @@ func (client *pgClient) InitDb() pgconn.CommandTag {
 	}
 
 	// Create all required hypertables and temp tables, skipping tables that are already present.
-
-	// Create indexes
-
-	// Set integer time for new hypertables
 
 	// Create continuous aggregates for new hypertables
 
@@ -453,13 +431,13 @@ func (bp *batchPersister) InsertTrades(batch []*formattedTrade) (pgconn.CommandT
 	tx, err := bp.pm.pgClient.pool.Begin(ctx)
 
 	// Insert to main table
-	commandTag, err := tx.Exec(ctx, bp.pm.pgClient.queries[pgQueryType_Upsert][bp.topic])
+	commandTag, err := tx.Exec(ctx, bp.pm.pgClient.topicQueries[pgQueryType_Upsert][bp.topic].String)
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to upsert trades: %v", err)
 	}
 
 	// Truncate temp table
-	_, err = tx.Exec(ctx, bp.pm.pgClient.queries[pgQueryType_Truncate][bp.topic])
+	_, err = tx.Exec(ctx, bp.pm.pgClient.topicQueries[pgQueryType_Truncate][bp.topic].String)
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to truncate temp trades table: %v", err)
 	}
@@ -497,13 +475,13 @@ func (bp *batchPersister) InsertOrderUpdates(batch []*formattedOrderUpdate) (pgc
 	tx, err := bp.pm.pgClient.pool.Begin(ctx)
 
 	// Insert to main table
-	commandTag, err := tx.Exec(ctx, bp.pm.pgClient.queries[pgQueryType_Upsert][bp.topic])
+	commandTag, err := tx.Exec(ctx, bp.pm.pgClient.topicQueries[pgQueryType_Upsert][bp.topic].String)
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to upsert order updates: %v", err)
 	}
 
 	// Truncate temp table
-	_, err = tx.Exec(ctx, bp.pm.pgClient.queries[pgQueryType_Truncate][bp.topic])
+	_, err = tx.Exec(ctx, bp.pm.pgClient.topicQueries[pgQueryType_Truncate][bp.topic].String)
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to truncate temp order updates table: %v", err)
 	}
@@ -542,13 +520,13 @@ func (bp *batchPersister) InsertLedgerMovements(batch []*formattedLedgerMovement
 	tx, err := bp.pm.pgClient.pool.Begin(context.Background())
 
 	// Insert to main table
-	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Upsert][bp.topic])
+	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.topicQueries[pgQueryType_Upsert][bp.topic].String)
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to upsert ledger movements: %v", err)
 	}
 
 	// Truncate temp table
-	_, err = tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Truncate][bp.topic])
+	_, err = tx.Exec(context.Background(), bp.pm.pgClient.topicQueries[pgQueryType_Truncate][bp.topic].String)
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to truncate temp ledger movements table: %v", err)
 	}
@@ -676,13 +654,13 @@ func (bp *batchPersister) InsertMarketData(batch []*formattedMarketData) (pgconn
 	tx, err := bp.pm.pgClient.pool.Begin(context.Background())
 
 	// Insert to main table
-	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Upsert][bp.topic])
+	commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.topicQueries[pgQueryType_Upsert][bp.topic].String)
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to upsert market data: %v", err)
 	}
 
 	// Truncate temp table
-	_, err = tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Truncate][bp.topic])
+	_, err = tx.Exec(context.Background(), bp.pm.pgClient.topicQueries[pgQueryType_Truncate][bp.topic].String)
 	if err != nil {
 		log.Fatalf("error: tx.Exec failed: failed to truncate temp market_data table: %v", err)
 	}
