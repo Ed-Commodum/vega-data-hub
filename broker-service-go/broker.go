@@ -46,6 +46,7 @@ import (
 type Broker struct {
 	ss               SocketServer
 	kc               KafkaClient
+	kafkaMsgCh       chan kafka.Message
 	topicSet         map[string]void
 	busEventTopicMap map[string]string
 	topicChans       map[string]chan *eventspb.BusEvent
@@ -133,6 +134,7 @@ func newBroker() *Broker {
 	broker := &Broker{
 		ss:               *socketServer,
 		kc:               *kafkaClient,
+		kafkaMsgCh:       make(chan kafka.Message),
 		topicSet:         topicSet,
 		busEventTopicMap: busEventTopicMap,
 		topicChans:       topicChans,

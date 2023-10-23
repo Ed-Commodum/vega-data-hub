@@ -224,7 +224,7 @@ func (bp *batchPersister) Start() {
 					log.Printf("Error persisting batch for %v topic: %v\n", bp.topic, err)
 				}
 				fmt.Printf("Count of rows inserted: %v", rowCount)
-				fmt.Printf("Count of rows affected: %v", commandTag.RowsAffected())
+				fmt.Printf("Count of rows affected: %v", commandTag.RowsAffected()) // Only works for certain topics
 			}
 		}
 	}
@@ -251,7 +251,12 @@ func (bp *blockPersister) Start() {
 					log.Printf("Error persisting block batch for %v topic: %v\n", bp.topic, err)
 				}
 				fmt.Printf("Count of rows copied: %v", copyCount)
-				fmt.Printf("Count of rows affected: %v", commandTag.RowsAffected())
+				fmt.Printf("Count of rows affected: %v", commandTag.RowsAffected()) // Only works for certain topics
+
+				// Send notifcation through kafka to streaming API that block insertion is complete for this topic.
+
+				bp.pm.broker.kc.writer.WriteMessages(context.Background(), messages...)
+
 			}
 		}
 	}
@@ -442,7 +447,7 @@ func (bp *batchPersister) InsertTrades(batch []*formattedTrade) (pgconn.CommandT
 		log.Fatalf("error: tx.Exec failed: failed to truncate temp trades table: %v", err)
 	}
 
-	// Commit transaction transaction
+	// Commit transaction
 	err = tx.Commit(ctx)
 	if err != nil {
 		log.Fatalf("error: tx.Commit failed: failed to commit tx for trades persistence: %v", err)
@@ -486,7 +491,7 @@ func (bp *batchPersister) InsertOrderUpdates(batch []*formattedOrderUpdate) (pgc
 		log.Fatalf("error: tx.Exec failed: failed to truncate temp order updates table: %v", err)
 	}
 
-	// Commit transaction transaction
+	// Commit transaction
 	err = tx.Commit(ctx)
 	if err != nil {
 		log.Fatalf("error: tx.Commit failed: failed to commit tx for order updates persistence: %v", err)
@@ -531,7 +536,7 @@ func (bp *batchPersister) InsertLedgerMovements(batch []*formattedLedgerMovement
 		log.Fatalf("error: tx.Exec failed: failed to truncate temp ledger movements table: %v", err)
 	}
 
-	// Commit transaction transaction
+	// Commit transaction
 	err = tx.Commit(context.Background())
 	if err != nil {
 		log.Fatalf("error: tx.Commit failed: failed to commit tx for ledger movements persistence: %v", err)
@@ -544,6 +549,23 @@ func (bp *batchPersister) InsertAssetUpdates(batch []*formattedAssetUpdate) (pgc
 
 	// We actually probably don't need to use the copy protocol for assets because there will be very few
 	// and infrequent asset updates.
+
+	var count int64
+	for _, a := range batch {
+		// Upsert to main table
+		commandTag, err := bp.pm.pgClient.pool.Exec(
+			context.Background(),
+			bp.pm.pgClient.topicQueries[pgQueryType_Upsert][bp.topic].String,
+			a.Id, a.Status, a.Name, a.Symbol, a.Decimals, a.Quantum,
+			a.Erc20ContractAddr, a.Erc20LifetimeLimit, a.Erc20WithdrawThreshold,
+		)
+		count += commandTag.RowsAffected()
+		if err != nil {
+			log.Fatalf("error: pool.Exec failed: failed to upsert asset updates: %v", err)
+		}
+	}
+
+	return pgconn.CommandTag{}, count, nil
 
 	// copyCount, err := bp.pm.pgClient.pool.CopyFrom(
 	// 	context.Background(),
@@ -561,34 +583,29 @@ func (bp *batchPersister) InsertAssetUpdates(batch []*formattedAssetUpdate) (pgc
 	// 	}),
 	// )
 
-	// // Begin transaction
-	// tx, err := bp.pm.pgClient.pool.Begin(context.Background())
-
-	// // Upsert to main table
-	// commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Upsert][bp.topic])
-	// if err != nil {
-	// 	log.Fatalf("error: tx.Exec failed: failed to upsert asset updates: %v", err)
-	// }
-
-	// // Truncate temp table
-	// _, err = tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Truncate][bp.topic])
-	// if err != nil {
-	// 	log.Fatalf("error: tx.Exec failed: failed to truncate temp assets table: %v", err)
-	// }
-
-	// // Commit transaction transaction
-	// err = tx.Commit(context.Background())
-	// if err != nil {
-	// 	log.Fatalf("error: tx.Commit failed: failed to commit tx for asset updates persistence: %v", err)
-	// }
-
-	// return commandTag, copyCount, err
-
 }
 
 func (bp *batchPersister) InsertMarketUpdates(batch []*formattedMarketUpdate) (pgconn.CommandTag, int64, error) {
 
 	// We are unlikely to need to use the copy protocol for market updates because these will be infrequent.
+
+	var count int64
+	for _, m := range batch {
+		// Upsert to main table
+		commandTag, err := bp.pm.pgClient.pool.Exec(
+			context.Background(),
+			bp.pm.pgClient.topicQueries[pgQueryType_Upsert][bp.topic].String,
+			m.Id, m.InstrumentCode, m.InstrumentName, m.InstrumentMetadataTags, m.FutureSettlementAsset,
+			m.FutureQuoteName, m.MarginSearchLevel, m.MarginInitialMargin, m.MarginCollateralRelease,
+			m.DecimalPlaces, m.TradingMode, m.State, m.PositionDecimalPlaces,
+		)
+		count += commandTag.RowsAffected()
+		if err != nil {
+			log.Fatalf("error: pool.Exec failed: failed to upsert market update: %v", err)
+		}
+	}
+
+	return pgconn.CommandTag{}, count, nil
 
 	// copyCount, err := bp.pm.pgClient.pool.CopyFrom(
 	// 	context.Background(),
@@ -607,29 +624,6 @@ func (bp *batchPersister) InsertMarketUpdates(batch []*formattedMarketUpdate) (p
 	// 		}, nil
 	// 	}),
 	// )
-
-	// // Begin transaction
-	// tx, err := bp.pm.pgClient.pool.Begin(context.Background())
-
-	// // Upsert to main table
-	// commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Upsert][bp.topic])
-	// if err != nil {
-	// 	log.Fatalf("error: tx.Exec failed: failed to upsert market updates: %v", err)
-	// }
-
-	// // Truncate temp table
-	// _, err = tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Truncate][bp.topic])
-	// if err != nil {
-	// 	log.Fatalf("error: tx.Exec failed: failed to truncate temp markets table: %v", err)
-	// }
-
-	// // Commit transaction transaction
-	// err = tx.Commit(context.Background())
-	// if err != nil {
-	// 	log.Fatalf("error: tx.Commit failed: failed to commit tx for market updates persistence: %v", err)
-	// }
-
-	// return commandTag, copyCount, err
 }
 
 func (bp *batchPersister) InsertMarketData(batch []*formattedMarketData) (pgconn.CommandTag, int64, error) {
@@ -678,6 +672,22 @@ func (bp *batchPersister) InsertStakeLinkings(batch []*formattedStakeLinking) (p
 
 	// We probably don't need to use the copy protocol for stake linkings because they will be infrequent.
 
+	var count int64
+	for _, sl := range batch {
+		// Upsert to main table
+		commandTag, err := bp.pm.pgClient.pool.Exec(
+			context.Background(),
+			bp.pm.pgClient.topicQueries[pgQueryType_Upsert][bp.topic].String,
+			sl.Id, sl.Type, sl.Timestamp, sl.FinalizedTimestamp, sl.PartyId, sl.Amount, sl.Status, sl.EthAddr,
+		)
+		count += commandTag.RowsAffected()
+		if err != nil {
+			log.Fatalf("error: pool.Exec failed: failed to upsert market update: %v", err)
+		}
+	}
+
+	return pgconn.CommandTag{}, count, nil
+
 	// copyCount, err := bp.pm.pgClient.pool.CopyFrom(
 	// 	context.Background(),
 	// 	pgx.Identifier{"market_data"},
@@ -691,29 +701,6 @@ func (bp *batchPersister) InsertStakeLinkings(batch []*formattedStakeLinking) (p
 	// 		}, nil
 	// 	}),
 	// )
-
-	// // Begin transaction
-	// tx, err := bp.pm.pgClient.pool.Begin(context.Background())
-
-	// // Upsert to main table
-	// commandTag, err := tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Upsert][bp.topic])
-	// if err != nil {
-	// 	log.Fatalf("error: tx.Exec failed: failed to upsert stake linkings: %v", err)
-	// }
-
-	// // Truncate temp table
-	// _, err = tx.Exec(context.Background(), bp.pm.pgClient.queries[pgQueryType_Truncate][bp.topic])
-	// if err != nil {
-	// 	log.Fatalf("error: tx.Exec failed: failed to truncate temp stake linkings table: %v", err)
-	// }
-
-	// // Commit transaction transaction
-	// err = tx.Commit(context.Background())
-	// if err != nil {
-	// 	log.Fatalf("error: tx.Commit failed: failed to commit tx for stake linkings persistence: %v", err)
-	// }
-
-	// return commandTag, copyCount, err
 }
 
 type FormattedEventType uint8
@@ -943,7 +930,7 @@ func (m *persistenceManager) start() {
 
 		m.batchPersisters[topic].Start()
 		m.blockPersisters[topic].Start()
-		m.blockPersisters[topic].Pause() // Pause until Vega node done replaying and previous batches are inserted.
+		m.blockPersisters[topic].Pause() // Pause until Vega node is done replaying and previous batches are inserted.
 
 		batchPersistTicker := time.NewTicker(time.Millisecond * 500)
 
@@ -996,7 +983,7 @@ func (m *persistenceManager) start() {
 			for {
 				select {
 				case <-batchPersistTicker.C:
-					// Flush the batch, if no batch, set block persistence ready for that topic.
+					// Flush the batch, if no batch and replay is done then set block persistence ready for that topic.
 					if len(m.batchPersisters[topic].persistCh) == 0 && !m.broker.isReplaying && len(m.eventBatches[topic]) == 0 {
 						m.blockPersistenceReady[topic] = true
 					}
@@ -1011,7 +998,9 @@ func (m *persistenceManager) start() {
 					}
 					m.batchPersisters[topic].persistCh <- batch
 					if len(m.batchPersisters[topic].persistCh) == 0 && !m.broker.isReplaying && len(m.eventBatches[topic]) == 0 {
-						// Finished inserting all batch events, start block by block inserts.
+						// Finished inserting all batch events, start block by block inserts for topic.
+						m.blockPersisters[topic].Unpause()
+
 						m.blockPersistenceReady[topic] = true
 						ready := true
 						for _, v := range m.blockPersistenceReady {
@@ -1020,8 +1009,10 @@ func (m *persistenceManager) start() {
 							}
 						}
 						if ready {
-							m.blockPersisters[topic].Unpause()
+							// All topics caught up.
+							// Notify streaming API that it can begin
 						}
+
 					}
 				}
 			}
