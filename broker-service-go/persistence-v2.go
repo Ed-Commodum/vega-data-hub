@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/segmentio/kafka-go"
 
 	vegapb "code.vegaprotocol.io/vega/protos/vega"
 	eventspb "code.vegaprotocol.io/vega/protos/vega/events/v1"
@@ -255,6 +256,12 @@ func (bp *blockPersister) Start() {
 
 				// Send notifcation through kafka to streaming API that block insertion is complete for this topic.
 
+				msg := kafka.Message{
+					Topic: "persistence_status",
+					Value: []byte(fmt.Sprintf(`{ "topic": "trades", "height": %v, "status": "success" }`, height)),
+				}
+
+				// Move this into goroutine because it blocks until batch is set.
 				bp.pm.broker.kc.writer.WriteMessages(context.Background(), messages...)
 
 			}
