@@ -218,6 +218,59 @@ func (b Broker) monitorCoreNodeChainStatus() {
 	ticker := time.NewTicker(time.Second * 5)
 
 	go func() {
+		for range ticker.C {
+			fmt.Printf("Checking chain status at: http://%v/statistics\n", os.Getenv("VEGA_NODE_REST_API"))
+			res, err := http.Get(fmt.Sprintf("http://%v/statistics", os.Getenv("VEGA_NODE_REST_API")))
+			if err != nil {
+				log.Printf("Could not get statistics endpoint: %v", err)
+				// Set replaying to true to prevent block inserts of events once vega node comes online.
+				b.isReplaying = true
+				for topic := range b.topicSet {
+					b.pm.blockPersisters[topic].Pause()
+				}
+			}
+
+			body, err := io.ReadAll(res.Body)
+			if err != nil {
+				log.Printf("Failed to read response body: %v", err)
+			}
+			res.Body.Close()
+
+			data := make(map[string]any)
+			json.Unmarshal(body, &data)
+
+			// Get times
+			currentTime := data["statistics"].(map[string]any)["currentTime"].(string)
+			vegaTime := data["statistics"].(map[string]any)["vegaTime"].(string)
+
+			layout := "2006-01-02T15:04:05.000000000Z"
+			cTime, err := time.Parse(layout, currentTime)
+			if err != nil {
+				log.Fatalf("Failed to parse current time from vega node statistics endpoint: %v", err)
+			}
+			vTime, err := time.Parse(layout, vegaTime)
+			if err != nil {
+				log.Fatalf("Failed to parse vega time from vega node statistics endpoint: %v", err)
+			}
+			currentTimeMillis := cTime.UnixMilli()
+			vegaTimeMillis := vTime.UnixMilli()
+
+			if currentTimeMillis-vegaTimeMillis >= 60000 {
+				// Last block was more than 1 minute ago
+				// If not replaying: pause block inserts, start batch persistance
+
+			} else if currentTimeMillis-vegaTimeMillis >= 10000 {
+				// Last block was more than 10 seconds ago
+
+			} else {
+				// If replaying: Stop replay, start block inserts.
+				// Do block inserts
+			}
+
+		}
+	}()
+
+	go func() {
 		// Periodically call the statistics endpoint on the Vega Core node to check for replay.
 		for range ticker.C {
 			fmt.Printf("Checking chain status at: http://%v/statistics\n", os.Getenv("VEGA_NODE_REST_API"))
