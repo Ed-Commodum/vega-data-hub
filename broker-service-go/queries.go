@@ -1,5 +1,7 @@
 package main
 
+// import "log"
+
 type pgQueryType uint8
 
 const (
@@ -79,10 +81,15 @@ func getQueryTypeTopicMaps() map[pgQueryType]map[string]pgQueryString {
 
 func GetPgQueries() (topicQueries map[pgQueryType]map[string]pgTopicQuery, generalQueries map[pgQueryType]pgGeneralQuery) {
 
-	for t, m := range getQueryTypeTopicMaps() {
+	topicQueries = make(map[pgQueryType]map[string]pgTopicQuery)
+	generalQueries = make(map[pgQueryType]pgGeneralQuery)
+
+	for queryType, m := range getQueryTypeTopicMaps() {
+		topicQueries[queryType] = make(map[string]pgTopicQuery)
 		for topic, queryStr := range m {
-			topicQueries[t][topic] = pgTopicQuery{
-				Type:   t,
+			// log.Printf("topic: %v, queryStr: %v", topic, queryStr)
+			topicQueries[queryType][topic] = pgTopicQuery{
+				Type:   queryType,
 				Topic:  topic,
 				String: queryStr.Str(),
 			}

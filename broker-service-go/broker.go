@@ -46,7 +46,6 @@ import (
 type Broker struct {
 	ss               SocketServer
 	kc               KafkaClient
-	kafkaMsgCh       chan kafka.Message
 	topicSet         map[string]void
 	busEventTopicMap map[string]string
 	topicChans       map[string]chan *eventspb.BusEvent
@@ -60,7 +59,8 @@ type SocketServer struct {
 }
 
 type KafkaClient struct {
-	writer *kafka.Writer
+	writer     *kafka.Writer
+	kafkaMsgCh chan kafka.Message
 }
 
 type void struct{}
@@ -96,7 +96,8 @@ func newKafkaClient() (*KafkaClient, error) {
 	}
 
 	return &KafkaClient{
-		writer: w,
+		writer:     w,
+		kafkaMsgCh: make(chan kafka.Message),
 	}, nil
 
 }
@@ -134,7 +135,6 @@ func newBroker() *Broker {
 	broker := &Broker{
 		ss:               *socketServer,
 		kc:               *kafkaClient,
-		kafkaMsgCh:       make(chan kafka.Message),
 		topicSet:         topicSet,
 		busEventTopicMap: busEventTopicMap,
 		topicChans:       topicChans,
@@ -144,6 +144,20 @@ func newBroker() *Broker {
 	broker.pm = newPersistenceManager(broker).(*persistenceManager)
 
 	return broker
+}
+
+func (kc KafkaClient) startSendLoop() {
+
+	go func() {
+		ctx := context.Background()
+		for msg := range kc.kafkaMsgCh {
+			err := kc.writer.WriteMessages(ctx, msg)
+			if err != nil {
+				log.Printf("Failed to write messages to kafka: %v", err)
+			}
+		}
+	}()
+
 }
 
 func (s SocketServer) listen() error {
@@ -199,12 +213,14 @@ func (b Broker) monitorCoreNodeChainStatus() {
 	// status has changed. This way we can switch the persistence logic back and forth between
 	// replaying/notReplaying instead of just from reaplaying -> notReplaying.
 
+	// ---------- Needs rafactor to use vega time and current time to determine replay status ---------- \\
+
 	ticker := time.NewTicker(time.Second * 5)
 
 	go func() {
 		// Periodically call the statistics endpoint on the Vega Core node to check for replay.
 		for range ticker.C {
-			fmt.Printf("http://%v/statistics", os.Getenv("VEGA_NODE_REST_API"))
+			fmt.Printf("Checking chain status at: http://%v/statistics\n", os.Getenv("VEGA_NODE_REST_API"))
 			res, err := http.Get(fmt.Sprintf("http://%v/statistics", os.Getenv("VEGA_NODE_REST_API")))
 			if err != nil {
 				log.Printf("Could not get statistics endpoint: %v", err)
@@ -303,7 +319,8 @@ func (b Broker) distribute(wg *sync.WaitGroup, deChan chan *eventspb.BusEvent) {
 	go func() {
 		defer wg.Done()
 		for evt := range deChan {
-			// fmt.Printf("%v\n", evt.Id)
+			fmt.Printf("Event ID: %v\n", evt.Id)
+			fmt.Printf("Event Type: %v\n", evt.Type)
 			evtType := evt.Type // Get type of evt
 			// jsonEvtBytes, err := json.Marshal(evt) // Convert each event into JSON
 			// if err != nil {
@@ -373,7 +390,8 @@ func (b Broker) distribute(wg *sync.WaitGroup, deChan chan *eventspb.BusEvent) {
 			}
 			if evtType.String() == "BUS_EVENT_TYPE_BEGIN_BLOCK" || evtType.String() == "BUS_EVENT_TYPE_END_BLOCK" {
 				// Send beginBlock and endBlock events to all topicChannels
-				for _, channel := range b.topicChans {
+				for t, channel := range b.topicChans {
+					fmt.Printf("Sending event to topic: %v\n", t)
 					// It's fine to pass a pointer to multiple channels right? As long as we're not mutating the event.
 					channel <- evt
 				}
@@ -405,12 +423,19 @@ func (b Broker) start() {
 	wg := &sync.WaitGroup{}
 	wg.Add(3)
 
+	// Start kafka send loop
+	b.kc.startSendLoop()
+
+	// Monitor core node
+	b.monitorCoreNodeChainStatus()
+
+	// Start persistence
+	b.pm.Start()
+
 	err := b.ss.listen()
 	if err != nil {
 		log.Fatal(fmt.Errorf("failed to listen: %v", err))
 	}
-
-	// Determine whether
 
 	// Recieve to inChan
 	inChan := b.ss.recieve(wg)
@@ -432,7 +457,7 @@ func (b Broker) start() {
 
 func main() {
 
-	time.Sleep(time.Second * 40)
+	time.Sleep(time.Second * 30)
 
 	broker := newBroker()
 	broker.start()
