@@ -216,6 +216,7 @@ func (b Broker) monitorCoreNodeChainStatus() {
 	// ---------- Needs rafactor to use vega time and current time to determine replay status ---------- \\
 
 	ticker := time.NewTicker(time.Second * 5)
+	// ticker := time.NewTicker(time.Millisecond * 2500)
 
 	go func() {
 		for range ticker.C {
@@ -252,70 +253,33 @@ func (b Broker) monitorCoreNodeChainStatus() {
 			if err != nil {
 				log.Fatalf("Failed to parse vega time from vega node statistics endpoint: %v", err)
 			}
-			currentTimeMillis := cTime.UnixMilli()
-			vegaTimeMillis := vTime.UnixMilli()
+			timeDiffMillis := cTime.UnixMilli() - vTime.UnixMilli()
 
-			if currentTimeMillis-vegaTimeMillis >= 60000 {
-				// Last block was more than 1 minute ago
+			if timeDiffMillis >= 30000 {
+				// Last block was more than 30 seconds ago
 				// If not replaying: pause block inserts, start batch persistance
 
-			} else if currentTimeMillis-vegaTimeMillis >= 10000 {
+				if !b.isReplaying {
+					fmt.Printf("No block in last 30s. Marking chain as replaying...\n")
+					b.isReplaying = true
+					// for topic := range b.topicSet {
+					// 	b.pm.blockPersisters[topic].Pause()
+					// }
+				}
+
+			} else if timeDiffMillis >= 10000 {
 				// Last block was more than 10 seconds ago
+				fmt.Printf("No block for more than 10s...\n")
 
 			} else {
-				// If replaying: Stop replay, start block inserts.
-				// Do block inserts
+				// If replaying: Prepare for block inserts.
+				if b.isReplaying {
+					fmt.Printf("Chain has caught up. Switching to block persistence \n")
+					b.isReplaying = false
+				}
 			}
 
 		}
-	}()
-
-	go func() {
-		// Periodically call the statistics endpoint on the Vega Core node to check for replay.
-		for range ticker.C {
-			fmt.Printf("Checking chain status at: http://%v/statistics\n", os.Getenv("VEGA_NODE_REST_API"))
-			res, err := http.Get(fmt.Sprintf("http://%v/statistics", os.Getenv("VEGA_NODE_REST_API")))
-			if err != nil {
-				log.Printf("Could not get statistics endpoint: %v", err)
-				// Set replaying to true to prevent block inserts of events once vega node comes online.
-				b.isReplaying = true
-				for topic := range b.topicSet {
-					b.pm.blockPersisters[topic].Pause()
-				}
-			}
-
-			body, err := io.ReadAll(res.Body)
-			if err != nil {
-				log.Printf("Failed to read response body: %v", err)
-			}
-			res.Body.Close()
-
-			data := make(map[string]any)
-			json.Unmarshal(body, &data)
-
-			chainStatus := data["statistics"].(map[string]any)["status"].(string)
-			fmt.Printf("Chain Status: %v", chainStatus)
-
-			if chainStatus == "CHAIN_STATUS_REPLAYING" {
-				fmt.Printf("Core node is replaying the chain...\n")
-				b.isReplaying = true
-				for topic := range b.topicSet {
-					b.pm.blockPersistenceReady[topic] = false
-					b.pm.blockPersisters[topic].Pause()
-				}
-			} else if chainStatus == "CHAIN_STATUS_CONNECTED" {
-				fmt.Printf("Core node has finished replaying.\n")
-				b.isReplaying = false
-			} else if chainStatus == "CHAIN_STATUS_DISCONNECTED" {
-				fmt.Printf("Core node is disconnected.")
-				b.isReplaying = true
-				for topic := range b.topicSet {
-					b.pm.blockPersistenceReady[topic] = false
-					b.pm.blockPersisters[topic].Pause()
-				}
-			}
-		}
-
 	}()
 
 }
@@ -372,8 +336,8 @@ func (b Broker) distribute(wg *sync.WaitGroup, deChan chan *eventspb.BusEvent) {
 	go func() {
 		defer wg.Done()
 		for evt := range deChan {
-			fmt.Printf("Event ID: %v\n", evt.Id)
-			fmt.Printf("Event Type: %v\n", evt.Type)
+			// fmt.Printf("Event ID: %v\n", evt.Id)
+			// fmt.Printf("Event Type: %v\n", evt.Type)
 			evtType := evt.Type // Get type of evt
 			// jsonEvtBytes, err := json.Marshal(evt) // Convert each event into JSON
 			// if err != nil {
@@ -475,6 +439,9 @@ func (b Broker) start() {
 
 	wg := &sync.WaitGroup{}
 	wg.Add(3)
+
+	// Init database
+	b.pm.pgClient.InitDb()
 
 	// Start kafka send loop
 	b.kc.startSendLoop()

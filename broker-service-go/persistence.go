@@ -70,6 +70,11 @@ func (client *pgClient) Exec(queryStr string, args ...interface{}) (pgconn.Comma
 func (client *pgClient) InitDb() pgconn.CommandTag {
 
 	// Create helper functions
+	query := client.generalQueries[pgQueryType_CreateGeneralFuncs]
+	createFuncsCommandTag, err := client.Exec(query.String)
+	if err != nil {
+		log.Fatalf("Failed to create database helper funcs: %v", err)
+	}
 
 	// List existing tables
 	listTablesQuery := "SELECT * FROM information_schema.tables"
@@ -93,6 +98,13 @@ func (client *pgClient) InitDb() pgconn.CommandTag {
 	}
 
 	// Create all required hypertables and temp tables, skipping tables that are already present.
+	tx, err := client.pool.Begin(context.Background())
+	for topic, query := range client.topicQueries[pgQueryType_CreateTables] {
+		_, err := tx.Exec(context.Background(), query.String)
+		if err != nil {
+			log.Fatalf("Failed to create tables for topic: %v: %v", topic, err)
+		}
+	}
 
 	// Create continuous aggregates for new hypertables
 
@@ -101,6 +113,8 @@ func (client *pgClient) InitDb() pgconn.CommandTag {
 
 type PersistenceManager interface {
 	FormatBusEvent(*eventspb.BusEvent) []FormattedEvent
+	// PrepareForBlockPeristence() // Waits for batch persistence to be complete then starts block persistence.
+	AllTopicsReadyForBlockInserts() bool
 
 	// Workflow for event persistence
 	//	- Get events from channel
@@ -110,15 +124,14 @@ type PersistenceManager interface {
 }
 
 type persistenceManager struct {
-	broker                *Broker
-	pgClient              *pgClient
-	recvChs               map[string]chan *eventspb.BusEvent
-	eventBatches          map[string][]FormattedEvent
-	blockBatches          map[string]map[int64]*blockBatch
-	blockPersistenceReady map[string]bool
-	batchPersisters       map[string]*batchPersister
-	blockPersisters       map[string]*blockPersister
-	recentBlocks          map[string]*recentBlock
+	broker          *Broker
+	pgClient        *pgClient
+	recvChs         map[string]chan *eventspb.BusEvent
+	eventBatches    map[string][]FormattedEvent
+	blockBatches    map[string]map[int64]*blockBatch
+	batchPersisters map[string]*batchPersister
+	blockPersisters map[string]*blockPersister
+	recentBlocks    map[string]*recentBlock
 }
 
 type recentBlock struct {
@@ -179,12 +192,11 @@ func newPersistenceManager(b *Broker) PersistenceManager {
 		pgClient: newPostgresClient(b).(*pgClient),
 		recvChs:  b.topicChans,
 		// recvChs:               make(map[string]chan *eventspb.BusEvent),
-		eventBatches:          make(map[string][]FormattedEvent),
-		blockBatches:          make(map[string]map[int64]*blockBatch),
-		blockPersistenceReady: make(map[string]bool),
-		batchPersisters:       make(map[string]*batchPersister),
-		blockPersisters:       make(map[string]*blockPersister),
-		recentBlocks:          make(map[string]*recentBlock),
+		eventBatches:    make(map[string][]FormattedEvent),
+		blockBatches:    make(map[string]map[int64]*blockBatch),
+		batchPersisters: make(map[string]*batchPersister),
+		blockPersisters: make(map[string]*blockPersister),
+		recentBlocks:    make(map[string]*recentBlock),
 	}
 
 	// Create persisters
@@ -201,7 +213,7 @@ func newBatchPersister(pm *persistenceManager, topic string) BatchPersister {
 		pm:        pm,
 		topic:     topic,
 		controlCh: make(chan string),
-		persistCh: make(chan []FormattedEvent),
+		persistCh: make(chan []FormattedEvent, 1000),
 		p:         &persister{pm: pm, topic: topic},
 	}
 }
@@ -211,7 +223,7 @@ func newBlockPersister(pm *persistenceManager, topic string) BlockPersister {
 		pm:        pm,
 		topic:     topic,
 		controlCh: make(chan string),
-		persistCh: make(chan *blockBatch),
+		persistCh: make(chan *blockBatch, 10000),
 		p:         &persister{pm: pm, topic: topic},
 	}
 }
@@ -233,10 +245,24 @@ func (bp *batchPersister) Start() {
 			default:
 				if bp.status == "running" {
 					// Do work here
-					commandTag, rowCount, err := bp.p.Persist(<-bp.persistCh)
+
+					block := <-bp.persistCh
+
+					// if bp.pm.blockPersisters[bp.topic].IsRunning() {
+					// 	bp.pm.blockPersisters[bp.topic].Pause()
+					// }
+
+					commandTag, rowCount, err := bp.p.Persist(block)
 					if err != nil {
-						log.Printf("Error persisting batch for %v topic: %v\n", bp.topic, err)
+						// Let's make it a log.Fatal because if we miss events all the data will be wrong
+						log.Fatalf("Error persisting batch for %v topic: %v\n", bp.topic, err)
 					}
+
+					// if len(bp.persistCh) == 0 && !bp.pm.broker.isReplaying && len(bp.pm.eventBatches[bp.topic]) == 0 {
+					// 	// Topic is cleared, unpause blockPersister for topic.
+					// 	bp.pm.blockPersisters[bp.topic].Unpause()
+					// }
+
 					fmt.Printf("Count of rows inserted: %v", rowCount)
 					fmt.Printf("Count of rows affected: %v", commandTag.RowsAffected()) // Only works for certain topics
 				}
@@ -245,6 +271,9 @@ func (bp *batchPersister) Start() {
 	}()
 }
 
+// Note: Consider the idea that we don't need to pause the block persisters as long as we can block persistence
+//
+//	notificaitons to the streaming API
 func (bp *blockPersister) Start() {
 	bp.status = "running"
 	go func() {
@@ -263,23 +292,26 @@ func (bp *blockPersister) Start() {
 				if bp.status == "running" {
 					// Do work here
 					block := <-bp.persistCh
-					commandTag, copyCount, err := bp.p.Persist(block.events)
+					commandTag, rowCount, err := bp.p.Persist(block.events)
 					// Notify streaming API through kafka of block insertion success/failure for topic.
+					allTopicsReady := bp.pm.AllTopicsReadyForBlockInserts()
 					if err != nil {
-						log.Printf("Error persisting block batch for %v topic: %v\n", bp.topic, err)
-						msg := kafka.Message{
-							Topic: "persistence_status",
-							Value: []byte(fmt.Sprintf(`{ "topic": "%v", "height": "%v", "status": "failure" }`, bp.topic, block.height)),
+						log.Fatalf("Error persisting block batch for %v topic: %v\n", bp.topic, err)
+						if allTopicsReady && !bp.pm.broker.isReplaying { // Only notify API on inserts once all topics are ready
+							msg := kafka.Message{
+								Topic: "persistence_status",
+								Value: []byte(fmt.Sprintf(`{ "topic": "%v", "height": "%v", "status": "failure" }`, bp.topic, block.height)),
+							}
+							bp.pm.broker.kc.kafkaMsgCh <- msg
 						}
-						bp.pm.broker.kc.kafkaMsgCh <- msg
-					} else {
+					} else if allTopicsReady && !bp.pm.broker.isReplaying {
 						msg := kafka.Message{
 							Topic: "persistence_status",
 							Value: []byte(fmt.Sprintf(`{ "topic": "%v", "height": "%v", "status": "success" }`, bp.topic, block.height)),
 						}
 						bp.pm.broker.kc.kafkaMsgCh <- msg
 					}
-					fmt.Printf("Count of rows copied: %v", copyCount)
+					fmt.Printf("Count of rows copied: %v", rowCount)
 					fmt.Printf("Count of rows affected: %v", commandTag.RowsAffected()) // Only works for certain topics
 
 				}
@@ -365,11 +397,11 @@ func (p *persister) Persist(batch []FormattedEvent) (pgconn.CommandTag, int64, e
 			}
 			formattedAssetUpdates = append(formattedAssetUpdates, batch[i].(*formattedEvent).Event.(*formattedAssetUpdate))
 		}
-		commandTag, copyCount, err := p.InsertAssetUpdates(formattedAssetUpdates)
+		commandTag, rowCount, err := p.InsertAssetUpdates(formattedAssetUpdates)
 		if err != nil {
 			err = fmt.Errorf("error during CopyFrom operation for asset updates: %v", err)
 		}
-		return commandTag, copyCount, err
+		return commandTag, rowCount, err
 	case FormattedEventType_MarketUpdate:
 		formattedMarketUpdates := []*formattedMarketUpdate{}
 		for i, evt := range batch {
@@ -378,11 +410,11 @@ func (p *persister) Persist(batch []FormattedEvent) (pgconn.CommandTag, int64, e
 			}
 			formattedMarketUpdates = append(formattedMarketUpdates, batch[i].(*formattedEvent).Event.(*formattedMarketUpdate))
 		}
-		commandTag, copyCount, err := p.InsertMarketUpdates(formattedMarketUpdates)
+		commandTag, rowCount, err := p.InsertMarketUpdates(formattedMarketUpdates)
 		if err != nil {
 			err = fmt.Errorf("error during CopyFrom operation for market updates: %v", err)
 		}
-		return commandTag, copyCount, err
+		return commandTag, rowCount, err
 	case FormattedEventType_MarketData:
 		fmd := []*formattedMarketData{}
 		for i, evt := range batch {
@@ -404,11 +436,11 @@ func (p *persister) Persist(batch []FormattedEvent) (pgconn.CommandTag, int64, e
 			}
 			fsl = append(fsl, batch[i].(*formattedEvent).Event.(*formattedStakeLinking))
 		}
-		commandTag, copyCount, err := p.InsertStakeLinkings(fsl)
+		commandTag, rowCount, err := p.InsertStakeLinkings(fsl)
 		if err != nil {
 			err = fmt.Errorf("error during CopyFrom operation for stake linkings: %v", err)
 		}
-		return commandTag, copyCount, err
+		return commandTag, rowCount, err
 	}
 
 	// queryStr := bp.GetInsertQuery(batch)
@@ -1082,7 +1114,7 @@ func (m *persistenceManager) Start() {
 
 			m.batchPersisters[topic].Start()
 			m.blockPersisters[topic].Start()
-			m.blockPersisters[topic].Pause() // Pause until Vega node is done replaying and previous batches are inserted.
+			// m.blockPersisters[topic].Pause() // Pause until Vega node is done replaying and previous batches are inserted.
 
 			batchPersistTicker := time.NewTicker(time.Millisecond * 500)
 
@@ -1091,15 +1123,13 @@ func (m *persistenceManager) Start() {
 				fmt.Printf("Starting routine to fetch events for %v topic\n ", topic)
 				for {
 					evt := <-m.recvChs[topic]
-					fmt.Printf("Recieved event: %+v\n", evt)
-					fmt.Printf("evt.Type: %v\n", evt.Type)
+					fmt.Printf("Recieved event with type %v on topic: %v\n", evt.Type, topic)
 					idParts := strings.Split(evt.Id, "-")
 					height, err := strconv.ParseInt(idParts[0], 10, 64)
 					if err != nil {
 						log.Printf("Could not convert height to int64: %v", err)
 					}
-					fmt.Printf("evt Height: %v\n", height)
-					fmt.Printf("evt Index: %v\n", idParts[1])
+					fmt.Printf("evt Height: %v evt Index: %v\n", height, idParts[1])
 
 					if m.broker.isReplaying {
 						m.eventBatches[topic] = append(m.eventBatches[topic], m.FormatBusEvent(evt)...)
@@ -1116,6 +1146,9 @@ func (m *persistenceManager) Start() {
 							height: height,
 							events: []FormattedEvent{},
 						}
+						bb := evt.GetBeginBlock()
+						m.recentBlocks[idParts[0]] = &recentBlock{height: idParts[0], timestamp: bb.Timestamp, ledgerMovementCount: 0}
+						delete(m.recentBlocks, strconv.Itoa(int(height-50000)))
 					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_BEGIN_BLOCK {
 						bb := evt.GetBeginBlock()
 						m.recentBlocks[idParts[0]] = &recentBlock{height: idParts[0], timestamp: bb.Timestamp, ledgerMovementCount: 0}
@@ -1125,55 +1158,52 @@ func (m *persistenceManager) Start() {
 					if !m.broker.isReplaying && evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_END_BLOCK {
 						// Queue for block inserts
 						m.blockPersisters[topic].persistCh <- m.blockBatches[topic][height]
-						delete(m.blockBatches, topic)
+						delete(m.blockBatches[topic], height)
 					}
 
 				}
 			}(topic)
 
-			// Spawn a goroutine for batch persistence
+			// Spawn a goroutine to flush batches for persistence
 			go func(topic string) {
-				for {
-					select {
-					case <-batchPersistTicker.C:
-						// Flush the batch, if no batch and replay is done then set block persistence ready for that topic.
-						if len(m.batchPersisters[topic].persistCh) == 0 && !m.broker.isReplaying && len(m.eventBatches[topic]) == 0 {
-							m.blockPersistenceReady[topic] = true
-						}
-						if len(m.eventBatches[topic]) == 0 {
-							continue
-						}
-						m.batchPersisters[topic].persistCh <- m.eventBatches[topic]
-						m.eventBatches[topic] = nil
-					case batch := <-m.batchPersisters[topic].persistCh:
-						if m.blockPersisters[topic].IsRunning() {
-							m.blockPersisters[topic].Pause()
-						}
-						m.batchPersisters[topic].persistCh <- batch
-						if len(m.batchPersisters[topic].persistCh) == 0 && !m.broker.isReplaying && len(m.eventBatches[topic]) == 0 {
-							// Finished inserting all batch events, start block by block inserts for topic.
-							m.blockPersisters[topic].Unpause()
-
-							m.blockPersistenceReady[topic] = true
-							ready := true
-							for _, v := range m.blockPersistenceReady {
-								if !v {
-									ready = false
-								}
-							}
-							if ready {
-								// All topics caught up.
-								// Notify streaming API that it can begin
-							}
-
-						}
+				for range batchPersistTicker.C {
+					// Flush the batch
+					if len(m.eventBatches[topic]) == 0 {
+						continue
 					}
+					m.batchPersisters[topic].persistCh <- m.eventBatches[topic]
+					m.eventBatches[topic] = nil
 				}
 			}(topic)
 
 		}
 	}()
 
+}
+
+func (m *persistenceManager) AllTopicsReadyForBlockInserts() (ready bool) {
+
+	// How are we going to determine that this is the case?
+	//	- There are no events/batches left in any persistence channels or slices.
+	//	&&
+	//	- The most recent set of block inserts have all completed
+
+	for topic := range m.broker.topicSet {
+		if len(m.eventBatches[topic]) != 0 {
+			return false
+		}
+		if len(m.batchPersisters[topic].persistCh) != 0 {
+			return false
+		}
+		if len(m.blockBatches[topic]) != 0 {
+			return false
+		}
+		if len(m.blockPersisters[topic].persistCh) != 0 {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (m *persistenceManager) FormatBusEvent(evt *eventspb.BusEvent) (f []FormattedEvent) {
@@ -1351,19 +1381,43 @@ func (m *persistenceManager) formatLedgerMovements(evt *eventspb.BusEvent) (form
 
 	for _, elem := range lm {
 		for _, e := range elem.Entries {
+			fmt.Printf("Evt: %+v", e)
 			synthTimestamp := e.Timestamp + m.recentBlocks[height].ledgerMovementCount
 			m.recentBlocks[height].ledgerMovementCount++
+
+			var fao, fam, tao, tam string
+			if e.FromAccount.Owner == nil {
+				fao = ""
+			} else {
+				fao = *e.FromAccount.Owner
+			}
+			if e.FromAccount.MarketId == nil {
+				fam = ""
+			} else {
+				fam = *e.FromAccount.MarketId
+			}
+			if e.ToAccount.Owner == nil {
+				tao = ""
+			} else {
+				tao = *e.ToAccount.Owner
+			}
+			if e.ToAccount.MarketId == nil {
+				tam = ""
+			} else {
+				tam = *e.ToAccount.MarketId
+			}
+
 			formattedEvents = append(formattedEvents, &formattedEvent{
 				Type: FormattedEventType_LedgerMovement,
 				Event: &formattedLedgerMovement{
 					FromAccountAsset:   e.FromAccount.AssetId,
-					FromAccountOwner:   *e.FromAccount.Owner,
+					FromAccountOwner:   fao,
 					FromAccountType:    e.FromAccount.Type.String(),
-					FromAccountMarket:  *e.FromAccount.MarketId,
+					FromAccountMarket:  fam,
 					ToAccountAsset:     e.ToAccount.AssetId,
-					ToAccountOwner:     *e.ToAccount.Owner,
+					ToAccountOwner:     tao,
 					ToAccountType:      e.ToAccount.Type.String(),
-					ToAccountMarket:    *e.ToAccount.MarketId,
+					ToAccountMarket:    tam,
 					Amount:             e.Amount,
 					Type:               e.Type.String(),
 					Timestamp:          e.Timestamp,
