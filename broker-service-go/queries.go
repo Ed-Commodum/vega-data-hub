@@ -9,9 +9,10 @@ const (
 	pgQueryType_Unspecified  pgQueryType = iota
 	pgQueryType_CreateTables             // Creates hypertables and indexes
 	pgQueryType_CreateContinuousAggregates
-	pgQueryType_Insert             // Inserts from temp table to main table
-	pgQueryType_Upsert             // Upserts to main table
-	pgQueryType_Truncate           // Truncates temp table
+	pgQueryType_Insert   // Inserts from temp table to main table
+	pgQueryType_Upsert   // Upserts to main table
+	pgQueryType_Truncate // Truncates temp table
+	pgQueryType_CreateCurrentTimeNsFunc
 	pgQueryType_CreateGeneralFuncs // Creates nanosecond time now func and other useful funcs
 )
 
@@ -101,16 +102,16 @@ func GetPgQueries() (topicQueries map[pgQueryType]map[string]pgTopicQuery, gener
 		String: pgQueryString_CreateGeneralFuncs,
 	}
 
+	generalQueries[pgQueryType_CreateCurrentTimeNsFunc] = pgGeneralQuery{
+		Type:   pgQueryType_CreateCurrentTimeNsFunc,
+		String: pgQueryString_CreateCurrentTimeNsFunc,
+	}
+
 	return topicQueries, generalQueries
 }
 
 // Create funcs
 const pgQueryString_CreateGeneralFuncs = `
-CREATE OR REPLACE FUNCTION current_time_ns() RETURNS BIGINT
-LANGUAGE SQL STABLE AS $$
-SELECT (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000000000)::bigint
-$$;
-
 CREATE OR REPLACE FUNCTION most_recent_trade_time(in market_id TEXT) RETURNS BIGINT
 AS $$
     SELECT synth_timestamp
@@ -129,6 +130,14 @@ AS $$
     LIMIT 1
 $$ LANGUAGE SQL;
 
+`
+
+// Create current_time_ns func
+const pgQueryString_CreateCurrentTimeNsFunc = `
+CREATE OR REPLACE FUNCTION current_time_ns() RETURNS BIGINT
+LANGUAGE SQL STABLE AS $$
+SELECT (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000000000)::bigint
+$$;
 `
 
 // Create Tables
@@ -162,11 +171,11 @@ const (
 	SELECT create_hypertable('trades', 'synth_timestamp', chunk_time_interval => 604800000000000, if_not_exists => TRUE);
 	SELECT set_integer_now_func('trades', 'current_time_ns');
 
-	CREATE INDEX trades_timestamp_idx 					 ON trades(timestamp);
-	CREATE INDEX trades_synth_ts_idx  					 ON trades(synth_timestamp);
-	CREATE INDEX trades_party_id_idx  					 ON trades(party_id, synth_timestamp);
-	CREATE INDEX trades_market_id_party_id_idx 			 ON trades(market_id, party_id, synth_timestamp);
-	CREATE INDEX trades_market_id_party_id_aggressor_idx ON trades(market_id, party_id, aggressor, synth_timestamp);
+	CREATE INDEX trades_timestamp_idx 					 	 ON trades(timestamp);
+	CREATE INDEX trades_synth_ts_idx  					 	 ON trades(synth_timestamp);
+	CREATE INDEX trades_buyer_seller_idx  				 	 ON trades(buyer, seller, synth_timestamp);
+	CREATE INDEX trades_market_id_buyer_seller_idx 		 	 ON trades(market_id, buyer, seller, synth_timestamp);
+	CREATE INDEX trades_market_id_buyer_seller_aggressor_idx ON trades(market_id, buyer, seller, aggressor, synth_timestamp);
 
 	`
 	pgQueryString_CreateTables_Orders = `
@@ -254,7 +263,7 @@ const (
 	SELECT create_hypertable('market_data_updates', 'timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
 	SELECT set_integer_now_func('market_data_updates', 'current_time_ns');
 
-	CREATE INDEX market_data_updates_market_id_timestamp_idx ON market_data(market_id, timestamp);
+	CREATE INDEX market_data_updates_market_id_timestamp_idx ON market_data_updates(market_id, timestamp);
 
 	`
 	pgQueryString_CreateTables_LedgerMovements = `
@@ -324,7 +333,8 @@ const (
 		sum(size) AS volume_contracts,
 		sum(size * price) AS volume
 	FROM trades
-	GROUP BY market_id, time_bucket(300000000000, synth_timestamp);,
+	GROUP BY market_id, time_bucket(300000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('candles_5m',
 	start_offset => '2592000000000000'::bigint,
@@ -344,7 +354,8 @@ const (
 		sum(size) AS volume_contracts,
 		sum(size * price) AS volume
 	FROM trades
-	GROUP BY market_id, time_bucket(3600000000000, synth_timestamp);,
+	GROUP BY market_id, time_bucket(3600000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('candles_1h',
 	start_offset => 2592000000000000,
@@ -364,7 +375,8 @@ const (
 		sum(size) AS volume_contracts,
 		sum(size * price) AS volume
 	FROM trades
-	GROUP BY market_id, time_bucket(86400000000000, synth_timestamp);,
+	GROUP BY market_id, time_bucket(86400000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('candles_1d',
 	start_offset => 2592000000000000,
@@ -390,7 +402,8 @@ const (
 		avg(size * price) FILTER (WHERE aggressor = 'SIDE_BUY') AS avg_buy_size,
 		avg(size * price) FILTER (WHERE aggressor = 'SIDE_SELL') AS avg_sell_size
 	FROM trades
-	GROUP BY market_id, time_bucket(300000000000, synth_timestamp);
+	GROUP BY market_id, time_bucket(300000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('taker_data_5m',
 	start_offset => '2592000000000000'::bigint,
@@ -415,7 +428,8 @@ const (
 		avg(size * price) FILTER (WHERE aggressor = 'SIDE_BUY') AS avg_buy_size,
 		avg(size * price) FILTER (WHERE aggressor = 'SIDE_SELL') AS avg_sell_size
 	FROM trades
-	GROUP BY market_id, time_bucket(3600000000000, synth_timestamp);
+	GROUP BY market_id, time_bucket(3600000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('taker_data_1h',
 	start_offset => '2592000000000000'::bigint,
@@ -440,7 +454,8 @@ const (
 		avg(size * price) FILTER (WHERE aggressor = 'SIDE_BUY') AS avg_buy_size,
 		avg(size * price) FILTER (WHERE aggressor = 'SIDE_SELL') AS avg_sell_size
 	FROM trades
-	GROUP BY market_id, time_bucket(86400000000000, synth_timestamp);
+	GROUP BY market_id, time_bucket(86400000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('taker_data_1d',
 	start_offset => 2592000000000000,
@@ -456,7 +471,8 @@ const (
 		max(timestamp) AS timestamp,
 		sum(buyer_fee_infrastructure + seller_fee_infrastructure) as infrastructure_fee_paid
 	FROM trades
-	GROUP BY market_id, time_bucket(300000000000, synth_timestamp);
+	GROUP BY market_id, time_bucket(300000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('infra_fees_by_market_5m',
 	start_offset => 2592000000000000,
@@ -474,7 +490,8 @@ const (
 		sum(buyer_fee_infrastructure) AS buyer_fee_infrastructure,
 		sum(seller_fee_infrastructure) AS seller_fee_infrastructure
 	FROM trades
-	GROUP BY market_id, buyer, seller, time_bucket(300000000000, synth_timestamp);
+	GROUP BY market_id, buyer, seller, time_bucket(300000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('infra_fees_by_party_5m',
 	start_offset => 2592000000000000,
@@ -497,43 +514,10 @@ const (
 		sum(buyer_fee_infrastructure + buyer_fee_maker + buyer_fee_liquidity) AS buyer_fee,
 		sum(seller_fee_infrastructure + seller_fee_maker + seller_fee_liquidity) AS seller_fee
 	FROM trades
-	GROUP BY market_id, buyer, seller, time_bucket(300000000000, synth_timestamp);
+	GROUP BY market_id, buyer, seller, time_bucket(300000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('fees_paid_5m',
-	start_offset => 2592000000000000,
-	end_offset => 60000000000,
-	schedule_interval => INTERVAL '1 minute');
-	
-	
-	CREATE MATERIALIZED VIEW fees_paid_1h
-	WITH (timescaledb.continuous) AS 
-	SELECT market_id,
-		time_bucket(3600000000000, bucket) AS bucket,
-		buyer AS buyer,
-		seller AS seller,
-		sum(buyer_fee) AS buyer_fee,
-		sum(seller_fee) AS seller_fee
-	FROM fees_paid_5m
-	GROUP BY market_id, buyer, seller, time_bucket(3600000000000, bucket);
-	
-	SELECT add_continuous_aggregate_policy('fees_paid_1h',
-	start_offset => 2592000000000000,
-	end_offset => 60000000000,
-	schedule_interval => INTERVAL '1 minute');
-	
-	
-	CREATE MATERIALIZED VIEW fees_paid_1d
-	WITH (timescaledb.continuous) AS 
-	SELECT market_id,
-		time_bucket(86400000000000, bucket) AS bucket,
-		buyer AS buyer,
-		seller AS seller,
-		sum(buyer_fee) AS buyer_fee,
-		sum(seller_fee) AS seller_fee
-	FROM fees_paid_1h
-	GROUP BY market_id, buyer, seller, time_bucket(86400000000000, bucket);
-	
-	SELECT add_continuous_aggregate_policy('fees_paid_1d',
 	start_offset => 2592000000000000,
 	end_offset => 60000000000,
 	schedule_interval => INTERVAL '1 minute');
@@ -552,7 +536,8 @@ const (
 			seller_fee_maker + seller_fee_liquidity) AS fees_paid,
 		max(timestamp) as timestamp
 	FROM trades
-	GROUP BY market_id, time_bucket(300000000000, synth_timestamp);
+	GROUP BY market_id, time_bucket(300000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('market_data_5m',
 	start_offset => 2592000000000000,
@@ -573,7 +558,8 @@ const (
 			seller_fee_maker + seller_fee_liquidity) AS fees_paid,
 		max(timestamp) as timestamp
 	FROM trades
-	GROUP BY market_id, time_bucket(3600000000000, synth_timestamp);
+	GROUP BY market_id, time_bucket(3600000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('market_data_1h',
 	start_offset => 2592000000000000,
@@ -594,7 +580,8 @@ const (
 			seller_fee_maker + seller_fee_liquidity) AS fees_paid,
 		max(timestamp) as timestamp
 	FROM trades
-	GROUP BY market_id, time_bucket(86400000000000, synth_timestamp);
+	GROUP BY market_id, time_bucket(86400000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('market_data_1d',
 	start_offset => 2592000000000000,
@@ -624,7 +611,8 @@ const (
 		sum(seller_fee_liquidity) as seller_fee_liquidity,
 		max(timestamp) as timestamp
 	FROM trades
-	GROUP BY market_id, buyer, seller, time_bucket(300000000000, synth_timestamp);
+	GROUP BY market_id, buyer, seller, time_bucket(300000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('party_data_5m',
 	start_offset => 2592000000000000,
@@ -654,7 +642,8 @@ const (
 		sum(seller_fee_liquidity) as seller_fee_liquidity,
 		max(timestamp) as timestamp
 	FROM trades
-	GROUP BY market_id, buyer, seller, time_bucket(3600000000000, synth_timestamp);
+	GROUP BY market_id, buyer, seller, time_bucket(3600000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('party_data_1h',
 	start_offset => 2592000000000000,
@@ -684,7 +673,8 @@ const (
 		sum(seller_fee_liquidity) as seller_fee_liquidity,
 		max(timestamp) as timestamp
 	FROM trades
-	GROUP BY market_id, buyer, seller, time_bucket(86400000000000, synth_timestamp);
+	GROUP BY market_id, buyer, seller, time_bucket(86400000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('party_data_1d',
 	start_offset => 2592000000000000,
@@ -717,7 +707,8 @@ const (
 		min(open_interest) AS low,
 		last(open_interest, timestamp) - first(open_interest, timestamp) AS diff
 	FROM market_data_updates
-	GROUP BY market_id, time_bucket(300000000000, timestamp);
+	GROUP BY market_id, time_bucket(300000000000, timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('open_interest_5m',
 	start_offset => '2592000000000000'::bigint,
@@ -738,7 +729,8 @@ const (
 		min(open_interest) AS low,
 		last(open_interest, timestamp) - first(open_interest, timestamp) AS diff
 	FROM market_data_updates
-	GROUP BY market_id, time_bucket(3600000000000, timestamp);
+	GROUP BY market_id, time_bucket(3600000000000, timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('open_interest_1h',
 	start_offset => '2592000000000000'::bigint,
@@ -759,7 +751,8 @@ const (
 		min(open_interest) AS low,
 		last(open_interest, timestamp) - first(open_interest, timestamp) AS diff
 	FROM market_data_updates
-	GROUP BY market_id, time_bucket(86400000000000, timestamp);
+	GROUP BY market_id, time_bucket(86400000000000, timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('open_interest_1d',
 	start_offset => '2592000000000000'::bigint,
@@ -769,29 +762,6 @@ const (
 		
 	`
 	pgQueryString_CreateContinuousAggregates_LedgerMovements = `
-	
-	CREATE MATERIALIZED VIEW gains_losses_5m
-	WITH (timescaledb.continuous) AS
-	SELECT market_id,
-		time_bucket(300000000000, synth_timestamp) AS bucket,
-		CASE
-			WHEN type = 'TRANSFER_TYPE_MTM_LOSS' THEN from_account_owner
-			WHEN type = 'TRANSFER_TYPE_MTM_WIN' THEN to_account_owner
-			WHEN type = 'TRANSFER_TYPE_LOSS' THEN from_account_owner
-			WHEN type = 'TRANSFER_TYPE_WIN' THEN to_account_owner
-		END as party_id,
-		sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MTM_WIN') as sum_unrealized_gain,
-		sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MTM_LOSS') as sum_unrealized_loss,
-		sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_WIN') AS sum_realized_gain,
-		sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_LOSS') as sum_realized_loss
-	FROM ledger_movements
-	GROUP BY market_id, party_id, time_bucket(300000000000, synth_timestamp);
-	
-	SELECT add_continuous_aggregate_policy('gains_losses_5m',
-	start_offset => '2592000000000000'::bigint,
-	end_offset => '60000000000'::bigint,
-	schedule_interval => INTERVAL '1 minute');
-
 
 	CREATE MATERIALIZED VIEW pnl_deltas_5m
 	WITH (timescaledb.continuous) AS
@@ -808,7 +778,8 @@ const (
 		(sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_WIN') - sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_LOSS')) as realized_delta,
 		last(timestamp, timestamp) as last_timestamp
 	FROM ledger_movements
-	GROUP BY market_id, party_id, time_bucket(300000000000, synth_timestamp);
+	GROUP BY market_id, party_id, time_bucket(300000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('pnl_deltas_5m',
 	start_offset => '2592000000000000'::bigint,
@@ -831,41 +802,10 @@ const (
 		(sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_WIN') - sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_LOSS')) as realized_delta,
 		last(timestamp, timestamp) as last_timestamp
 	FROM ledger_movements
-	GROUP BY market_id, party_id, time_bucket(3600000000000, synth_timestamp);
+	GROUP BY market_id, party_id, time_bucket(3600000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('pnl_deltas_1h',
-	start_offset => '2592000000000000'::bigint,
-	end_offset => '60000000000'::bigint,
-	schedule_interval => INTERVAL '1 minute');
-	
-	
-	CREATE METERIALIZED VIEW margin_additions_5m
-	with (timescaledb.continuous) AS
-	SELECT 
-		to_account_market as market_id,
-		time_bucket(300000000000, synth_timestamp) as bucket,
-		sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MARGIN_LOW') as margin_added,
-		to_account_owner as party
-	FROM ledger_movements
-	GROUP BY market_id, party_id, time_bucket(300000000000, synth_timestamp);
-
-	SELECT add_continuous_aggregate_policy('margin_additions_5m',
-	start_offset => '2592000000000000'::bigint,
-	end_offset => '60000000000'::bigint,
-	schedule_interval => INTERVAL '1 minute');
-	
-	
-	CREATE METERIALIZED VIEW margin_deductions_5m
-	with (timescaledb.continuous) AS
-	SELECT
-		from_account_market as market_id,
-		time_bucket(300000000000, synth_timestamp) as bucket,
-		sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MARGIN_HIGH') as margin_deducted,
-		from_account_owner as party
-	FROM ledger_movements
-	GROUP BY market_id, party_id, time_bucket(300000000000, synth_timestamp);
-	
-	SELECT add_continuous_aggregate_policy('margin_deductions_5m',
 	start_offset => '2592000000000000'::bigint,
 	end_offset => '60000000000'::bigint,
 	schedule_interval => INTERVAL '1 minute');
@@ -883,7 +823,8 @@ const (
 		amount
 	FROM ledger_movements
 	WHERE type = 'TRANSFER_TYPE_DEPOSIT' OR type = 'TRANSFER_TYPE_WITHDRAW'
-	GROUP BY asset, to_account, from_account, type, amount, time_bucket(300000000000, synth_timestamp);
+	GROUP BY asset, to_account, from_account, type, amount, time_bucket(300000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('deposits_withdrawals_5m',
 	start_offset => '2592000000000000'::bigint,
@@ -924,7 +865,8 @@ const (
 			END) AS restored
 	FROM ledger_movements
 	WHERE type = 'TRANSFER_TYPE_DEPOSIT' OR type = 'TRANSFER_TYPE_WITHDRAW' OR type = 'TRANSFER_TYPE_CHECKPOINT_BALANCE_RESTORE'
-	GROUP BY asset, party_id, time_bucket(300000000000, synth_timestamp);
+	GROUP BY asset, party_id, time_bucket(300000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('bridge_diffs_5m',
 	start_offset => '2592000000000000'::bigint,
@@ -964,7 +906,8 @@ const (
 			END) AS restored
 	FROM ledger_movements
 	WHERE type = 'TRANSFER_TYPE_DEPOSIT' OR type = 'TRANSFER_TYPE_WITHDRAW' OR type = 'TRANSFER_TYPE_CHECKPOINT_BALANCE_RESTORE'
-	GROUP BY asset, party_id, time_bucket(3600000000000, synth_timestamp);
+	GROUP BY asset, party_id, time_bucket(3600000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('bridge_diffs_1h',
 	start_offset => '2592000000000000'::bigint,
@@ -1005,7 +948,8 @@ const (
 			END) AS restored
 	FROM ledger_movements
 	WHERE type = 'TRANSFER_TYPE_DEPOSIT' OR type = 'TRANSFER_TYPE_WITHDRAW' OR type = 'TRANSFER_TYPE_CHECKPOINT_BALANCE_RESTORE'
-	GROUP BY asset, party_id, time_bucket(86400000000000, synth_timestamp);
+	GROUP BY asset, party_id, time_bucket(86400000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('bridge_diffs_1d',
 	start_offset => '2592000000000000'::bigint,
@@ -1022,38 +966,14 @@ const (
 			END) as amount_paid,
 		from_account_asset as asset
 	FROM ledger_movements
-	GROUP BY asset, time_bucket(300000000000, synth_timestamp);
+	GROUP BY asset, time_bucket(300000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('infra_fees_by_asset_5m',
 	start_offset => '2592000000000000'::bigint,
 	end_offset => '60000000000'::bigint,
 	schedule_interval => INTERVAL '1 minute');
 	
-	
-	CREATE MATERIALIZED VIEW fees_paid_5m
-	WITH (timescaledb.continuous) AS
-	SELECT
-		time_bucket(300000000000, synth_timestamp) AS bucket,
-		to_account_market AS market_id,
-		from_account_owner AS party_id,
-		last(timestamp, synth_timestamp) AS timestamp,
-		sum(CASE
-				WHEN type = 'TRANSFER_TYPE_MAKER_FEE_PAY' THEN amount ELSE 0
-			END) as maker_fee_paid,
-		sum(CASE
-				WHEN type = 'TRANSFER_TYPE_LIQUIDITY_FEE_PAY' THEN amount ELSE 0
-			END) as liquidity_fee_paid,
-		sum(CASE
-				WHEN type = 'TRANSFER_TYPE_INFRASTRUCTURE_FEE_PAY' THEN amount ELSE 0
-			END) as infrastructure_fee_paid,
-		from_account_asset AS asset
-	FROM ledger_movements
-	GROUP BY market_id, party_id, asset, time_bucket(300000000000, synth_timestamp);
-	
-	SELECT add_continuous_aggregate_policy('fees_paid_5m',
-	start_offset => '2592000000000000'::bigint,
-	end_offset => '60000000000'::bigint,
-	schedule_interval => INTERVAL '1 minute');
 	
 	
 	CREATE MATERIALIZED VIEW fees_earned_5m
@@ -1073,7 +993,8 @@ const (
 			END) AS infrastructure_fee_earned,
 		from_account_asset AS asset
 	FROM ledger_movements
-	GROUP BY party_id, asset, time_bucket(300000000000, synth_timestamp);
+	GROUP BY party_id, asset, time_bucket(300000000000, synth_timestamp)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('fees_earned_5m',
 	start_offset => '2592000000000000'::bigint,
@@ -1083,6 +1004,41 @@ const (
 
 	
 	`
+
+	// ---------- Unused for now, might be useful later ---------- \\
+
+	// CREATE MATERIALIZED VIEW margin_additions_5m
+	// with (timescaledb.continuous) AS
+	// SELECT
+	// 	to_account_market as market_id,
+	// 	time_bucket(300000000000, synth_timestamp) as bucket,
+	// 	sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MARGIN_LOW') as margin_added,
+	// 	to_account_owner as party
+	// FROM ledger_movements
+	// GROUP BY market_id, party_id, time_bucket(300000000000, synth_timestamp)
+	// WITH NO DATA;
+
+	// SELECT add_continuous_aggregate_policy('margin_additions_5m',
+	// start_offset => '2592000000000000'::bigint,
+	// end_offset => '60000000000'::bigint,
+	// schedule_interval => INTERVAL '1 minute');
+
+	// CREATE MATERIALIZED VIEW margin_deductions_5m
+	// with (timescaledb.continuous) AS
+	// SELECT
+	// 	from_account_market as market_id,
+	// 	time_bucket(300000000000, synth_timestamp) as bucket,
+	// 	sum(amount) FILTER (WHERE type = 'TRANSFER_TYPE_MARGIN_HIGH') as margin_deducted,
+	// 	from_account_owner as party
+	// FROM ledger_movements
+	// GROUP BY market_id, party_id, time_bucket(300000000000, synth_timestamp)
+	// WITH NO DATA;
+
+	// SELECT add_continuous_aggregate_policy('margin_deductions_5m',
+	// start_offset => '2592000000000000'::bigint,
+	// end_offset => '60000000000'::bigint,
+	// schedule_interval => INTERVAL '1 minute');
+
 	pgQueryString_CreateContinuousAggregates_StakeLinkings = `
 	
 	CREATE MATERIALIZED VIEW stake_linking_diffs_5m
@@ -1100,7 +1056,8 @@ const (
 			END) AS diff
 	FROM stake_linkings
 	WHERE status = 'STATUS_ACCEPTED'
-	GROUP BY party_id, time_bucket('300000000000'::bigint, ts), eth_addr;
+	GROUP BY party_id, eth_addr, time_bucket('300000000000'::bigint, ts)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('stake_linking_diffs_5m',
 	start_offset => '2592000000000000'::bigint,
@@ -1123,7 +1080,8 @@ const (
 			END) AS diff
 	FROM stake_linkings
 	WHERE status = 'STATUS_ACCEPTED'
-	GROUP BY party_id, time_bucket('3600000000000'::bigint, ts), eth_addr;
+	GROUP BY party_id, eth_addr, time_bucket('3600000000000'::bigint, ts)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('stake_linking_diffs_1h',
 	start_offset => '2592000000000000'::bigint,
@@ -1146,7 +1104,8 @@ const (
 			END) AS diff
 	FROM stake_linkings
 	WHERE status = 'STATUS_ACCEPTED'
-	GROUP BY party_id, time_bucket('86400000000000'::bigint, ts), eth_addr;
+	GROUP BY party_id, eth_addr, time_bucket('86400000000000'::bigint, ts)
+	WITH NO DATA;
 	
 	SELECT add_continuous_aggregate_policy('stake_linking_diffs_1d',
 	start_offset => '2592000000000000'::bigint,

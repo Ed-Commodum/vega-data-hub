@@ -7,9 +7,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgconn"
+	// "github.com/jackc/pgproto3/v2"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/segmentio/kafka-go"
@@ -60,55 +62,104 @@ func (client *pgClient) Close() {
 }
 
 func (client *pgClient) Query(queryStr string, args ...interface{}) (pgx.Rows, error) {
-	return client.pool.Query(context.Background(), queryStr, args)
+	return client.pool.Query(context.Background(), queryStr, args...)
 }
 
 func (client *pgClient) Exec(queryStr string, args ...interface{}) (pgconn.CommandTag, error) {
-	return client.pool.Exec(context.Background(), queryStr, args)
+	return client.pool.Exec(context.Background(), queryStr, args...)
 }
 
-func (client *pgClient) InitDb() pgconn.CommandTag {
+func (client *pgClient) InitDb() {
 
-	// Create helper functions
-	query := client.generalQueries[pgQueryType_CreateGeneralFuncs]
-	createFuncsCommandTag, err := client.Exec(query.String)
-	if err != nil {
-		log.Fatalf("Failed to create database helper funcs: %v", err)
+	tableNameTopicMap := map[string]string{
+		"trades":              "trades",
+		"order_updates":       "orders",
+		"assets":              "assets",
+		"markets":             "markets",
+		"market_data_updates": "market_data",
+		"ledger_movements":    "ledger_movements",
+		"stake_linkings":      "stake_linkings",
 	}
 
-	// List existing tables
-	listTablesQuery := "SELECT * FROM information_schema.tables"
+	tx, _ := client.pool.Begin(context.Background())
+	defer tx.Commit(context.Background())
 
-	rows, err := client.Query(listTablesQuery)
+	// List existing tables
+	listTablesQuery := "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';"
+
+	rows, err := tx.Query(context.Background(), listTablesQuery)
 	if err != nil {
 		log.Fatalf("Failed to get tables from DB: %v\n", err)
 	}
 	defer rows.Close()
 
+	// fieldDescriptions := rows.FieldDescriptions()
+
+	// fmt.Printf("Field Descriptions: %v\n", fieldDescriptions)
+
+	// for _, column := range fieldDescriptions {
+	// 	fmt.Printf("Column name: %v\n", string( column.Name))
+	// 	bytes, _ := column.MarshalJSON()
+	// 	fmt.Printf("column json: %v\n", string(bytes))
+	// }
+
+	var foundNames []interface{}
+	foundNamesTopicMap := map[string]string{}
 	for rows.Next() {
-		values, err := rows.Values()
+		foundNames, err = rows.Values()
 		if err != nil {
 			log.Printf("Failed to get row values: %v\n", err)
 		}
-		fmt.Printf("listTablesQuery result row values: %v\n", values)
+		fmt.Printf("listTablesQuery result row values: %v\n", foundNames)
+		for _, table := range foundNames {
+			tableName := table.(string)
+			foundNamesTopicMap[tableName] = tableNameTopicMap[tableName]
+		}
 	}
 
 	if rows.Err() != nil {
 		log.Printf("Error reading rows: %v\n", rows.Err())
 	}
 
-	// Create all required hypertables and temp tables, skipping tables that are already present.
-	tx, err := client.pool.Begin(context.Background())
-	for topic, query := range client.topicQueries[pgQueryType_CreateTables] {
+	fmt.Printf("foundNamesTopicMap: %v\n", foundNamesTopicMap)
+
+	// Create current_time_ns func
+	query := client.generalQueries[pgQueryType_CreateCurrentTimeNsFunc]
+	_, err = tx.Exec(context.Background(), query.String)
+	if err != nil {
+		log.Fatalf("Failed to create current_time_ns func: %v", err)
+	}
+
+	for name, topic := range tableNameTopicMap {
+		fmt.Printf("name: %v\n", name)
+		fmt.Printf("foundNamesTopicMap[name]: %v\n", foundNamesTopicMap[name])
+		if _, ok := foundNamesTopicMap[name]; ok {
+			continue
+		}
+
+		// Create all required hypertables and temp tables, skipping tables that are already present.
+		query := client.topicQueries[pgQueryType_CreateTables][topic]
 		_, err := tx.Exec(context.Background(), query.String)
 		if err != nil {
 			log.Fatalf("Failed to create tables for topic: %v: %v", topic, err)
 		}
+
+		// Create continuous aggregates for new hypertables
+		query = client.topicQueries[pgQueryType_CreateContinuousAggregates][topic]
+		_, err = tx.Exec(context.Background(), query.String)
+		if err != nil {
+			log.Fatalf("Failed to create continuous aggregates for topic: %v : %v\n", topic, err)
+		}
 	}
 
-	// Create continuous aggregates for new hypertables
+	// Create helper functions
+	query = client.generalQueries[pgQueryType_CreateGeneralFuncs]
+	_, err = tx.Exec(context.Background(), query.String)
+	if err != nil {
+		log.Fatalf("Failed to create database helper funcs: %v", err)
+	}
 
-	return nil
+	fmt.Printf("Database initialized.\n\n")
 }
 
 type PersistenceManager interface {
@@ -127,11 +178,71 @@ type persistenceManager struct {
 	broker          *Broker
 	pgClient        *pgClient
 	recvChs         map[string]chan *eventspb.BusEvent
-	eventBatches    map[string][]FormattedEvent
-	blockBatches    map[string]map[int64]*blockBatch
-	batchPersisters map[string]*batchPersister
-	blockPersisters map[string]*blockPersister
-	recentBlocks    map[string]*recentBlock
+	eventBatches    syncMap[string, []FormattedEvent]
+	blockBatches    syncMap[string, syncMap[int64, *blockBatch]]
+	batchPersisters syncMap[string, *batchPersister]
+	blockPersisters syncMap[string, *blockPersister]
+	recentBlocks    blockMap
+	// recvChs         map[string]chan *eventspb.BusEvent
+	// eventBatches    map[string][]FormattedEvent
+	// blockBatches    map[string]map[int64]*blockBatch
+	// batchPersisters map[string]*batchPersister
+	// blockPersisters map[string]*blockPersister
+	// recentBlocks    map[string]*recentBlock
+}
+
+// type syncMap[T eventspb.BusEvent | []FormattedEvent | blockBatch | syncMap] struct {
+// 	mu   sync.RWMutex
+// 	Type T
+// 	Map  map[string]T
+// }
+
+type syncMap[K comparable, V any] struct { // Only accepts strings as keys
+	mu sync.RWMutex
+	m  map[K]V
+}
+
+func (sm *syncMap[K, V]) Store(key K, value V) {
+	sm.mu.Lock()
+	sm.m[key] = value
+	sm.mu.Unlock()
+}
+
+func (sm *syncMap[K, V]) Get(key K) (value V, ok bool) {
+	sm.mu.RLock()
+	value, ok = sm.m[key]
+	sm.mu.RUnlock()
+	return value, ok
+}
+
+func (sm *syncMap[K, V]) Delete(key K) {
+	sm.mu.Lock()
+	delete(sm.m, key)
+	sm.mu.Unlock()
+}
+
+type blockMap struct {
+	mu sync.RWMutex
+	m  map[string]*recentBlock
+}
+
+func (b *blockMap) Store(key string, value *recentBlock) {
+	b.mu.Lock()
+	b.m[key] = value
+	b.mu.Unlock()
+}
+
+func (b *blockMap) Get(key string) (value *recentBlock, ok bool) {
+	b.mu.RLock()
+	value, ok = b.m[key]
+	b.mu.RUnlock()
+	return value, ok
+}
+
+func (b *blockMap) Delete(key string) {
+	b.mu.Lock()
+	delete(b.m, key)
+	b.mu.Unlock()
 }
 
 type recentBlock struct {
@@ -192,17 +303,37 @@ func newPersistenceManager(b *Broker) PersistenceManager {
 		pgClient: newPostgresClient(b).(*pgClient),
 		recvChs:  b.topicChans,
 		// recvChs:               make(map[string]chan *eventspb.BusEvent),
-		eventBatches:    make(map[string][]FormattedEvent),
-		blockBatches:    make(map[string]map[int64]*blockBatch),
-		batchPersisters: make(map[string]*batchPersister),
-		blockPersisters: make(map[string]*blockPersister),
-		recentBlocks:    make(map[string]*recentBlock),
+		eventBatches: syncMap[string, []FormattedEvent]{
+			mu: sync.RWMutex{},
+			m:  map[string][]FormattedEvent{},
+		},
+		// eventBatches:    make(map[string][]FormattedEvent),
+		blockBatches: syncMap[string, syncMap[int64, *blockBatch]]{
+			mu: sync.RWMutex{},
+			m:  map[string]syncMap[int64, *blockBatch]{},
+		},
+		// blockBatches:    make(map[string]map[int64]*blockBatch),
+		batchPersisters: syncMap[string, *batchPersister]{
+			mu: sync.RWMutex{},
+			m:  map[string]*batchPersister{},
+		},
+		// batchPersisters: make(map[string]*batchPersister),
+		blockPersisters: syncMap[string, *blockPersister]{
+			mu: sync.RWMutex{},
+			m:  map[string]*blockPersister{},
+		},
+		// blockPersisters: make(map[string]*blockPersister),
+		recentBlocks: blockMap{
+			mu: sync.RWMutex{},
+			m:  map[string]*recentBlock{},
+		},
+		// recentBlocks:    make(map[string]*recentBlock),
 	}
 
 	// Create persisters
 	for topic := range b.topicSet {
-		pm.batchPersisters[topic] = newBatchPersister(pm, topic).(*batchPersister)
-		pm.blockPersisters[topic] = newBlockPersister(pm, topic).(*blockPersister)
+		pm.batchPersisters.Store(topic, newBatchPersister(pm, topic).(*batchPersister))
+		pm.blockPersisters.Store(topic, newBlockPersister(pm, topic).(*blockPersister))
 	}
 
 	return pm
@@ -1147,12 +1278,12 @@ func (m *persistenceManager) Start() {
 							events: []FormattedEvent{},
 						}
 						bb := evt.GetBeginBlock()
-						m.recentBlocks[idParts[0]] = &recentBlock{height: idParts[0], timestamp: bb.Timestamp, ledgerMovementCount: 0}
-						delete(m.recentBlocks, strconv.Itoa(int(height-50000)))
+						m.recentBlocks.Store(idParts[0], &recentBlock{height: idParts[0], timestamp: bb.Timestamp, ledgerMovementCount: 0})
+						m.recentBlocks.Delete(strconv.Itoa(int(height - 50000)))
 					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_BEGIN_BLOCK {
 						bb := evt.GetBeginBlock()
-						m.recentBlocks[idParts[0]] = &recentBlock{height: idParts[0], timestamp: bb.Timestamp, ledgerMovementCount: 0}
-						delete(m.recentBlocks, strconv.Itoa(int(height-50000)))
+						m.recentBlocks.Store(idParts[0], &recentBlock{height: idParts[0], timestamp: bb.Timestamp, ledgerMovementCount: 0})
+						m.recentBlocks.Delete(strconv.Itoa(int(height - 50000)))
 					}
 
 					if !m.broker.isReplaying && evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_END_BLOCK {
@@ -1314,7 +1445,11 @@ func (m *persistenceManager) formatOrderUpdate(evt *eventspb.BusEvent) (f *forma
 	if err != nil {
 		log.Printf("Could not convert evtIndex to int64: %v", err)
 	}
-	blockTs := m.recentBlocks[idParts[0]].timestamp
+	block, ok := m.recentBlocks.Get(idParts[0])
+	if !ok {
+		log.Fatalf("Failed to get recent block of height: %v when formatting order update", idParts[0])
+	}
+	blockTs := block.timestamp
 	synthTimestamp := blockTs + evtIndex
 
 	return &formattedEvent{
@@ -1347,7 +1482,11 @@ func (m *persistenceManager) formatExpiredOrders(evt *eventspb.BusEvent) (format
 	if err != nil {
 		log.Printf("Could not convert evtIndex to int64: %v", err)
 	}
-	blockTs := m.recentBlocks[idParts[0]].timestamp
+	block, ok := m.recentBlocks.Get(idParts[0])
+	if !ok {
+		log.Fatalf("Failed to get recent block of height: %v when formatting expired orders", idParts[0])
+	}
+	blockTs := block.timestamp
 	synthTimestamp := blockTs + evtIndex
 
 	for _, id := range eo.OrderIds {
@@ -1382,8 +1521,12 @@ func (m *persistenceManager) formatLedgerMovements(evt *eventspb.BusEvent) (form
 	for _, elem := range lm {
 		for _, e := range elem.Entries {
 			fmt.Printf("Evt: %+v", e)
-			synthTimestamp := e.Timestamp + m.recentBlocks[height].ledgerMovementCount
-			m.recentBlocks[height].ledgerMovementCount++
+			block, ok := m.recentBlocks.Get(height)
+			if !ok {
+				log.Fatalf("Failed to get recent block of height: %v when formatting ledger movements", height)
+			}
+			synthTimestamp := e.Timestamp + block.ledgerMovementCount
+			block.ledgerMovementCount++
 
 			var fao, fam, tao, tam string
 			if e.FromAccount.Owner == nil {

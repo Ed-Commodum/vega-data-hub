@@ -244,7 +244,7 @@ func (b Broker) monitorCoreNodeChainStatus() {
 			currentTime := data["statistics"].(map[string]any)["currentTime"].(string)
 			vegaTime := data["statistics"].(map[string]any)["vegaTime"].(string)
 
-			layout := "2006-01-02T15:04:05.000000000Z"
+			layout := "2006-01-02T15:04:05Z"
 			cTime, err := time.Parse(layout, currentTime)
 			if err != nil {
 				log.Fatalf("Failed to parse current time from vega node statistics endpoint: %v", err)
