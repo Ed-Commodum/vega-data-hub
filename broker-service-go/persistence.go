@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgconn"
 	// "github.com/jackc/pgproto3/v2"
+	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/segmentio/kafka-go"
@@ -739,9 +740,9 @@ func (p *persister) InsertTrades(batch []*formattedTrade) (pgconn.CommandTag, in
 	}
 
 	// Insert to main table
-	commandTag, err := tx.Exec(ctx, p.pm.pgClient.topicQueries[pgQueryType_Upsert][p.topic].String)
+	commandTag, err := tx.Exec(ctx, p.pm.pgClient.topicQueries[pgQueryType_Insert][p.topic].String)
 	if err != nil {
-		log.Fatalf("error: tx.Exec failed: failed to upsert trades: %v", err)
+		log.Fatalf("error: tx.Exec failed: failed to insert trades: %v", err)
 	}
 
 	// Truncate temp table
@@ -789,9 +790,9 @@ func (p *persister) InsertOrderUpdates(batch []*formattedOrderUpdate) (pgconn.Co
 	}
 
 	// Insert to main table
-	commandTag, err := tx.Exec(ctx, p.pm.pgClient.topicQueries[pgQueryType_Upsert][p.topic].String)
+	commandTag, err := tx.Exec(ctx, p.pm.pgClient.topicQueries[pgQueryType_Insert][p.topic].String)
 	if err != nil {
-		log.Fatalf("error: tx.Exec failed: failed to upsert order updates: %v", err)
+		log.Fatalf("error: tx.Exec failed: failed to insert order updates: %v", err)
 	}
 
 	// Truncate temp table
@@ -830,7 +831,13 @@ func (p *persister) InsertLedgerMovements(batch []*formattedLedgerMovement) (pgc
 		}),
 	)
 	if err != nil {
+		for _, item := range batch {
+			log.Printf("Ledger movement: %+v\n", *item)
+		}
 		log.Fatalf("error: pool.CopyFrom failed: failed to copy ledger movements: %v", err)
+	} else {
+		fmt.Printf("Copied rows!\n")
+		fmt.Printf("Row Count: %v\n", copyCount)
 	}
 
 	// Begin transaction
@@ -840,9 +847,9 @@ func (p *persister) InsertLedgerMovements(batch []*formattedLedgerMovement) (pgc
 	}
 
 	// Insert to main table
-	commandTag, err := tx.Exec(context.Background(), p.pm.pgClient.topicQueries[pgQueryType_Upsert][p.topic].String)
+	commandTag, err := tx.Exec(context.Background(), p.pm.pgClient.topicQueries[pgQueryType_Insert][p.topic].String)
 	if err != nil {
-		log.Fatalf("error: tx.Exec failed: failed to upsert ledger movements: %v", err)
+		log.Fatalf("error: tx.Exec failed: failed to insert ledger movements: %v", err)
 	}
 
 	// Truncate temp table
@@ -969,9 +976,9 @@ func (p *persister) InsertMarketData(batch []*formattedMarketData) (pgconn.Comma
 	}
 
 	// Insert to main table
-	commandTag, err := tx.Exec(context.Background(), p.pm.pgClient.topicQueries[pgQueryType_Upsert][p.topic].String)
+	commandTag, err := tx.Exec(context.Background(), p.pm.pgClient.topicQueries[pgQueryType_Insert][p.topic].String)
 	if err != nil {
-		log.Fatalf("error: tx.Exec failed: failed to upsert market data: %v", err)
+		log.Fatalf("error: tx.Exec failed: failed to insert market data: %v", err)
 	}
 
 	// Truncate temp table
@@ -1146,12 +1153,12 @@ type formattedLedgerMovement struct {
 	ToAccountOwner     string
 	ToAccountType      string
 	ToAccountMarket    string
-	Amount             string
+	Amount             pgtype.Numeric
 	Type               string
 	Timestamp          int64
 	SynthTimestamp     int64
-	FromAccountBalance string
-	ToAccountBalance   string
+	FromAccountBalance pgtype.Numeric
+	ToAccountBalance   pgtype.Numeric
 }
 
 type formattedAssetUpdate struct {
@@ -1282,9 +1289,12 @@ func (m *persistenceManager) Start() {
 						}
 
 						// Add beginBlock to recent blocks
-						bb := evt.GetBeginBlock()
-						m.recentBlocks.Store(idParts[0], &recentBlock{height: idParts[0], timestamp: bb.Timestamp, ledgerMovementCount: 0})
-						m.recentBlocks.Delete(strconv.Itoa(int(height - 50000)))
+						if _, ok := m.recentBlocks.Get(idParts[0]); !ok {
+							bb := evt.GetBeginBlock()
+							rb := &recentBlock{height: idParts[0], timestamp: bb.Timestamp, ledgerMovementCount: 0}
+							m.recentBlocks.Store(idParts[0], rb)
+							m.recentBlocks.Delete(strconv.Itoa(int(height - 50000)))
+						}
 
 					} else {
 
@@ -1294,9 +1304,12 @@ func (m *persistenceManager) Start() {
 								height: height,
 								events: []FormattedEvent{},
 							})
-							bb := evt.GetBeginBlock()
-							m.recentBlocks.Store(idParts[0], &recentBlock{height: idParts[0], timestamp: bb.Timestamp, ledgerMovementCount: 0})
-							m.recentBlocks.Delete(strconv.Itoa(int(height - 50000)))
+							if _, ok := m.recentBlocks.Get(idParts[0]); !ok {
+								bb := evt.GetBeginBlock()
+								rb := &recentBlock{height: idParts[0], timestamp: bb.Timestamp, ledgerMovementCount: 0}
+								m.recentBlocks.Store(idParts[0], rb)
+								m.recentBlocks.Delete(strconv.Itoa(int(height - 50000)))
+							}
 						}
 						if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_END_BLOCK {
 							// Queue for block inserts
@@ -1574,6 +1587,15 @@ func (m *persistenceManager) formatLedgerMovements(evt *eventspb.BusEvent) (form
 				tam = *e.ToAccount.MarketId
 			}
 
+			// Convert strings to numerics
+			amountNum := pgtype.Numeric{}
+			fromAccBalNum := pgtype.Numeric{}
+			toAccBalNum := pgtype.Numeric{}
+
+			amountNum.Set(e.Amount)
+			fromAccBalNum.Set(e.FromAccountBalance)
+			toAccBalNum.Set(e.ToAccountBalance)
+
 			formattedEvents = append(formattedEvents, &formattedEvent{
 				Type: FormattedEventType_LedgerMovement,
 				Event: &formattedLedgerMovement{
@@ -1585,12 +1607,12 @@ func (m *persistenceManager) formatLedgerMovements(evt *eventspb.BusEvent) (form
 					ToAccountOwner:     tao,
 					ToAccountType:      e.ToAccount.Type.String(),
 					ToAccountMarket:    tam,
-					Amount:             e.Amount,
+					Amount:             amountNum,
 					Type:               e.Type.String(),
 					Timestamp:          e.Timestamp,
 					SynthTimestamp:     synthTimestamp,
-					FromAccountBalance: e.FromAccountBalance,
-					ToAccountBalance:   e.ToAccountBalance,
+					FromAccountBalance: fromAccBalNum,
+					ToAccountBalance:   toAccBalNum,
 				},
 			})
 		}

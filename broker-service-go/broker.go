@@ -223,12 +223,13 @@ func (b Broker) monitorCoreNodeChainStatus() {
 			fmt.Printf("Checking chain status at: http://%v/statistics\n", os.Getenv("VEGA_NODE_REST_API"))
 			res, err := http.Get(fmt.Sprintf("http://%v/statistics", os.Getenv("VEGA_NODE_REST_API")))
 			if err != nil {
-				log.Printf("Could not get statistics endpoint: %v", err)
+				log.Printf("Could not get statistics endpoint, Vega node might be down: %v", err)
 				// Set replaying to true to prevent block inserts of events once vega node comes online.
 				b.isReplaying = true
-				for topic := range b.topicSet {
-					b.pm.blockPersisters[topic].Pause()
-				}
+				// for topic := range b.topicSet {
+				// 	bp , _ := b.pm.blockPersisters.Get(topic)
+				// 	bp.Pause()
+				// }
 			}
 
 			body, err := io.ReadAll(res.Body)
