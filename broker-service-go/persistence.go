@@ -202,6 +202,13 @@ type syncMap[K comparable, V any] struct { // Only accepts strings as keys
 	m  map[K]V
 }
 
+func (sm *syncMap[K, V]) Len() int {
+	sm.mu.RLock()
+	len := len(sm.m)
+	sm.mu.RUnlock()
+	return len
+}
+
 func (sm *syncMap[K, V]) Store(key K, value V) {
 	sm.mu.Lock()
 	sm.m[key] = value
@@ -1243,9 +1250,11 @@ func (m *persistenceManager) Start() {
 	go func() {
 		for topic, _ := range m.broker.topicSet {
 
-			m.batchPersisters[topic].Start()
-			m.blockPersisters[topic].Start()
-			// m.blockPersisters[topic].Pause() // Pause until Vega node is done replaying and previous batches are inserted.
+			batchPersister, _ := m.batchPersisters.Get(topic)
+			batchPersister.Start()
+			blockPersister, _ := m.blockPersisters.Get(topic)
+			blockPersister.Start()
+			// blockPersister.Pause() // Pause until Vega node is done replaying and previous batches are inserted.
 
 			batchPersistTicker := time.NewTicker(time.Millisecond * 500)
 
@@ -1263,33 +1272,43 @@ func (m *persistenceManager) Start() {
 					fmt.Printf("evt Height: %v evt Index: %v\n", height, idParts[1])
 
 					if m.broker.isReplaying {
-						m.eventBatches[topic] = append(m.eventBatches[topic], m.FormatBusEvent(evt)...)
-						if len(m.eventBatches[topic]) >= 1000 {
-							m.batchPersisters[topic].persistCh <- m.eventBatches[topic]
-							m.eventBatches[topic] = nil
+						batch, _ := m.eventBatches.Get(topic)
+						batch = append(batch, m.FormatBusEvent(evt)...)
+						if len(batch) >= 1000 {
+							batchPersister.persistCh <- batch
+							m.eventBatches.Store(topic, nil)
+						} else {
+							m.eventBatches.Store(topic, batch)
 						}
+
+						// Add beginBlock to recent blocks
+						bb := evt.GetBeginBlock()
+						m.recentBlocks.Store(idParts[0], &recentBlock{height: idParts[0], timestamp: bb.Timestamp, ledgerMovementCount: 0})
+						m.recentBlocks.Delete(strconv.Itoa(int(height - 50000)))
+
 					} else {
-						m.blockBatches[topic][height].events = append(m.blockBatches[topic][height].events, m.FormatBusEvent(evt)...)
-					}
 
-					if !m.broker.isReplaying && evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_BEGIN_BLOCK {
-						m.blockBatches[topic][height] = &blockBatch{
-							height: height,
-							events: []FormattedEvent{},
+						if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_BEGIN_BLOCK {
+							heightMap, _ := m.blockBatches.Get(topic)
+							heightMap.Store(height, &blockBatch{
+								height: height,
+								events: []FormattedEvent{},
+							})
+							bb := evt.GetBeginBlock()
+							m.recentBlocks.Store(idParts[0], &recentBlock{height: idParts[0], timestamp: bb.Timestamp, ledgerMovementCount: 0})
+							m.recentBlocks.Delete(strconv.Itoa(int(height - 50000)))
 						}
-						bb := evt.GetBeginBlock()
-						m.recentBlocks.Store(idParts[0], &recentBlock{height: idParts[0], timestamp: bb.Timestamp, ledgerMovementCount: 0})
-						m.recentBlocks.Delete(strconv.Itoa(int(height - 50000)))
-					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_BEGIN_BLOCK {
-						bb := evt.GetBeginBlock()
-						m.recentBlocks.Store(idParts[0], &recentBlock{height: idParts[0], timestamp: bb.Timestamp, ledgerMovementCount: 0})
-						m.recentBlocks.Delete(strconv.Itoa(int(height - 50000)))
-					}
+						if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_END_BLOCK {
+							// Queue for block inserts
+							heightMap, _ := m.blockBatches.Get(topic)
+							blockBatch, _ := heightMap.Get(height)
+							blockPersister.persistCh <- blockBatch
+							heightMap.Delete(height)
+						}
 
-					if !m.broker.isReplaying && evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_END_BLOCK {
-						// Queue for block inserts
-						m.blockPersisters[topic].persistCh <- m.blockBatches[topic][height]
-						delete(m.blockBatches[topic], height)
+						heightMap, _ := m.blockBatches.Get(topic)
+						blockBatch, _ := heightMap.Get(height)
+						blockBatch.events = append(blockBatch.events, m.FormatBusEvent(evt)...)
 					}
 
 				}
@@ -1299,11 +1318,12 @@ func (m *persistenceManager) Start() {
 			go func(topic string) {
 				for range batchPersistTicker.C {
 					// Flush the batch
-					if len(m.eventBatches[topic]) == 0 {
+					batch, _ := m.eventBatches.Get(topic)
+					if len(batch) == 0 {
 						continue
 					}
-					m.batchPersisters[topic].persistCh <- m.eventBatches[topic]
-					m.eventBatches[topic] = nil
+					batchPersister.persistCh <- batch
+					m.eventBatches.Store(topic, nil)
 				}
 			}(topic)
 
@@ -1320,16 +1340,20 @@ func (m *persistenceManager) AllTopicsReadyForBlockInserts() (ready bool) {
 	//	- The most recent set of block inserts have all completed
 
 	for topic := range m.broker.topicSet {
-		if len(m.eventBatches[topic]) != 0 {
+		batch, _ := m.eventBatches.Get(topic)
+		if len(batch) != 0 {
 			return false
 		}
-		if len(m.batchPersisters[topic].persistCh) != 0 {
+		batchPersister, _ := m.batchPersisters.Get(topic)
+		if len(batchPersister.persistCh) != 0 {
 			return false
 		}
-		if len(m.blockBatches[topic]) != 0 {
+		blockBatch, _ := m.blockBatches.Get(topic)
+		if blockBatch.Len() != 0 {
 			return false
 		}
-		if len(m.blockPersisters[topic].persistCh) != 0 {
+		blockPersister, _ := m.blockPersisters.Get(topic)
+		if len(blockPersister.persistCh) != 0 {
 			return false
 		}
 	}
