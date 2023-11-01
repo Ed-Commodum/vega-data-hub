@@ -4,9 +4,13 @@ FROM ubuntu:20.04
 RUN apt-get update && apt-get install -y curl pwgen lsb-release curl wget git jq unzip
 
 # Get vega visor binary from releases
-RUN wget -q -P /root/vega-downloads/visor/0.71.5 https://github.com/vegaprotocol/vega/releases/download/v0.71.5/visor-linux-amd64.zip && \
-    unzip /root/vega-downloads/visor/0.71.5/visor-linux-amd64.zip -d /bin/ && \
+# RUN wget -q -P /root/vega-downloads/visor/0.71.5 https://github.com/vegaprotocol/vega/releases/download/v0.71.5/visor-linux-amd64.zip && \
+#     unzip /root/vega-downloads/visor/0.71.5/visor-linux-amd64.zip -d /bin/ && \
+#     visor version
+RUN wget -q -P /root/vega-downloads/visor/0.73.0 https://github.com/vegaprotocol/vega/releases/download/v0.73.0/visor-linux-amd64.zip && \
+    unzip /root/vega-downloads/visor/0.73.0/visor-linux-amd64.zip -d /bin/ && \
     visor version
+
 
 # Get vega binary from releases page
 RUN wget -q -P /root/vega-downloads/binaries/0.71.4/ https://github.com/vegaprotocol/vega/releases/download/v0.71.4/vega-linux-amd64.zip && \
@@ -54,6 +58,7 @@ RUN visor init --home /home/ian/.visor && \
     sed -i '/path =/c\    path = "vega"' .visor/genesis/run-config.toml && \
     sed -i '/args =/c\    args = [ "start" ]' .visor/genesis/run-config.toml && \
     # sed -i '/args =/c\    args = [ "start", "--snapshot.load-from-block-height=1275900" ]' .visor/genesis/run-config.toml && \
+    # sed -i '/args =/c\    args = [ "start", "--snapshot.load-from-block-height=3916900" ]' .visor/genesis/run-config.toml && \
     # sed -i '/args =/c\    args = [ "start", "--snapshot.load-from-block-height=-1" ]' .visor/genesis/run-config.toml && \
     sed -i '/socketPath =/c\    socketPath = "/tmp/vega.sock"' .visor/genesis/run-config.toml && \
     sed -i '/httpPath =/c\    httpPath = "/rpc"' .visor/genesis/run-config.toml && \

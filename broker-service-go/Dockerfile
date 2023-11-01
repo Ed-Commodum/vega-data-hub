@@ -9,3 +9,7 @@ COPY broker.go busEventTopicMappings.go persistence.go queries.go /app/
 RUN go build -v -o /usr/local/bin/broker ./...
 
 CMD ["broker"]
+
+# RUN apk add build-base
+# ENV CGO_ENABLED 1
+# ENTRYPOINT ["go", "run", "--race", "."]

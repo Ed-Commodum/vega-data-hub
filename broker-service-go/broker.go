@@ -7,14 +7,16 @@ import (
 	"io"
 	"log"
 
-	// "runtime"
+	// "runtime/pprof"
+
 	"net/http"
 	"os"
+	"runtime"
 	"sync"
 
-	// "strings"
+	"strings"
 	// "encoding/json"
-	// "strconv"
+	"strconv"
 	"time"
 
 	// "github.com/tidwall/sjson"
@@ -28,6 +30,7 @@ import (
 	// "code.vegaprotocol.io/vega/libs/num"
 	"code.vegaprotocol.io/vega/core/events"
 	// "code.vegaprotocol.io/vega/libs/proto"
+	"code.vegaprotocol.io/vega/protos/vega"
 	eventspb "code.vegaprotocol.io/vega/protos/vega/events/v1"
 	"github.com/golang/protobuf/proto"
 
@@ -230,6 +233,7 @@ func (b Broker) monitorCoreNodeChainStatus() {
 				// 	bp , _ := b.pm.blockPersisters.Get(topic)
 				// 	bp.Pause()
 				// }
+				continue
 			}
 
 			body, err := io.ReadAll(res.Body)
@@ -242,8 +246,14 @@ func (b Broker) monitorCoreNodeChainStatus() {
 			json.Unmarshal(body, &data)
 
 			// Get times
-			currentTime := data["statistics"].(map[string]any)["currentTime"].(string)
-			vegaTime := data["statistics"].(map[string]any)["vegaTime"].(string)
+			nodeStats, ok := data["statistics"].(map[string]any)
+			if !ok {
+				log.Printf("Failed to assert response data as map[string]any.")
+				continue
+			}
+
+			currentTime := nodeStats["currentTime"].(string)
+			vegaTime := nodeStats["vegaTime"].(string)
 
 			layout := "2006-01-02T15:04:05Z"
 			cTime, err := time.Parse(layout, currentTime)
@@ -255,6 +265,7 @@ func (b Broker) monitorCoreNodeChainStatus() {
 				log.Fatalf("Failed to parse vega time from vega node statistics endpoint: %v", err)
 			}
 			timeDiffMillis := cTime.UnixMilli() - vTime.UnixMilli()
+			timeDiffMinutes := (cTime.Unix() - vTime.Unix()) / 60
 
 			if timeDiffMillis >= 30000 {
 				// Last block was more than 30 seconds ago
@@ -266,6 +277,8 @@ func (b Broker) monitorCoreNodeChainStatus() {
 					// for topic := range b.topicSet {
 					// 	b.pm.blockPersisters[topic].Pause()
 					// }
+				} else {
+					fmt.Printf("Chain is still replaying. Vega time is %v minutes behind current time.\n", timeDiffMinutes)
 				}
 
 			} else if timeDiffMillis >= 10000 {
@@ -317,101 +330,120 @@ func (b Broker) distribute(wg *sync.WaitGroup, deChan chan *eventspb.BusEvent) {
 	ticker := time.NewTicker(time.Second * 1)
 
 	go func() {
-		for range ticker.C {
-			fmt.Println("Height: ", height)
-			fmt.Println("Blocks count: ", blockCount)
-			fmt.Println("Trade count: ", tradeCount)
-			fmt.Println("Order count: ", orderCount)
-			fmt.Println("Expired orders count: ", expiredOrdersCount)
-			fmt.Println("Position state count: ", posStateCount)
-			fmt.Println("Market data count: ", marketDataCount)
-			fmt.Println("Asset count: ", assetCount)
-			fmt.Println("Market count: ", marketCount)
-			fmt.Println("Legder movements count: ", ledgerMovementsCount)
-			fmt.Println("Deposit withdrawal count: ", depositWithdrawalCount)
-			fmt.Println("Account count: ", accountCount)
-			fmt.Println("Stake Linking count: ", stakeLinkingCount)
-		}
-	}()
-
-	go func() {
 		defer wg.Done()
-		for evt := range deChan {
-			// fmt.Printf("Event ID: %v\n", evt.Id)
-			// fmt.Printf("Event Type: %v\n", evt.Type)
-			evtType := evt.Type // Get type of evt
-			// jsonEvtBytes, err := json.Marshal(evt) // Convert each event into JSON
-			// if err != nil {
-			// 	log.Fatal("Failed to marshal bus event to JSON: %w", err)
-			// }
-			if evtType.String() == "BUS_EVENT_TYPE_PROTOCOL_UPGRADE_STARTED" {
-				fmt.Println(evt)
-				// Send msg to core to notify when ready for upgrade
-				ctx := context.TODO()
-				readyEvt := events.NewProtocolUpgradeDataNodeReady(ctx, int64(height))
-				b.ss.send(readyEvt)
+		for {
+			select {
+			case <-ticker.C:
+				fmt.Println("Height: ", height)
+				fmt.Println("Blocks count: ", blockCount)
+				fmt.Println("Trade count: ", tradeCount)
+				fmt.Println("Order count: ", orderCount)
+				fmt.Println("Expired orders count: ", expiredOrdersCount)
+				fmt.Println("Position state count: ", posStateCount)
+				fmt.Println("Market data count: ", marketDataCount)
+				fmt.Println("Asset count: ", assetCount)
+				fmt.Println("Market count: ", marketCount)
+				fmt.Println("Legder movements count: ", ledgerMovementsCount)
+				fmt.Println("Deposit withdrawal count: ", depositWithdrawalCount)
+				fmt.Println("Account count: ", accountCount)
+				fmt.Println("Stake Linking count: ", stakeLinkingCount)
+			case evt := <-deChan:
+				// fmt.Printf("Event ID: %v\n", evt.Id)
+				// fmt.Printf("Event Type: %v\n", evt.Type)
+				evtType := evt.Type // Get type of evt
+				// jsonEvtBytes, err := json.Marshal(evt) // Convert each event into JSON
+				// if err != nil {
+				// 	log.Fatal("Failed to marshal bus event to JSON: %w", err)
+				// }
+				if evtType.String() == "BUS_EVENT_TYPE_PROTOCOL_UPGRADE_STARTED" {
+					fmt.Println(evt)
+					// Send msg to core to notify when ready for upgrade
+					ctx := context.TODO()
+					readyEvt := events.NewProtocolUpgradeDataNodeReady(ctx, int64(height))
+					b.ss.send(readyEvt)
 
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_TRADE" {
-				tradeCount += 1
-				// b.topicChans["trades"] <- evt
-				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_ORDER" {
-				// continue // Ignore event for now
-				orderCount += 1
-				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_EXPIRED_ORDERS" {
-				// continue // Ignore event for now
-				expiredOrdersCount += 1
-				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_POSITION_STATE" {
-				continue // Ignore event for now
-				posStateCount += 1
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_MARKET_DATA" {
-				marketDataCount += 1
-				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_ASSET" {
-				assetCount += 1
-				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_MARKET_CREATED" || evtType.String() == "BUS_EVENT_TYPE_MARKET_UPDATED" {
-				marketCount += 1
-				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_LEDGER_MOVEMENTS" {
-				ledgerMovementsCount += 1
-				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_DEPOSIT" {
-				continue // Ignore event for now
-				depositWithdrawalCount += 1
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_WITHDRAWAL" {
-				continue // Ignore event for now
-				depositWithdrawalCount += 1
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_ACCOUNT" {
-				continue // Ignore event for now
-				accountCount += 1
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_STAKE_LINKING" {
-				stakeLinkingCount += 1
-				b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_BEGIN_BLOCK" {
-				blockCount += 1
-			}
-			if evtType.String() == "BUS_EVENT_TYPE_BEGIN_BLOCK" || evtType.String() == "BUS_EVENT_TYPE_END_BLOCK" {
-				// Send beginBlock and endBlock events to all topicChannels
-				for t, channel := range b.topicChans {
-					fmt.Printf("Sending event to topic: %v\n", t)
-					// It's fine to pass a pointer to multiple channels right? As long as we're not mutating the event.
-					channel <- evt
+				}
+				if evtType.String() == "BUS_EVENT_TYPE_TRADE" {
+					tradeCount += 1
+					// b.topicChans["trades"] <- evt
+					b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
+				}
+				if evtType.String() == "BUS_EVENT_TYPE_ORDER" {
+					// continue // Ignore event for now
+
+					// Filter out market orders
+					if evt.GetOrder().Type == vega.Order_TYPE_MARKET {
+						continue
+					}
+
+					orderCount += 1
+					b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
+				}
+				if evtType.String() == "BUS_EVENT_TYPE_EXPIRED_ORDERS" {
+					// continue // Ignore event for now
+					expiredOrdersCount += 1
+					b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
+				}
+				if evtType.String() == "BUS_EVENT_TYPE_POSITION_STATE" {
+					continue // Ignore event for now
+					posStateCount += 1
+				}
+				if evtType.String() == "BUS_EVENT_TYPE_MARKET_DATA" {
+					marketDataCount += 1
+					b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
+				}
+				if evtType.String() == "BUS_EVENT_TYPE_ASSET" {
+					assetCount += 1
+					b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
+				}
+				if evtType.String() == "BUS_EVENT_TYPE_MARKET_CREATED" || evtType.String() == "BUS_EVENT_TYPE_MARKET_UPDATED" {
+					marketCount += 1
+					b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
+				}
+				if evtType.String() == "BUS_EVENT_TYPE_LEDGER_MOVEMENTS" {
+					ledgerMovementsCount += 1
+					b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
+				}
+				if evtType.String() == "BUS_EVENT_TYPE_DEPOSIT" {
+					continue // Ignore event for now
+					depositWithdrawalCount += 1
+				}
+				if evtType.String() == "BUS_EVENT_TYPE_WITHDRAWAL" {
+					continue // Ignore event for now
+					depositWithdrawalCount += 1
+				}
+				if evtType.String() == "BUS_EVENT_TYPE_ACCOUNT" {
+					continue // Ignore event for now
+					accountCount += 1
+				}
+				if evtType.String() == "BUS_EVENT_TYPE_STAKE_LINKING" {
+					stakeLinkingCount += 1
+					b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
+				}
+				if evtType.String() == "BUS_EVENT_TYPE_BEGIN_BLOCK" {
+					blockCount += 1
+
+					parsedHeight, err := strconv.Atoi(strings.Split(evt.Id, "-")[0])
+					if err != nil {
+						log.Fatalf("Failed to parse height from event Id")
+					}
+					height = parsedHeight
+
+					// Register new block with Persistence Manager
+					bb := evt.GetBeginBlock()
+					rb := &recentBlock{height: strconv.Itoa(height), timestamp: bb.Timestamp, ledgerMovementCount: 0}
+					b.pm.recentBlocks.Store(strconv.Itoa(height), rb)
+					// fmt.Printf("Registered block of height: %v\n", height)
+					b.pm.recentBlocks.Delete(strconv.Itoa(height - 50000))
+
+				}
+				if evtType.String() == "BUS_EVENT_TYPE_BEGIN_BLOCK" || evtType.String() == "BUS_EVENT_TYPE_END_BLOCK" {
+					// Send beginBlock and endBlock events to all topicChannels
+					for _, channel := range b.topicChans {
+						// fmt.Printf("Sending event to topic: %v\n", t)
+						// It's fine to pass a pointer to multiple channels right? As long as we're not mutating the event.
+						channel <- evt
+					}
 				}
 			}
 		}
@@ -440,6 +472,26 @@ func (b Broker) start() {
 
 	wg := &sync.WaitGroup{}
 	wg.Add(3)
+
+	// GOMAXPOCS
+	gmp := runtime.GOMAXPROCS(2)
+	fmt.Printf("GOAMXPROCS: %v\n", gmp)
+	gmp = runtime.GOMAXPROCS(2)
+	fmt.Printf("New GOAMXPROCS value: %v\n", gmp)
+
+	// f, err := os.Create("profile.prof")
+	// if err != nil {
+	// 	log.Fatalf("Error creating file: %v", err)
+	// }
+
+	// go func() {
+	// 	pprof.StartCPUProfile(f)
+	// 	select {
+	// 	case <-time.After(60 * time.Second):
+	// 		pprof.StopCPUProfile()
+	// 		// log.Fatalf("Finished profiling CPU. Killing service.")
+	// 	}
+	// }()
 
 	// Init database
 	b.pm.pgClient.InitDb()

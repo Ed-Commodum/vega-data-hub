@@ -146,8 +146,8 @@ const (
 	CREATE TABLE IF NOT EXISTS trades (
 		id TEXT NOT NULL,
 		market_id TEXT NOT NULL,
-		price BIGINT,
-		size BIGINT,
+		price NUMERIC,
+		size NUMERIC,
 		buyer TEXT NOT NULL,
 		seller TEXT NOT NULL,
 		aggressor TEXT NOT NULL,
@@ -167,6 +167,7 @@ const (
 	);
 	
 	CREATE TABLE IF NOT EXISTS trades_temp (LIKE trades INCLUDING ALL);
+	ALTER TABLE trades_temp DROP CONSTRAINT trades_temp_pkey;
 
 	SELECT create_hypertable('trades', 'synth_timestamp', chunk_time_interval => 604800000000000, if_not_exists => TRUE);
 	SELECT set_integer_now_func('trades', 'current_time_ns');
@@ -197,7 +198,8 @@ const (
 	);
 
 	CREATE TABLE IF NOT EXISTS order_updates_temp (LIKE order_updates INCLUDING ALL);
-	
+	ALTER TABLE order_updates_temp DROP CONSTRAINT order_updates_temp_pkey;
+
 	SELECT create_hypertable('order_updates', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
 	SELECT set_integer_now_func('order_updates', 'current_time_ns');
 
@@ -232,9 +234,9 @@ const (
 		instrument_metadata_tags TEXT NOT NULL,
 		future_settlement_asset TEXT NOT NULL,
 		future_quote_name TEXT NOT NULL,
-		margin_search_level TEXT NOT NULL,
-		margin_initial_margin TEXT NOT NULL,
-		margin_collateral_release TEXT NOT NULL,
+		margin_search_level NUMERIC,
+		margin_initial_margin NUMERIC,
+		margin_collateral_release NUMERIC,
 		decimal_places INTEGER,
 		trading_mode TEXT NOT NULL,
 		state TEXT NOT NULL,
@@ -259,6 +261,7 @@ const (
 	);
 	
 	CREATE TABLE IF NOT EXISTS market_data_updates_temp (LIKE market_data_updates INCLUDING ALL);
+	ALTER TABLE market_data_updates_temp DROP CONSTRAINT market_data_updates_temp_pkey;
 
 	SELECT create_hypertable('market_data_updates', 'timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
 	SELECT set_integer_now_func('market_data_updates', 'current_time_ns');
@@ -286,6 +289,7 @@ const (
 	);
 	
 	CREATE TABLE IF NOT EXISTS ledger_movements_temp (LIKE ledger_movements INCLUDING ALL);
+	ALTER TABLE ledger_movements_temp DROP CONSTRAINT ledger_movements_temp_pkey;
 
 	SELECT create_hypertable('ledger_movements', 'synth_timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
 	SELECT set_integer_now_func('ledger_movements', 'current_time_ns');
@@ -301,7 +305,7 @@ const (
 		ts BIGINT NOT NULL,
 		finalized_timestamp BIGINT,
 		party_id TEXT NOT NULL,
-		amount NUMERIC(40),
+		amount NUMERIC,
 		status TEXT NOT NULL,
 		eth_addr TEXT NOT NULL,
 		PRIMARY KEY (id, ts)
