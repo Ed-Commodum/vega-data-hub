@@ -12,6 +12,26 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// type snapshotPriceLevel struct {
+// 	price            decimal.Decimal
+// 	volume           decimal.Decimal
+// 	cumulativeVolume decimal.Decimal
+// }
+
+type snapshotPriceLevel struct {
+	Price            string `json:"price"`
+	Volume           string `json:"volume"`
+	CumulativeVolume string `json:"cumulative Volume"`
+}
+
+type orderBookSnapshot struct {
+	height    uint64
+	timestamp int64
+	marketId  string
+	buys      []*snapshotPriceLevel
+	sells     []*snapshotPriceLevel
+}
+
 type priceLevel struct {
 	price  decimal.Decimal
 	orders []*vega.Order
@@ -34,7 +54,7 @@ type orderBook struct {
 type OrderProcessor interface {
 	ProcessOrder(*vega.Order)
 	ProcessExpiredOrders(*eventspb.ExpiredOrders)
-	RegisterNewMarket(string)
+	RegisterNewMarket(string) *orderBook
 }
 
 type orderProcessor struct {
@@ -57,26 +77,85 @@ func (op *orderProcessor) RegisterBeginBlock(bb *eventspb.BeginBlock) {
 	rb := &recentBlock{height: strconv.Itoa(int(bb.Height)), timestamp: bb.Timestamp}
 	op.recentBlocks.Store(strconv.Itoa(int(bb.Height)), rb)
 	op.recentBlocks.Delete(strconv.Itoa(int(bb.Height) - 1000))
+	fmt.Printf("Registered new block for height: %v\n", rb.height)
 }
 
-func (op *orderProcessor) TakeSnapshot(endBlock *eventspb.EndBlock) {
+func (op *orderProcessor) GetSnapshots(endBlock *eventspb.EndBlock) map[string]*orderBookSnapshot {
 
 	height := endBlock.Height
-	_ = height
+	recentBlock, ok := op.recentBlocks.Get(strconv.Itoa(int(height)))
+	if !ok {
+		log.Fatalf("Recent block of height %v not found.\n", height)
+	}
 
-	// Sort order book sides price levels
+	snapshots := map[string]*orderBookSnapshot{}
 
-	// Calculate cumulative price levels
+	for marketId, ob := range op.orderBooks {
 
-	// Calculate +/-2% slippage liquidity
+		snapshot := &orderBookSnapshot{
+			height:    height,
+			timestamp: recentBlock.timestamp,
+			marketId:  marketId,
+			buys:      []*snapshotPriceLevel{},
+			sells:     []*snapshotPriceLevel{},
+		}
 
-	// Calculate total book volume
+		// Log price levels to check that they are correctly ordered
+		bidOrderIds := []string{}
+		askOrderIds := []string{}
+		bidPrices := []string{}
+		askPrices := []string{}
+		for _, level := range op.orderBooks[marketId].buys.levels {
+			for _, order := range level.orders {
+				bidOrderIds = append(bidOrderIds, order.Id)
+			}
+			bidPrices = append(bidPrices, level.price.String())
+		}
+		for _, level := range op.orderBooks[marketId].sells.levels {
+			for _, order := range level.orders {
+				askOrderIds = append(askOrderIds, order.Id)
+			}
+			askPrices = append(askPrices, level.price.String())
+		}
+		log.Printf("Price levels for buy side: \n%+v\n", bidPrices)
+		log.Printf("Order Ids for buy side: \n%+v\n", bidOrderIds)
+		log.Printf("Price levels for sell side: \n%+v\n", askPrices)
+		log.Printf("Order Ids for sell side: \n%+v\n", askOrderIds)
 
+		// Get price and volume at each price level for each side
+		cumulativeVol := decimal.NewFromInt(0)
+		for _, level := range ob.buys.levels {
+			cumulativeVol = cumulativeVol.Add(level.volume)
+			snapshot.buys = append(snapshot.buys, &snapshotPriceLevel{
+				Price:            level.price.String(),
+				Volume:           level.volume.String(),
+				CumulativeVolume: cumulativeVol.String(),
+			})
+		}
+
+		cumulativeVol = decimal.NewFromInt(0)
+		for _, level := range ob.sells.levels {
+			cumulativeVol = cumulativeVol.Add(level.volume)
+			snapshot.sells = append(snapshot.sells, &snapshotPriceLevel{
+				Price:            level.price.String(),
+				Volume:           level.volume.String(),
+				CumulativeVolume: cumulativeVol.String(),
+			})
+		}
+
+		// Calculate +/-2% slippage liquidity
+
+		// Calculate total book volume
+
+		snapshots[marketId] = snapshot
+	}
+
+	return snapshots
 }
 
 func (op *orderProcessor) ProcessExpiredOrders(expiredOrders *eventspb.ExpiredOrders) {
 
-	fmt.Printf("Recieved expired orders: %+v", expiredOrders)
+	fmt.Printf("Recieved expired orders: %+v\n", expiredOrders)
 
 	ob := op.orderBooks[expiredOrders.MarketId]
 
@@ -87,17 +166,19 @@ func (op *orderProcessor) ProcessExpiredOrders(expiredOrders *eventspb.ExpiredOr
 
 func (op *orderProcessor) ProcessOrder(order *vega.Order) {
 
+	fmt.Printf("Recieved order event: %+v\n", order)
+
 	if order.Type != vega.Order_TYPE_LIMIT {
-		log.Printf("OrderProcessor: Order of type: %v is not limit order. Ignoring", order.Type)
+		log.Printf("OrderProcessor: Order of type: %v is not limit order. Ignoring...\n", order.Type)
 		return
 	}
 
 	marketId := order.MarketId
 	orderBook, ok := op.orderBooks[marketId]
-
 	if !ok {
-		log.Printf("Orderbook not found for market: %v. Registering new market", marketId)
-		op.RegisterNewMarket(order.MarketId)
+		log.Printf("Orderbook not found for market: %v. Registering new market...\n", marketId)
+		orderBook = op.RegisterNewMarket(order.MarketId)
+
 	}
 
 	switch true {
@@ -113,20 +194,17 @@ func (op *orderProcessor) ProcessOrder(order *vega.Order) {
 		orderBook.RemoveParkedOrder(order)
 	}
 
-	if order.Status == vega.Order_STATUS_CANCELLED {
-		orderBook.RemoveCancelledOrder(order)
-		return
-	}
-
 }
 
-func (op *orderProcessor) RegisterNewMarket(marketId string) {
+func (op *orderProcessor) RegisterNewMarket(marketId string) *orderBook {
 	op.orderBooks[marketId] = &orderBook{
 		marketId: marketId,
 		orders:   map[string]*vega.Order{},
 		buys:     &orderBookSide{side: vega.Side_SIDE_BUY},
 		sells:    &orderBookSide{side: vega.Side_SIDE_SELL},
 	}
+
+	return op.orderBooks[marketId]
 }
 
 func (o *orderBook) RemoveExpiredOrder(order *vega.Order) {
@@ -228,18 +306,19 @@ func (s *orderBookSide) AddNewOrder(order *vega.Order) {
 		})
 	}
 
-	if idx >= len(s.levels) {
-		// No level found, make a new one
-		s.levels = append(s.levels, &priceLevel{
-			price:  orderPrice,
-			orders: []*vega.Order{order},
-			volume: orderRemaining,
-		})
-	} else {
-		// Update existing level
-		level := s.levels[idx]
-		level.orders = append(level.orders, order)
-		level.volume = level.volume.Add(orderRemaining)
+	if idx < len(s.levels) && s.levels[idx].price == orderPrice {
+		// Level found, update it
+		s.levels[idx].orders = append(s.levels[idx].orders, order)
+		s.levels[idx].volume = s.levels[idx].volume.Add(orderRemaining)
+	}
+
+	// Level not found, add it
+	s.levels = append(s.levels, nil)
+	copy(s.levels[idx+1:], s.levels[idx:])
+	s.levels[idx] = &priceLevel{
+		price:  orderPrice,
+		volume: orderRemaining,
+		orders: []*vega.Order{order},
 	}
 
 }
@@ -263,9 +342,19 @@ func (s *orderBookSide) RemoveOrder(order *vega.Order) {
 		log.Fatalf("Failed to parse price string: %v", err)
 	}
 
-	idx := sort.Search(len(s.levels), func(i int) bool {
-		return s.levels[i].price == orderPrice
-	})
+	// Find price level
+	var idx int
+	if s.side == vega.Side_SIDE_BUY {
+		// Bids should be sorted in descending
+		idx = sort.Search(len(s.levels), func(i int) bool {
+			return s.levels[i].price.GreaterThanOrEqual(orderPrice)
+		})
+	} else {
+		// Asks should be sorted in ascending
+		idx = sort.Search(len(s.levels), func(i int) bool {
+			return s.levels[i].price.LessThanOrEqual(orderPrice)
+		})
+	}
 
 	if idx >= len(s.levels) {
 		log.Fatalf("Could not find corresponding price level for order. Order: %v", order)
@@ -287,7 +376,6 @@ func (s *orderBookSide) RemoveOrder(order *vega.Order) {
 		// Remove the order at index
 		copy(level.orders[orderIdx:], level.orders[orderIdx+1:])
 		level.orders = level.orders[:len(level.orders)-1]
-		// levelOrders = append(levelOrders[:orderIdx], levelOrders[orderIdx+1:]...)
 	} else {
 		log.Fatalf("Could not find order at price level. Order: %v", order)
 	}

@@ -6,8 +6,11 @@ require (
 	code.vegaprotocol.io/vega v0.72.14
 	github.com/golang/protobuf v1.5.3
 	github.com/jackc/pgconn v1.13.0
+	github.com/jackc/pgtype v1.12.0
+	github.com/jackc/pgx-shopspring-decimal v0.0.0-20220624020537-1d36b5a1853e
 	github.com/jackc/pgx/v4 v4.17.2
 	github.com/segmentio/kafka-go v0.4.40
+	github.com/shopspring/decimal v1.3.1
 	go.nanomsg.org/mangos/v3 v3.4.2
 )
 
@@ -41,7 +44,7 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgproto3/v2 v2.3.1 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20200714003250-2b9c44734f2b // indirect
-	github.com/jackc/pgtype v1.12.0 // indirect
+	github.com/jackc/pgx/v5 v5.0.0-alpha.1.0.20220402215505-8cf6721d6672 // indirect
 	github.com/jackc/puddle v1.3.0 // indirect
 	github.com/jmhodges/levigo v1.0.0 // indirect
 	github.com/klauspost/compress v1.16.6 // indirect
@@ -60,7 +63,6 @@ require (
 	github.com/rogpeppe/go-internal v1.10.0 // indirect
 	github.com/sasha-s/go-deadlock v0.3.1 // indirect
 	github.com/satori/go.uuid v1.2.0 // indirect
-	github.com/shopspring/decimal v1.3.1 // indirect
 	github.com/stretchr/testify v1.8.4 // indirect
 	github.com/syndtr/goleveldb v1.0.1-0.20220614013038-64ee5596c38a // indirect
 	github.com/tendermint/tendermint v0.35.9 // indirect

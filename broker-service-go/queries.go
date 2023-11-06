@@ -38,8 +38,9 @@ func getQueryTypeTopicMaps() map[pgQueryType]map[string]pgQueryString {
 	m := make(map[pgQueryType]map[string]pgQueryString)
 
 	m[pgQueryType_CreateTables] = map[string]pgQueryString{
-		"trades":           pgQueryString_CreateTables_Trades,
-		"orders":           pgQueryString_CreateTables_Orders,
+		"trades": pgQueryString_CreateTables_Trades,
+		// "orders":           pgQueryString_CreateTables_Orders,
+		"orders":           pgQueryString_CreateTables_Liquidity,
 		"assets":           pgQueryString_CreateTables_Assets,
 		"markets":          pgQueryString_CreateTables_Markets,
 		"market_data":      pgQueryString_CreateTables_MarketData,
@@ -48,8 +49,9 @@ func getQueryTypeTopicMaps() map[pgQueryType]map[string]pgQueryString {
 	}
 
 	m[pgQueryType_CreateContinuousAggregates] = map[string]pgQueryString{
-		"trades":           pgQueryString_CreateContinuousAggregates_Trades,
-		"orders":           pgQueryString_CreateContinuousAggregates_Orders,
+		"trades": pgQueryString_CreateContinuousAggregates_Trades,
+		// "orders":           pgQueryString_CreateContinuousAggregates_Orders,
+		"orders":           pgQueryString_CreateContinuousAggregates_Liquidity,
 		"assets":           pgQueryString_CreateContinuousAggregates_Assets,
 		"markets":          pgQueryString_CreateContinuousAggregates_Markets,
 		"market_data":      pgQueryString_CreateContinuousAggregates_MarketData,
@@ -58,8 +60,9 @@ func getQueryTypeTopicMaps() map[pgQueryType]map[string]pgQueryString {
 	}
 
 	m[pgQueryType_Insert] = map[string]pgQueryString{
-		"trades":           pgQueryString_Insert_Trades,
-		"orders":           pgQueryString_Insert_Orders,
+		"trades": pgQueryString_Insert_Trades,
+		// "orders":           pgQueryString_Insert_Orders,
+		"orders":           pgQueryString_Insert_Liquidity,
 		"market_data":      pgQueryString_Insert_MarketData,
 		"ledger_movements": pgQueryString_Insert_LedgerMovements,
 	}
@@ -71,8 +74,9 @@ func getQueryTypeTopicMaps() map[pgQueryType]map[string]pgQueryString {
 	}
 
 	m[pgQueryType_Truncate] = map[string]pgQueryString{
-		"trades":           pgQueryString_TruncateTemp_Trades,
-		"orders":           pgQueryString_TruncateTemp_Orders,
+		"trades": pgQueryString_TruncateTemp_Trades,
+		// "orders":           pgQueryString_TruncateTemp_Orders,
+		"orders":           pgQueryString_TruncateTemp_Liquidity,
 		"market_data":      pgQueryString_TruncateTemp_MarketData,
 		"ledger_movements": pgQueryString_TruncateTemp_LedgerMovements,
 	}
@@ -207,6 +211,25 @@ const (
 	CREATE INDEX order_updates_synth_ts_idx  		  		   ON order_updates(synth_timestamp);
 	CREATE INDEX order_updates_market_id_party_id_block_ts_idx ON order_updates(market_id, party_id, block_ts);
 	CREATE INDEX order_updates_market_id_status_block_ts_idx   ON order_updates(market_id, status, block_ts);
+
+	`
+	pgQueryString_CreateTables_Liquidity = `
+	CREATE TABLE IF NOT EXISTS liquidity_snapshots (
+		height 	  BIGINT,
+		timestamp BIGINT,
+		market_id TEXT NOT NULL,
+		bids 	  JSON NOT NULL,
+		asks 	  JSON NOT NULL,
+		PRIMARY KEY (market_id, timestamp)
+	);
+
+	CREATE TABLE IF NOT EXISTS liquidity_snapshots_temp (LIKE liquidity_snapshots INCLUDING ALL);
+	ALTER TABLE liquidity_snapshots_temp DROP CONSTRAINT liquidity_snapshots_temp_pkey;
+	
+	SELECT create_hypertable('liquidity_snapshots', 'timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
+	SELECT set_integer_now_func('liquidity_snapshots', 'current_time_ns');
+
+	CREATE INDEX liquidity_snapshots_market_id_height_idx ON liquidity_snapshots(market_id, height);
 
 	`
 	// We don't really need a hypertable or indexes for assets because it will be a small table
@@ -690,6 +713,9 @@ const (
 	pgQueryString_CreateContinuousAggregates_Orders = `
 
 	`
+	pgQueryString_CreateContinuousAggregates_Liquidity = `
+
+	`
 	pgQueryString_CreateContinuousAggregates_Assets = `
 
 	`
@@ -1133,6 +1159,12 @@ const (
 	FROM order_updates_temp
 	ON CONFLICT DO NOTHING;
 	`
+	pgQueryString_Insert_Liquidity = `
+	INSERT INTO liquidity_snapshots
+	SELECT *
+	FROM liquidity_snapshots_temp
+	ON CONFLICT DO NOTHING;
+	`
 	pgQueryString_Insert_MarketData = `
 	INSERT INTO market_data_updates
 	SELECT *
@@ -1239,6 +1271,9 @@ const (
 	`
 	pgQueryString_TruncateTemp_Orders = `
 	TRUNCATE TABLE order_updates_temp;
+	`
+	pgQueryString_TruncateTemp_Liquidity = `
+	TRUNCATE TABLE liquidity_snapshots_temp;
 	`
 	pgQueryString_TruncateTemp_MarketData = `
 	TRUNCATE TABLE market_data_updates_temp;

@@ -263,7 +263,7 @@ spec:
   - name: init-vega-node-mainnet
     image: data-hub/vega-node-mainnet
     imagePullPolicy: Never
-    command: [ "/bin/bash", "-c", "id && ls -al /home/ian && ls -al /mnt/vega-data-mainnet && cp -r /home/ian/. /mnt/vega-data-mainnet/" ]
+    command: [ "/bin/bash", "-c", "id && ls -al /home/ian && ls -al /mnt/vega-data-mainnet && cp -nr /home/ian/. /mnt/vega-data-mainnet/" ]
     volumeMounts:
     - name: vega-node-pv-storage-mainnet
       mountPath: /mnt/vega-data-mainnet

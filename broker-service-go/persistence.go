@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -13,9 +14,12 @@ import (
 	"github.com/jackc/pgconn"
 	// "github.com/jackc/pgproto3/v2"
 	"github.com/jackc/pgtype"
+	// shopstring "github.com/jackc/pgtype/ext/shopspring-numeric"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/segmentio/kafka-go"
+
+	// "github.com/shopspring/decimal"
 
 	vegapb "code.vegaprotocol.io/vega/protos/vega"
 	eventspb "code.vegaprotocol.io/vega/protos/vega/events/v1"
@@ -73,8 +77,9 @@ func (client *pgClient) Exec(queryStr string, args ...interface{}) (pgconn.Comma
 func (client *pgClient) InitDb() {
 
 	tableNameTopicMap := map[string]string{
-		"trades":              "trades",
-		"order_updates":       "orders",
+		"trades": "trades",
+		// "order_updates":       "orders",
+		"liquidity_snapshots": "orders",
 		"assets":              "assets",
 		"markets":             "markets",
 		"market_data_updates": "market_data",
@@ -564,6 +569,19 @@ func (p *persister) Persist(batch []FormattedEvent) (pgconn.CommandTag, int64, e
 			err = fmt.Errorf("error during CopyFrom operation for order updates: %v", err)
 		}
 		return commandTag, copyCount, err
+	case FormattedEventType_LiquiditySnapshot:
+		formattedOrderUpdates := []*formattedLiquiditySnapshot{}
+		for i, evt := range batch {
+			if evt.GetType() != evtType {
+				log.Fatalf("Event type mismatch in formatted event batch: %v and %v\n", evtType.String(), evt.GetType().String())
+			}
+			formattedOrderUpdates = append(formattedOrderUpdates, batch[i].(*formattedEvent).Event.(*formattedLiquiditySnapshot))
+		}
+		commandTag, copyCount, err := p.InsertLiquiditySnapshots(formattedOrderUpdates)
+		if err != nil {
+			err = fmt.Errorf("error during CopyFrom operation for order updates: %v", err)
+		}
+		return commandTag, copyCount, err
 	case FormattedEventType_LedgerMovement:
 		formattedLedgerMovements := []*formattedLedgerMovement{}
 		for i, evt := range batch {
@@ -748,6 +766,59 @@ func (p *persister) InsertOrderUpdates(batch []*formattedOrderUpdate) (pgconn.Co
 
 	return commandTag, copyCount, err
 
+}
+
+func (p *persister) InsertLiquiditySnapshots(batch []*formattedLiquiditySnapshot) (pgconn.CommandTag, int64, error) {
+
+	copyCount, err := p.pm.pgClient.pool.CopyFrom(
+		context.Background(),
+		pgx.Identifier{"liquidity_snapshots_temp"},
+		[]string{
+			"height", "timestamp", "marketId", "bids", "asks",
+		},
+		pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
+			l := batch[i]
+			return []interface{}{
+				l.height, l.timestamp, l.marketId, l.buys, l.sells,
+			}, nil
+		}),
+	)
+	if err != nil {
+		for _, item := range batch {
+			log.Printf("Liquidity snapshot: %+v\n", *item)
+		}
+		log.Fatalf("error: pool.CopyFrom failed: failed to copy liquidity snapshots: %v", err)
+	}
+	// } else {
+	// 	fmt.Printf("Copied rows!\n")
+	// 	fmt.Printf("Row Count: %v\n", copyCount)
+	// }
+
+	// Begin transaction
+	tx, err := p.pm.pgClient.pool.Begin(context.Background())
+	if err != nil {
+		log.Fatalf("failed to start transaction: %v", err)
+	}
+
+	// Insert to main table
+	commandTag, err := tx.Exec(context.Background(), p.pm.pgClient.topicQueries[pgQueryType_Insert][p.topic].String)
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to insert liquidity snapshots: %v", err)
+	}
+
+	// Truncate temp table
+	_, err = tx.Exec(context.Background(), p.pm.pgClient.topicQueries[pgQueryType_Truncate][p.topic].String)
+	if err != nil {
+		log.Fatalf("error: tx.Exec failed: failed to truncate temp ledger liquidity snapshots: %v", err)
+	}
+
+	// Commit transaction
+	err = tx.Commit(context.Background())
+	if err != nil {
+		log.Fatalf("error: tx.Commit failed: failed to commit tx for ledger movements persistence: %v", err)
+	}
+
+	return commandTag, copyCount, err
 }
 
 func (p *persister) InsertLedgerMovements(batch []*formattedLedgerMovement) (pgconn.CommandTag, int64, error) {
@@ -977,6 +1048,7 @@ const (
 	FormattedEventType_Unspecified FormattedEventType = iota
 	FormattedEventType_Trade
 	FormattedEventType_OrderUpdate
+	FormattedEventType_LiquiditySnapshot
 	FormattedEventType_LedgerMovement
 	FormattedEventType_AssetUpdate
 	FormattedEventType_MarketUpdate
@@ -992,6 +1064,8 @@ func (f FormattedEventType) String() string {
 		return "FormattedEventType_Trade"
 	case FormattedEventType_OrderUpdate:
 		return "FormattedEventType_OrderUpdate"
+	case FormattedEventType_LiquiditySnapshot:
+		return "FormattedEventType_LiquiditySnapshot"
 	case FormattedEventType_LedgerMovement:
 		return "FormattedEventType_LedgerMovement"
 	case FormattedEventType_AssetUpdate:
@@ -1084,6 +1158,14 @@ type formattedOrderUpdate struct {
 	Version        uint32
 }
 
+type formattedLiquiditySnapshot struct {
+	height    int64
+	timestamp int64
+	marketId  string
+	buys      pgtype.JSON
+	sells     pgtype.JSON
+}
+
 type formattedLedgerMovement struct {
 	FromAccountAsset   string
 	FromAccountOwner   string
@@ -1155,19 +1237,23 @@ type formattedStakeLinking struct {
 	EthAddr            string
 }
 
-func (t *formattedTrade) isFormattedEvent()          {}
-func (t *formattedOrderUpdate) isFormattedEvent()    {}
-func (t *formattedLedgerMovement) isFormattedEvent() {}
-func (t *formattedAssetUpdate) isFormattedEvent()    {}
-func (t *formattedMarketUpdate) isFormattedEvent()   {}
-func (t *formattedMarketData) isFormattedEvent()     {}
-func (t *formattedStakeLinking) isFormattedEvent()   {}
+func (t *formattedTrade) isFormattedEvent()             {}
+func (t *formattedOrderUpdate) isFormattedEvent()       {}
+func (t *formattedLiquiditySnapshot) isFormattedEvent() {}
+func (t *formattedLedgerMovement) isFormattedEvent()    {}
+func (t *formattedAssetUpdate) isFormattedEvent()       {}
+func (t *formattedMarketUpdate) isFormattedEvent()      {}
+func (t *formattedMarketData) isFormattedEvent()        {}
+func (t *formattedStakeLinking) isFormattedEvent()      {}
 
 func (t *formattedTrade) GetType() FormattedEventType {
 	return FormattedEventType_Trade
 }
 func (o *formattedOrderUpdate) GetType() FormattedEventType {
 	return FormattedEventType_OrderUpdate
+}
+func (o *formattedLiquiditySnapshot) GetType() FormattedEventType {
+	return FormattedEventType_LiquiditySnapshot
 }
 func (lm *formattedLedgerMovement) GetType() FormattedEventType {
 	return FormattedEventType_LedgerMovement
@@ -1194,8 +1280,91 @@ func (sl *formattedStakeLinking) GetType() FormattedEventType {
 
 func (m *persistenceManager) Start() {
 
+	// Separate logic for handling orders
+	go func() {
+
+		op, ok := newOrderProcessor().(*orderProcessor)
+		if !ok {
+			log.Fatalf("Failed to instantiate order processor.\n")
+		}
+
+		batchPersister, _ := m.batchPersisters.Get("orders")
+		batchPersister.Start()
+		blockPersister, _ := m.blockPersisters.Get("orders")
+		blockPersister.Start()
+
+		fmt.Printf("Starting routine to fetch events for orders topic\n ")
+		batch := []FormattedEvent{}
+		blBatch := &blockBatch{events: []FormattedEvent{}}
+
+		// Ticker to regularly flush event batches.
+		batchPersistTicker := time.NewTicker(time.Millisecond * 750)
+
+		for {
+			select {
+			case <-batchPersistTicker.C:
+				// Flush the batch
+				if len(batch) == 0 {
+					continue
+				}
+				batchPersister.persistCh <- batch
+				batch = []FormattedEvent{}
+			case evt := <-m.recvChs["orders"]:
+
+				if m.broker.isReplaying {
+
+					if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_BEGIN_BLOCK {
+						op.RegisterBeginBlock(evt.GetBeginBlock())
+					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_ORDER {
+						op.ProcessOrder(evt.GetOrder())
+					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_EXPIRED_ORDERS {
+						op.ProcessExpiredOrders(evt.GetExpiredOrders())
+					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_END_BLOCK {
+						snapshots := op.GetSnapshots(evt.GetEndBlock())
+						for _, snapshot := range snapshots {
+							batch = append(batch, m.formatLiquiditySnapshot(snapshot))
+						}
+						if len(batch) >= 1000 {
+							batchPersister.persistCh <- batch
+							batch = []FormattedEvent{}
+						}
+					}
+
+				} else {
+
+					if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_BEGIN_BLOCK {
+						height, err := strconv.ParseInt(strings.Split(evt.Id, "-")[0], 10, 64)
+						if err != nil {
+							log.Printf("Could not convert height to int64: %v", err)
+						}
+						blBatch.height = height
+					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_ORDER {
+						op.ProcessOrder(evt.GetOrder())
+					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_EXPIRED_ORDERS {
+						op.ProcessExpiredOrders(evt.GetExpiredOrders())
+					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_END_BLOCK {
+						snapshots := op.GetSnapshots(evt.GetEndBlock())
+						for _, snapshot := range snapshots {
+							blBatch.events = append(blBatch.events, m.formatLiquiditySnapshot(snapshot))
+						}
+						blockPersister.persistCh <- blBatch
+						blBatch = &blockBatch{events: []FormattedEvent{}}
+					}
+
+				}
+
+			}
+		}
+
+	}()
+
 	go func() {
 		for topic, _ := range m.broker.topicSet {
+
+			// Orders will get processed into useful liquidity events separately
+			if topic == "orders" {
+				continue
+			}
 
 			batchPersister, _ := m.batchPersisters.Get(topic)
 			batchPersister.Start()
@@ -1225,12 +1394,6 @@ func (m *persistenceManager) Start() {
 						batch = []FormattedEvent{}
 					case evt := <-m.recvChs[topic]:
 						// fmt.Printf("Recieved event with type %v on topic: %v\n", evt.Type, topic)
-						idParts := strings.Split(evt.Id, "-")
-						height, err := strconv.ParseInt(idParts[0], 10, 64)
-						if err != nil {
-							log.Printf("Could not convert height to int64: %v", err)
-						}
-						// fmt.Printf("evt Height: %v evt Index: %v\n", height, idParts[1])
 
 						if m.broker.isReplaying {
 							// batch, _ := m.eventBatches.Get(topic)
@@ -1255,6 +1418,13 @@ func (m *persistenceManager) Start() {
 						} else {
 
 							if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_BEGIN_BLOCK {
+
+								idParts := strings.Split(evt.Id, "-")
+								height, err := strconv.ParseInt(idParts[0], 10, 64)
+								if err != nil {
+									log.Printf("Could not convert height to int64: %v", err)
+								}
+								// fmt.Printf("evt Height: %v evt Index: %v\n", height, idParts[1])
 
 								blBatch.height = height
 
@@ -1524,6 +1694,32 @@ func (m *persistenceManager) formatExpiredOrders(evt *eventspb.BusEvent) (format
 	}
 
 	return formattedEvents
+}
+
+func (m *persistenceManager) formatLiquiditySnapshot(s *orderBookSnapshot) (f FormattedEvent) {
+
+	jsonBuys, err := json.Marshal(s.buys)
+	if err != nil {
+		log.Fatalf("Failed to marshal slice of snapshot price levels: %v\n", err)
+	}
+
+	jsonSells, err := json.Marshal(s.sells)
+	if err != nil {
+		log.Fatalf("Failed to marshal slice of snapshot price levels: %v\n", err)
+	}
+
+	pgJsonBuys := pgtype.JSON{}
+	pgJsonSells := pgtype.JSON{}
+	pgJsonBuys.Set(jsonBuys)
+	pgJsonSells.Set(jsonSells)
+
+	return &formattedLiquiditySnapshot{
+		height:    int64(s.height),
+		timestamp: s.timestamp,
+		marketId:  s.marketId,
+		buys:      pgJsonBuys,
+		sells:     pgJsonSells,
+	}
 }
 
 func (m *persistenceManager) formatLedgerMovements(evt *eventspb.BusEvent) (formattedEvents []FormattedEvent) {
