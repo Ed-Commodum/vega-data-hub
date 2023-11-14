@@ -29,6 +29,7 @@ func GetBusEventTopicMap() map[string]string {
 		"BUS_EVENT_TYPE_EXPIRED_ORDERS":           "orders",
 		"BUS_EVENT_TYPE_DISTRESSED_ORDERS_CLOSED": "orders",
 		"BUS_EVENT_TYPE_LIQUIDITY_PROVISION":      "orders",
+		"BUS_EVENT_TYPE_SNAPSHOT_TAKEN":           "orders", // Send snapshot events here so we can generate our own.
 		"BUS_EVENT_TYPE_MARKET":                   "markets",
 		"BUS_EVENT_TYPE_MARKET_CREATED":           "markets",
 		"BUS_EVENT_TYPE_MARKET_UPDATED":           "markets",

@@ -61,10 +61,11 @@ func getQueryTypeTopicMaps() map[pgQueryType]map[string]pgQueryString {
 
 	m[pgQueryType_Insert] = map[string]pgQueryString{
 		"trades": pgQueryString_Insert_Trades,
-		// "orders":           pgQueryString_Insert_Orders,
-		"orders":           pgQueryString_Insert_Liquidity,
-		"market_data":      pgQueryString_Insert_MarketData,
-		"ledger_movements": pgQueryString_Insert_LedgerMovements,
+		// "orders":           			  pgQueryString_Insert_Orders,
+		"orders":                         pgQueryString_Insert_Liquidity,
+		"order_processor_state_snapshot": pgQueryString_Insert_OrderProcessorStateSnapshot,
+		"market_data":                    pgQueryString_Insert_MarketData,
+		"ledger_movements":               pgQueryString_Insert_LedgerMovements,
 	}
 
 	m[pgQueryType_Upsert] = map[string]pgQueryString{
@@ -231,6 +232,18 @@ const (
 
 	CREATE INDEX liquidity_snapshots_market_id_height_idx ON liquidity_snapshots(market_id, height);
 
+	CREATE TABLE IF NOT EXISTS order_processor_state_snapshots (
+		height 	  			   BIGINT,
+		timestamp 			   BIGINT,
+		order_books_json 	   JSON NOT NULL,
+		recent_blocks_map_json JSON NOT NULL,
+		PRIMARY KEY (timestamp)
+	);
+
+	SELECT create_hypertable('order_processor_state_snapshots', 'timestamp', chunk_time_interval => '604800000000000'::BIGINT, if_not_exists => TRUE);
+	SELECT set_integer_now_func('order_processor_state_snapshots', 'current_time_ns');
+
+	CREATE INDEX order_processor_state_snapshots_height_idx ON order_processor_state_snapshots(height);
 	`
 	// We don't really need a hypertable or indexes for assets because it will be a small table
 	pgQueryString_CreateTables_Assets = `
@@ -1164,6 +1177,19 @@ const (
 	SELECT *
 	FROM liquidity_snapshots_temp
 	ON CONFLICT DO NOTHING;
+	`
+	pgQueryString_Insert_OrderProcessorStateSnapshot = `
+	INSERT INTO order_processor_state_snapshots (
+		height,
+		timestamp,
+		order_books_json,
+		recent_blocks_map_json
+	) VALUES (
+		$1,
+		$2,
+		$3,
+		$4
+	) ON CONFLICT DO NOTHING;
 	`
 	pgQueryString_Insert_MarketData = `
 	INSERT INTO market_data_updates

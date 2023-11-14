@@ -236,32 +236,32 @@ func (sm *syncMap[K, V]) Delete(key K) {
 
 type blockMap struct {
 	mu sync.RWMutex
-	m  map[string]*recentBlock
+	M  map[string]*recentBlock `json:"map"`
 }
 
 func (b *blockMap) Store(key string, value *recentBlock) {
 	b.mu.Lock()
-	b.m[key] = value
+	b.M[key] = value
 	b.mu.Unlock()
 }
 
 func (b *blockMap) Get(key string) (value *recentBlock, ok bool) {
 	b.mu.RLock()
-	value, ok = b.m[key]
+	value, ok = b.M[key]
 	b.mu.RUnlock()
 	return value, ok
 }
 
 func (b *blockMap) Delete(key string) {
 	b.mu.Lock()
-	delete(b.m, key)
+	delete(b.M, key)
 	b.mu.Unlock()
 }
 
 type recentBlock struct {
-	height              string
-	timestamp           int64
-	ledgerMovementCount int64
+	Height              string `json:"height"`
+	Timestamp           int64  `json:"timestamp"`
+	LedgerMovementCount int64  `json:"ledgerMovementCount"`
 }
 
 type formattedEventBatch struct {
@@ -314,6 +314,26 @@ type blockPersister struct {
 	blBatch   *blockBatch
 }
 
+type orderProcessorStateSnapshotPersister struct {
+	mu        sync.RWMutex
+	pm        *persistenceManager
+	persistCh chan *orderProcessorStateSnapshot
+}
+
+type orderProcessorStateSnapshot struct {
+	height              uint64
+	timestamp           int64
+	orderBooksJson      pgtype.JSON
+	recentBlocksMapJson pgtype.JSON
+}
+
+func newOrderProcessorStateSnapshotPerister(pm *persistenceManager) *orderProcessorStateSnapshotPersister {
+	return &orderProcessorStateSnapshotPersister{
+		pm:        pm,
+		persistCh: make(chan *orderProcessorStateSnapshot, 10),
+	}
+}
+
 func newPersistenceManager(b *Broker) PersistenceManager {
 	pm := &persistenceManager{
 		broker:   b,
@@ -342,7 +362,7 @@ func newPersistenceManager(b *Broker) PersistenceManager {
 		// blockPersisters: make(map[string]*blockPersister),
 		recentBlocks: &blockMap{
 			mu: sync.RWMutex{},
-			m:  map[string]*recentBlock{},
+			M:  map[string]*recentBlock{},
 		},
 		// recentBlocks:    make(map[string]*recentBlock),
 	}
@@ -774,7 +794,7 @@ func (p *persister) InsertLiquiditySnapshots(batch []*formattedLiquiditySnapshot
 		context.Background(),
 		pgx.Identifier{"liquidity_snapshots_temp"},
 		[]string{
-			"height", "timestamp", "marketId", "bids", "asks",
+			"height", "timestamp", "market_id", "bids", "asks",
 		},
 		pgx.CopyFromSlice(len(batch), func(i int) ([]interface{}, error) {
 			l := batch[i]
@@ -784,9 +804,9 @@ func (p *persister) InsertLiquiditySnapshots(batch []*formattedLiquiditySnapshot
 		}),
 	)
 	if err != nil {
-		for _, item := range batch {
-			log.Printf("Liquidity snapshot: %+v\n", *item)
-		}
+		// for _, item := range batch {
+		// 	log.Printf("Liquidity snapshot: %+v\n", *item)
+		// }
 		log.Fatalf("error: pool.CopyFrom failed: failed to copy liquidity snapshots: %v", err)
 	}
 	// } else {
@@ -1280,13 +1300,32 @@ func (sl *formattedStakeLinking) GetType() FormattedEventType {
 
 func (m *persistenceManager) Start() {
 
+	orderProcessorStateSnapshotPersister := newOrderProcessorStateSnapshotPerister(m)
+	// Loop for persisting order processor state snapshots
+	go func() {
+		for stateSnapshot := range orderProcessorStateSnapshotPersister.persistCh {
+			commandTag, err := m.pgClient.Exec(
+				m.pgClient.topicQueries[pgQueryType_Insert]["order_processor_state_snapshot"].String,
+				stateSnapshot.height, stateSnapshot.timestamp, stateSnapshot.orderBooksJson, stateSnapshot.recentBlocksMapJson,
+			)
+			if err != nil {
+				log.Fatalf("Error persisting order processor state snapshot: %v", err)
+			}
+
+			_ = commandTag
+			fmt.Printf("Persisted order processor state snapshot for height: %v", stateSnapshot.height)
+		}
+	}()
+
 	// Separate logic for handling orders
 	go func() {
 
-		op, ok := newOrderProcessor().(*orderProcessor)
+		op, ok := newOrderProcessor(orderProcessorStateSnapshotPersister.persistCh, m.pgClient).(*orderProcessor)
 		if !ok {
 			log.Fatalf("Failed to instantiate order processor.\n")
 		}
+
+		op.Initialize()
 
 		batchPersister, _ := m.batchPersisters.Get("orders")
 		batchPersister.Start()
@@ -1311,6 +1350,15 @@ func (m *persistenceManager) Start() {
 				batch = []FormattedEvent{}
 			case evt := <-m.recvChs["orders"]:
 
+				height, err := strconv.ParseInt(strings.Split(evt.Id, "-")[0], 10, 64)
+				if err != nil {
+					log.Printf("Could not convert height to int64: %v", err)
+				}
+				if height < int64(op.currentHeight) {
+					// Ignore these events as they are below the current block height of the order processor
+					continue
+				}
+
 				if m.broker.isReplaying {
 
 					if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_BEGIN_BLOCK {
@@ -1320,7 +1368,7 @@ func (m *persistenceManager) Start() {
 					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_EXPIRED_ORDERS {
 						op.ProcessExpiredOrders(evt.GetExpiredOrders())
 					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_END_BLOCK {
-						snapshots := op.GetSnapshots(evt.GetEndBlock())
+						snapshots := op.GetOrderBookSnapshots(evt.GetEndBlock())
 						for _, snapshot := range snapshots {
 							batch = append(batch, m.formatLiquiditySnapshot(snapshot))
 						}
@@ -1328,27 +1376,30 @@ func (m *persistenceManager) Start() {
 							batchPersister.persistCh <- batch
 							batch = []FormattedEvent{}
 						}
+						op.RegisterEndBlock(evt.GetEndBlock())
+					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_SNAPSHOT_TAKEN {
+						op.TakeStateSnapshot(evt.GetCoreSnapshotEvent())
 					}
 
 				} else {
 
 					if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_BEGIN_BLOCK {
-						height, err := strconv.ParseInt(strings.Split(evt.Id, "-")[0], 10, 64)
-						if err != nil {
-							log.Printf("Could not convert height to int64: %v", err)
-						}
 						blBatch.height = height
+						op.RegisterBeginBlock(evt.GetBeginBlock())
 					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_ORDER {
 						op.ProcessOrder(evt.GetOrder())
 					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_EXPIRED_ORDERS {
 						op.ProcessExpiredOrders(evt.GetExpiredOrders())
 					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_END_BLOCK {
-						snapshots := op.GetSnapshots(evt.GetEndBlock())
+						snapshots := op.GetOrderBookSnapshots(evt.GetEndBlock())
 						for _, snapshot := range snapshots {
 							blBatch.events = append(blBatch.events, m.formatLiquiditySnapshot(snapshot))
 						}
 						blockPersister.persistCh <- blBatch
 						blBatch = &blockBatch{events: []FormattedEvent{}}
+						op.RegisterEndBlock(evt.GetEndBlock())
+					} else if evt.Type == eventspb.BusEventType_BUS_EVENT_TYPE_SNAPSHOT_TAKEN {
+						op.TakeStateSnapshot(evt.GetCoreSnapshotEvent())
 					}
 
 				}
@@ -1616,7 +1667,7 @@ func (m *persistenceManager) formatOrderUpdate(evt *eventspb.BusEvent) (f *forma
 	if !ok {
 		log.Fatalf("Failed to get recent block of height: %v when formatting order update", idParts[0])
 	}
-	blockTs := block.timestamp
+	blockTs := block.Timestamp
 	synthTimestamp := blockTs + evtIndex
 
 	priceNum := pgtype.Numeric{}
@@ -1661,7 +1712,7 @@ func (m *persistenceManager) formatExpiredOrders(evt *eventspb.BusEvent) (format
 	if !ok {
 		log.Fatalf("Failed to get recent block of height: %v when formatting expired orders", idParts[0])
 	}
-	blockTs := block.timestamp
+	blockTs := block.Timestamp
 	synthTimestamp := blockTs + evtIndex
 
 	priceNum := pgtype.Numeric{}
@@ -1713,12 +1764,15 @@ func (m *persistenceManager) formatLiquiditySnapshot(s *orderBookSnapshot) (f Fo
 	pgJsonBuys.Set(jsonBuys)
 	pgJsonSells.Set(jsonSells)
 
-	return &formattedLiquiditySnapshot{
-		height:    int64(s.height),
-		timestamp: s.timestamp,
-		marketId:  s.marketId,
-		buys:      pgJsonBuys,
-		sells:     pgJsonSells,
+	return &formattedEvent{
+		Type: FormattedEventType_LiquiditySnapshot,
+		Event: &formattedLiquiditySnapshot{
+			height:    int64(s.height),
+			timestamp: s.timestamp,
+			marketId:  s.marketId,
+			buys:      pgJsonBuys,
+			sells:     pgJsonSells,
+		},
 	}
 }
 
@@ -1734,8 +1788,8 @@ func (m *persistenceManager) formatLedgerMovements(evt *eventspb.BusEvent) (form
 			if !ok {
 				log.Fatalf("Failed to get recent block of height: %v when formatting ledger movements", height)
 			}
-			synthTimestamp := e.Timestamp + block.ledgerMovementCount
-			block.ledgerMovementCount++
+			synthTimestamp := e.Timestamp + block.LedgerMovementCount
+			block.LedgerMovementCount++
 
 			var fao, fam, tao, tam string
 			if e.FromAccount.Owner == nil {

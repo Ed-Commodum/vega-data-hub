@@ -357,6 +357,11 @@ func (b Broker) distribute(wg *sync.WaitGroup, deChan chan *eventspb.BusEvent) {
 				// }
 				if evtType.String() == "BUS_EVENT_TYPE_PROTOCOL_UPGRADE_STARTED" {
 					fmt.Println(evt)
+
+					// Here we will need to tell the Vega Core node to ensure that it's vega visor commands are configured
+					// to load the most recent core snapshot, since it will probably be condifured to load from a specific
+					// block height. For this we will need an admin API in the Vega core node container.
+
 					// Send msg to core to notify when ready for upgrade
 					ctx := context.TODO()
 					readyEvt := events.NewProtocolUpgradeDataNodeReady(ctx, int64(height))
@@ -420,6 +425,9 @@ func (b Broker) distribute(wg *sync.WaitGroup, deChan chan *eventspb.BusEvent) {
 					stakeLinkingCount += 1
 					b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
 				}
+				if evtType.String() == "BUS_EVENT_TYPE_SNAPSHOT_TAKEN" {
+					b.topicChans[b.busEventTopicMap[evtType.String()]] <- evt
+				}
 				if evtType.String() == "BUS_EVENT_TYPE_BEGIN_BLOCK" {
 					blockCount += 1
 
@@ -431,7 +439,7 @@ func (b Broker) distribute(wg *sync.WaitGroup, deChan chan *eventspb.BusEvent) {
 
 					// Register new block with Persistence Manager
 					bb := evt.GetBeginBlock()
-					rb := &recentBlock{height: strconv.Itoa(height), timestamp: bb.Timestamp, ledgerMovementCount: 0}
+					rb := &recentBlock{Height: strconv.Itoa(height), Timestamp: bb.Timestamp, LedgerMovementCount: 0}
 					b.pm.recentBlocks.Store(strconv.Itoa(height), rb)
 					// fmt.Printf("Registered block of height: %v\n", height)
 					b.pm.recentBlocks.Delete(strconv.Itoa(height - 50000))
